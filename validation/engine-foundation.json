@@ -1,0 +1,101 @@
+{
+  "utc": "2026-10-26T19:23:10.037612+00:00",
+  "host": "kvant",
+  "machine": "x86_64",
+  "system": "Linux",
+  "scope": "first engine slice; offline/local qualification only",
+  "checks": [
+    {
+      "preset": "debug",
+      "passed": 2,
+      "log": "build/debug/Testing/Temporary/LastTest.log",
+      "log_sha256": "ab595781b4539e0b7cfa6c2764421116831a883dd1c9eb562b335ee245ca6853",
+      "stdout": "Start testing: Oct 26 14:19 CDT\n----------------------------------------------------------\n1/2 Testing: engine-contracts\n1/2 Test: engine-contracts\nCommand: \"/home/onnwee/Work/Audio/fl-live/build/debug/engine-tests\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/debug\n\"engine-contracts\" start time: Oct 26 14:19 CDT\nOutput:\n----------------------------------------------------------\nPASS: grid, audio, MIDI, command bounds, validation; process allocations=0\n<end of output>\nTest time =   0.01 sec\n----------------------------------------------------------\nTest Passed.\n\"engine-contracts\" end time: Oct 26 14:19 CDT\n\"engine-contracts\" time elapsed: 00:00:00\n----------------------------------------------------------\n\n2/2 Testing: render-roundtrip\n2/2 Test: render-roundtrip\nCommand: \"/home/onnwee/.local/bin/python3.11\" \"/home/onnwee/Work/Audio/fl-live/tests/render_roundtrip.py\" \"/home/onnwee/Work/Audio/fl-live/build/debug/fl-live-render\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/debug\n\"render-roundtrip\" start time: Oct 26 14:19 CDT\nOutput:\n----------------------------------------------------------\nPASS: mono PCM16 WAV, 384000 frames, exact silent boundaries, identical PCM across five block sizes, output preservation\n<end of output>\nTest time =   0.20 sec\n----------------------------------------------------------\nTest Passed.\n\"render-roundtrip\" end time: Oct 26 14:19 CDT\n\"render-roundtrip\" time elapsed: 00:00:00\n----------------------------------------------------------\n\nEnd testing: Oct 26 14:19 CDT\n"
+    },
+    {
+      "preset": "release",
+      "passed": 2,
+      "log": "build/release/Testing/Temporary/LastTest.log",
+      "log_sha256": "a3de05a879c9926fb16e1ba08cc47b271b64309bcca8bb0db47c48fea7822f3d",
+      "stdout": "Start testing: Oct 26 14:20 CDT\n----------------------------------------------------------\n1/2 Testing: engine-contracts\n1/2 Test: engine-contracts\nCommand: \"/home/onnwee/Work/Audio/fl-live/build/release/engine-tests\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/release\n\"engine-contracts\" start time: Oct 26 14:20 CDT\nOutput:\n----------------------------------------------------------\nPASS: grid, audio, MIDI, command bounds, validation; process allocations=0\n<end of output>\nTest time =   0.00 sec\n----------------------------------------------------------\nTest Passed.\n\"engine-contracts\" end time: Oct 26 14:20 CDT\n\"engine-contracts\" time elapsed: 00:00:00\n----------------------------------------------------------\n\n2/2 Testing: render-roundtrip\n2/2 Test: render-roundtrip\nCommand: \"/home/onnwee/.local/bin/python3.11\" \"/home/onnwee/Work/Audio/fl-live/tests/render_roundtrip.py\" \"/home/onnwee/Work/Audio/fl-live/build/release/fl-live-render\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/release\n\"render-roundtrip\" start time: Oct 26 14:20 CDT\nOutput:\n----------------------------------------------------------\nPASS: mono PCM16 WAV, 384000 frames, exact silent boundaries, identical PCM across five block sizes, output preservation\n<end of output>\nTest time =   0.11 sec\n----------------------------------------------------------\nTest Passed.\n\"render-roundtrip\" end time: Oct 26 14:20 CDT\n\"render-roundtrip\" time elapsed: 00:00:00\n----------------------------------------------------------\n\nEnd testing: Oct 26 14:20 CDT\n"
+    },
+    {
+      "preset": "sanitize",
+      "passed": 2,
+      "log": "build/sanitize/Testing/Temporary/LastTest.log",
+      "log_sha256": "58b7380b52a1d7773987e61f03b23f4f3a23d23e5d7b9325f348893b23f1406d",
+      "stdout": "Start testing: Oct 26 14:20 CDT\n----------------------------------------------------------\n1/2 Testing: engine-contracts\n1/2 Test: engine-contracts\nCommand: \"/home/onnwee/Work/Audio/fl-live/build/sanitize/engine-tests\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/sanitize\n\"engine-contracts\" start time: Oct 26 14:20 CDT\nOutput:\n----------------------------------------------------------\nPASS: grid, audio, MIDI, command bounds, validation; process allocations=0\n<end of output>\nTest time =   0.06 sec\n----------------------------------------------------------\nTest Passed.\n\"engine-contracts\" end time: Oct 26 14:20 CDT\n\"engine-contracts\" time elapsed: 00:00:00\n----------------------------------------------------------\n\n2/2 Testing: render-roundtrip\n2/2 Test: render-roundtrip\nCommand: \"/home/onnwee/.local/bin/python3.11\" \"/home/onnwee/Work/Audio/fl-live/tests/render_roundtrip.py\" \"/home/onnwee/Work/Audio/fl-live/build/sanitize/fl-live-render\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/sanitize\n\"render-roundtrip\" start time: Oct 26 14:20 CDT\nOutput:\n----------------------------------------------------------\nPASS: mono PCM16 WAV, 384000 frames, exact silent boundaries, identical PCM across five block sizes, output preservation\n<end of output>\nTest time =   0.55 sec\n----------------------------------------------------------\nTest Passed.\n\"render-roundtrip\" end time: Oct 26 14:20 CDT\n\"render-roundtrip\" time elapsed: 00:00:00\n----------------------------------------------------------\n\nEnd testing: Oct 26 14:20 CDT\n"
+    },
+    {
+      "preset": "engine-only",
+      "passed": 1,
+      "log": "build/engine-only/Testing/Temporary/LastTest.log",
+      "log_sha256": "8e87efedc8d6e69bfca93ddcef90eb8b81cfc8afacc509df8001aa2776ae68e9",
+      "stdout": "Start testing: Oct 26 14:20 CDT\n----------------------------------------------------------\n1/1 Testing: engine-contracts\n1/1 Test: engine-contracts\nCommand: \"/home/onnwee/Work/Audio/fl-live/build/engine-only/engine-tests\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/engine-only\n\"engine-contracts\" start time: Oct 26 14:20 CDT\nOutput:\n----------------------------------------------------------\nPASS: grid, audio, MIDI, command bounds, validation; process allocations=0\n<end of output>\nTest time =   0.02 sec\n----------------------------------------------------------\nTest Passed.\n\"engine-contracts\" end time: Oct 26 14:20 CDT\n\"engine-contracts\" time elapsed: 00:00:00\n----------------------------------------------------------\n\nEnd testing: Oct 26 14:20 CDT\n"
+    }
+  ],
+  "sources": [
+    {
+      "path": ".gitignore",
+      "sha256": "3fb82b6ade819e4cc102841c0e3684c814f3466da974a068df1714124fe5d84b"
+    },
+    {
+      "path": "AGENTS.md",
+      "sha256": "38625fb5863b68441e57c8132f0a1deb2b8509ef9ed6dc2be668c5e0b144b103"
+    },
+    {
+      "path": "CMakeLists.txt",
+      "sha256": "475a4326c2e23e6f9c1eb1326ad1fd703c7112e21dd1bc213a80f11225cb7633"
+    },
+    {
+      "path": "CMakePresets.json",
+      "sha256": "29505ec70f1c74f3178622291b674ad75231e8e3662b61fac31a3b2b1303692f"
+    },
+    {
+      "path": "README.md",
+      "sha256": "a9b3d8d117f60de1646def3e217ee03da18b2daacd4ab1a60f02c07f2a48fe9f"
+    },
+    {
+      "path": "apps/render.cpp",
+      "sha256": "7ac7ae0004872980152aeaffa4ab8b84bb2b7eeae50fc2598d6684a066f40da6"
+    },
+    {
+      "path": "docs/STATUS.md",
+      "sha256": "f5885d6e7839115bd8ee9eeec3d2c3f3a3b70b7b88394f5694dabb7f31606e95"
+    },
+    {
+      "path": "docs/engine-contract.md",
+      "sha256": "8db32a909457c622f033f5437cd8a42cbd54a0f42e256f5db918abdc49565a91"
+    },
+    {
+      "path": "include/fl_live/engine.hpp",
+      "sha256": "b7b5a4ea2aeca558237af13314d499211d5ebba048ed1a7f65cd933f4ea571fc"
+    },
+    {
+      "path": "src/engine.cpp",
+      "sha256": "a572106e9f6e60b96f6803b67e75d9e186ba86a957d758baa0e266c8f67dc052"
+    },
+    {
+      "path": "tests/engine_tests.cpp",
+      "sha256": "160e8c440a59e1f5fd0cb1ad22e531f31c75868464155a33199b69312247282f"
+    },
+    {
+      "path": "tests/render_roundtrip.py",
+      "sha256": "cb1261d7930e498388a0c5de5dc7ff17f24e200ced8c9896027f344893c98996"
+    }
+  ],
+  "demo": {
+    "path": "build/debug/demo.wav",
+    "sha256": "c8d86250c356f8c151a868c1a6eb9674d63190948908bc01f559ac6c2d35b6e0",
+    "channels": 1,
+    "sample_width": 2,
+    "sample_rate": 48000,
+    "frames": 384000
+  },
+  "native_audio_qualified": false,
+  "Qt_UI_implemented": false,
+  "concurrent_control_qualified": false,
+  "product_MVP_complete": false,
+  "commit_created": false,
+  "remote_published": false
+}

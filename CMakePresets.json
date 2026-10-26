@@ -1,0 +1,21 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {"name": "debug", "generator": "Ninja", "binaryDir": "${sourceDir}/build/debug", "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug"}},
+    {"name": "release", "inherits": "debug", "binaryDir": "${sourceDir}/build/release", "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}},
+    {"name": "sanitize", "inherits": "debug", "binaryDir": "${sourceDir}/build/sanitize", "cacheVariables": {"FL_LIVE_SANITIZERS": "ON"}},
+    {"name": "engine-only", "inherits": "debug", "binaryDir": "${sourceDir}/build/engine-only", "cacheVariables": {"FL_LIVE_BUILD_RENDERER": "OFF"}}
+  ],
+  "buildPresets": [
+    {"name": "debug", "configurePreset": "debug"},
+    {"name": "release", "configurePreset": "release"},
+    {"name": "sanitize", "configurePreset": "sanitize"},
+    {"name": "engine-only", "configurePreset": "engine-only"}
+  ],
+  "testPresets": [
+    {"name": "debug", "configurePreset": "debug", "output": {"outputOnFailure": true}},
+    {"name": "release", "configurePreset": "release", "output": {"outputOnFailure": true}},
+    {"name": "sanitize", "configurePreset": "sanitize", "output": {"outputOnFailure": true}},
+    {"name": "engine-only", "configurePreset": "engine-only", "output": {"outputOnFailure": true}}
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "utc": "2026-10-26T22:25:10.653903+00:00",
+  "engine_validation": "engine-foundation.json",
+  "engine_validation_sha256": "95719518836f05339eb943dce3e7865237f1eda34ff40d7fe4dfded48e504e83",
+  "changes_since_engine_validation": [
+    "README.md",
+    "docs/STATUS.md"
+  ],
+  "engine_and_test_sources_unchanged": true,
+  "repository": "https://git.subcult.tv/subculture-collective/fl-live",
+  "private": true
+}

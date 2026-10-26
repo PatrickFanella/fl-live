@@ -1,0 +1,38 @@
+cmake_minimum_required(VERSION 3.25)
+project(fl_live VERSION 0.1.0 LANGUAGES CXX)
+
+option(FL_LIVE_BUILD_RENDERER "Build the offline WAV example" ON)
+option(FL_LIVE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
+set(CMAKE_CXX_EXTENSIONS OFF)
+if(FL_LIVE_SANITIZERS)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        message(FATAL_ERROR "Sanitizer preset requires GCC or Clang")
+    endif()
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+endif()
+
+add_library(fl_live_engine src/engine.cpp)
+target_include_directories(fl_live_engine PUBLIC include)
+target_compile_features(fl_live_engine PUBLIC cxx_std_20)
+target_compile_options(fl_live_engine PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
+
+if(FL_LIVE_BUILD_RENDERER)
+    find_package(PkgConfig REQUIRED)
+    # Initial qualified baseline; upgrades are explicit changes.
+    pkg_check_modules(SNDFILE REQUIRED IMPORTED_TARGET sndfile=1.2.2)
+    add_executable(fl-live-render apps/render.cpp)
+    target_link_libraries(fl-live-render PRIVATE fl_live_engine PkgConfig::SNDFILE)
+endif()
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(engine-tests tests/engine_tests.cpp)
+    target_link_libraries(engine-tests PRIVATE fl_live_engine)
+    add_test(NAME engine-contracts COMMAND engine-tests)
+    if(FL_LIVE_BUILD_RENDERER)
+        find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
+        add_test(NAME render-roundtrip COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/render_roundtrip.py $<TARGET_FILE:fl-live-render>)
+    endif()
+endif()
