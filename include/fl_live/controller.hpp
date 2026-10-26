@@ -31,7 +31,7 @@ private:
     alignas(64) std::atomic<std::size_t> tail_{0};
 };
 
-enum class ControlKind { start, stop, rewind, schedule };
+enum class ControlKind { start, stop, rewind, schedule, launch_next_bar, stop_next_bar };
 struct Control { ControlKind kind; Command command{}; std::uint64_t serial = 0; };
 struct RenderStatus { Frame position; bool running; std::uint64_t handled_serial; std::uint64_t rejected; };
 
@@ -39,7 +39,7 @@ struct RenderStatus { Frame position; bool running; std::uint64_t handled_serial
 // outlives both. Do not call Engine directly while a backend owns rendering.
 class RenderController {
 public:
-    explicit RenderController(const SessionPlan& plan) : engine_(plan), sample_rate_(plan.sample_rate) {}
+    explicit RenderController(const SessionPlan& plan) : engine_(plan), sample_rate_(plan.sample_rate), grid_(plan.sample_rate, plan.bpm_milli) {}
     [[nodiscard]] std::uint32_t sample_rate() const noexcept { return sample_rate_; }
     bool submit(Control control) noexcept { return queue_.push(control); }
     void panic() noexcept { panic_.store(true); } // out-of-band, even when queue is full
@@ -59,6 +59,16 @@ public:
                 case ControlKind::rewind: engine_.rewind(); break;
                 case ControlKind::schedule:
                     if (engine_.schedule(control.command) != ScheduleResult::accepted) ++rejected_;
+                    break;
+                case ControlKind::launch_next_bar:
+                case ControlKind::stop_next_bar:
+                    // Resolve time on the render owner, never from a stale UI snapshot.
+                    if (const auto boundary = grid_.try_next_bar(engine_.position())) {
+                        control.command.at = *boundary;
+                        control.command.kind = control.kind == ControlKind::launch_next_bar
+                            ? CommandKind::launch : CommandKind::stop_track;
+                        if (engine_.schedule(control.command) != ScheduleResult::accepted) ++rejected_;
+                    } else ++rejected_;
                     break;
                 default: ++rejected_; break;
                 }
@@ -90,6 +100,7 @@ private:
     static_assert(std::atomic<bool>::is_always_lock_free);
     Engine engine_;
     const std::uint32_t sample_rate_;
+    const TempoGrid grid_;
     SpscQueue<Control, Engine::command_capacity> queue_;
     std::atomic<bool> panic_{false};
     std::uint64_t handled_ = 0, rejected_ = 0;

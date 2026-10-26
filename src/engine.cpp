@@ -8,17 +8,17 @@
 
 namespace fl_live {
 namespace {
-Frame ceil_mul_div(Frame value, Frame multiplier, Frame divisor) {
+std::optional<Frame> ceil_mul_div(Frame value, Frame multiplier, Frame divisor) noexcept {
     // Quotient/remainder split keeps supported clock products exact in uint64.
     const auto q = value / divisor;
     const auto r = value % divisor;
     const auto limit = std::numeric_limits<Frame>::max();
     if (q > limit / multiplier || (r != 0 && multiplier > limit / r))
-        throw std::overflow_error("musical clock exceeds frame range");
+        return std::nullopt;
     const auto product = r * multiplier;
     const auto tail = product / divisor + (product % divisor != 0 ? 1U : 0U);
     const auto base = q * multiplier;
-    if (base > limit - tail) throw std::overflow_error("musical clock exceeds frame range");
+    if (base > limit - tail) return std::nullopt;
     return base + tail;
 }
 
@@ -64,6 +64,12 @@ TempoGrid::TempoGrid(std::uint32_t sample_rate, std::uint32_t bpm_milli)
 }
 
 Frame TempoGrid::next_bar(Frame at) const {
+    const auto result = try_next_bar(at);
+    if (!result) throw std::overflow_error("musical clock exceeds frame range");
+    return *result;
+}
+
+std::optional<Frame> TempoGrid::try_next_bar(Frame at) const noexcept {
     // k = floor((at-1)*D/N)+1 is the first k whose ceil(k*N/D) >= at.
     // Using ceil(at*D/N) would skip a rounded-up, nonintegral boundary.
     if (at == 0) return 0;
@@ -71,7 +77,7 @@ Frame TempoGrid::next_bar(Frame at) const {
     const auto q = value / numerator_;
     const auto r = value % numerator_;
     if (q > (std::numeric_limits<Frame>::max() - 1) / denominator_)
-        throw std::overflow_error("musical clock exceeds frame range");
+        return std::nullopt;
     const auto k = q * denominator_ + r * denominator_ / numerator_ + 1;
     return ceil_mul_div(k, numerator_, denominator_);
 }

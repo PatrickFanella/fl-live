@@ -186,7 +186,11 @@ void controller_allocation_contract() {
     (void)controller.submit({ControlKind::start, {}, 1});
     (void)controller.submit({ControlKind::schedule, {CommandKind::launch, 0, 0, 0}, 2});
     controller.process(output);
-    for (std::uint64_t n = 3; n < 67; ++n) (void)controller.submit({ControlKind::start, {}, n});
+    (void)controller.submit({ControlKind::launch_next_bar, {CommandKind::launch, 0, 0, 0}, 3});
+    (void)controller.submit({ControlKind::stop_next_bar, {CommandKind::stop_track, 0, 0, 0}, 4});
+    controller.process(output);
+    (void)TempoGrid(48000,120000).try_next_bar(std::numeric_limits<Frame>::max());
+    for (std::uint64_t n = 5; n < 69; ++n) (void)controller.submit({ControlKind::start, {}, n});
     controller.panic();
     controller.process(output);
     controller.finish();

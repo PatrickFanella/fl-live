@@ -1,6 +1,6 @@
-# fl-live — engine foundation
+# fl-live — Linux session workstation
 
-Original source for a Linux-first open-source music workstation, working toward a useful MVP and ultimately a close Live/Max replacement. C++20 and Qt 6/QML are the selected product stack. The implemented slices are a headless engine, offline renderer, bounded control handoff and optional PipeWire output backend. There is no desktop app yet.
+Original source for a Linux-first open-source music workstation, working toward a useful MVP and ultimately a close Live/Max replacement. C++20 and Qt 6/QML are the selected product stack. The implemented slices are a headless engine, offline renderer, bounded control handoff optional PipeWire output backend and an initial Qt/QML session application.
 
 The private reference-product research remains in a separate workspace. No captured executable code, factory assets or research binaries are part of this source tree. Project licensing is still undecided; no release has been published. The canonical product repository is [subculture-collective/fl-live](https://git.subcult.tv/subculture-collective/fl-live), initially private.
 
@@ -51,4 +51,25 @@ The test creates a private software-only server in a temporary directory, links 
 
 Debug, release, sanitizer and engine-only checks passed on Kvant. Tests cover integral and fractional tempo boundaries, sample-exact launch/loop/stop, note cleanup, queue bounds and output preservation. The decoded demo PCM matches across block sizes 1/64/128/257/512 on the qualification machine. Instrumented C++ allocation checks report zero allocations during tested render paths. This does not qualify hardware deadlines, all allocators, concurrent access or all platforms.
 
-See [status](docs/STATUS.md), the original [engine validation](validation/engine-foundation.json) and [backend validation](validation/pipewire-foundation.json). Backend processing and server loss pass in the private graph; hardware audibility/latency and long-duration xrun qualification remain open. Next is a Qt/QML interface driven by engine acknowledgements. Save/reload, recording, editing, plugins and programmable-device graphs remain product milestones.
+See [status](docs/STATUS.md), the original [engine validation](validation/engine-foundation.json) and [backend validation](validation/pipewire-foundation.json). Backend processing and server loss pass in the private graph; hardware audibility/latency and long-duration xrun qualification remain open. The initial Qt/QML session interface is checked offscreen with mouse input and engine acknowledgements. Native Wayland interaction and physical audio remain unqualified. Save/reload, recording, editing, plugins and programmable-device graphs remain product milestones.
+
+## Run the desktop prototype
+
+Requires Qt 6.12 Quick/QuickControls2 (and Qt Test for tests) plus the PipeWire baseline above.
+
+```bash
+rtk proxy cmake --preset desktop
+rtk proxy cmake --build --preset desktop
+rtk proxy ctest --preset desktop
+rtk proxy ./build/desktop/fl-live
+```
+
+The default is **silent preview**: launch either authored clip, then press Play. The preview discards rendered samples and advances 480 frames per 10 ms timer tick; it is a simulated clock, not a latency or timing benchmark. Stop clears clips and queued launches; relaunch them to resume. Return to start works only while stopped. The interface shows transport acknowledgements and queued-control feedback, not active-clip playback state.
+
+For output through an existing session manager, explicitly choose a server and target:
+
+```bash
+rtk proxy ./build/desktop/fl-live --remote pipewire-0 --target YOUR_OUTPUT_NODE
+```
+
+Replace the target with the intended PipeWire node name. Without `--target`, manual port setup/linking is required. The app does not select an output device automatically. This hardware path has not been qualified yet. See [desktop contract](docs/desktop-session.md) and [validation receipt](validation/desktop-session.json).
