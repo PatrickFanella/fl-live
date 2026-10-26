@@ -1,0 +1,15 @@
+{
+  "scope": "local controller-only ThreadSanitizer run; PipeWire library not instrumented",
+  "commands": [
+    {
+      "command": "rtk proxy c++ -std=c++20 -O1 -g -fsanitize=thread -pthread -Iinclude tests/controller_tests.cpp src/engine.cpp -o build/controller-tsan",
+      "exit_code": 0,
+      "output": ""
+    },
+    {
+      "command": "rtk proxy ./build/controller-tsan",
+      "exit_code": 0,
+      "output": "PASS: 200000 ordered messages; 50000 controls with concurrent status reader; rejection, full-queue panic and restart\n"
+    }
+  ]
+}

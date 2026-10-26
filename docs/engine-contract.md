@@ -24,7 +24,7 @@ Audio loops repeat the complete source array with no join crossfade. MIDI loop b
 
 The caller owns the immutable plan. The engine holds a reference; the plan must outlive it and must not be edited after validation. Construction allocates runtime state and calculates pitch increments before playback. Render uses preallocated runtime/command/voice storage.
 
-All engine operations belong to one rendering owner and occur at block boundaries or inside that owner's processing loop. No concurrent producer/control queue is implemented. This explicit restriction prevents the future UI from mutating live state unsafely. The PipeWire/control integration must add a bounded handoff and define shutdown before sharing this instance across threads.
+All engine operations belong to one rendering owner and occur at block boundaries or inside that owner's processing loop. The engine itself is not a concurrent API. RenderController now adds a single-producer/single-consumer handoff around it; the PipeWire data callback owns processing until backend shutdown completes. UI code must use that handoff and must not access Engine directly. This does not support concurrent plan mutation or graph replacement.
 
 `process()` performs no explicit allocation, locking, file I/O, logging or graph destruction. Tests intercept C++ new/new[] (including aligned allocation) over selected render paths and observe zero allocations. They do not detect every C-library allocator, prove all library internals lock-free or establish callback deadlines. Real-time qualification remains separate.
 

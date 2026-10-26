@@ -1,4 +1,5 @@
 #include "fl_live/engine.hpp"
+#include "fl_live/controller.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -176,10 +177,27 @@ void validation_contract() {
     plan.tracks[0].clips[0] = AudioClip{};
     invalid([&] { Engine engine(plan); });
 }
+void controller_allocation_contract() {
+    const auto plan = audio_plan();
+    RenderController controller(plan);
+    std::array<float, 257> output{};
+    const auto before = render_allocations;
+    watch_allocations = true;
+    (void)controller.submit({ControlKind::start, {}, 1});
+    (void)controller.submit({ControlKind::schedule, {CommandKind::launch, 0, 0, 0}, 2});
+    controller.process(output);
+    for (std::uint64_t n = 3; n < 67; ++n) (void)controller.submit({ControlKind::start, {}, n});
+    controller.panic();
+    controller.process(output);
+    controller.finish();
+    watch_allocations = false;
+    require(render_allocations == before, "allocation in control handoff/process/panic");
+    require(!controller.status().running, "finish must acknowledge stopped state");
+}
 }
 int main() {
     try {
-        grid_contract(); audio_contract(); midi_contract(); queue_contract(); validation_contract();
+        grid_contract(); audio_contract(); midi_contract(); queue_contract(); validation_contract(); controller_allocation_contract();
         std::cout << "PASS: grid, audio, MIDI, command bounds, validation; process allocations=" << render_allocations << '\n';
         return 0;
     } catch (const std::exception& e) {
