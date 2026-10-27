@@ -1,0 +1,66 @@
+{
+  "recorded_at": "2026-10-27T20:12:06.378939+00:00",
+  "base_commit": "edd130bc1082cf79d28707ea2b72c71a0afd4dbc",
+  "qualification": "Local offscreen desktop and pinned CI container; new hosted checks pending",
+  "ctest": {
+    "desktop": 5,
+    "release": 3,
+    "engine-only": 2,
+    "pipewire-sanitize": 4
+  },
+  "total_ctest_executions": 14,
+  "checks": [
+    "v1 migration preserves four enabled notes, velocity and gate timing",
+    "v2 settings and rendered samples round trip",
+    "partial rests and silent all-rest pattern",
+    "gate timing and normalized velocity scaling",
+    "all 1..16 lengths at 20/137/300 BPM",
+    "inactive steps retained on shorten/extend",
+    "malformed v2 leaves loaded project unchanged",
+    "actual QML step selection, enable, pitch/velocity/gate edit and save/open"
+  ],
+  "screenshot_inspected": "build/desktop/desktop-step-editor.png",
+  "shellcheck": "ci/verify.sh passed",
+  "not_qualified": [
+    "free-position notes and piano roll",
+    "live editing and history",
+    "physical/native audio",
+    "Qt editor sanitizer instrumentation; headless engine/backend sanitizer cohort passed"
+  ],
+  "source_sha256": {
+    "apps/desktop/project.hpp": "498d9764ec87191753e5ad778ad562c1ed579ed1832fed11c8ec459b6a59846b",
+    "apps/desktop/project.cpp": "57e15946f7b1b925e2868710af35166f0f5b3adfa28c168f50bca188452bd0e6",
+    "apps/desktop/session.hpp": "e8ceb44272539b9cf0459e30dc151b5c481278b28bbae008641c0080314e65e9",
+    "apps/desktop/session.cpp": "ebb8197a32c07279dd19c9fc372c1d697bc1ab56b842d25e57c6d4db65ffa81c",
+    "apps/desktop/Main.qml": "f64fd8c4026cb6fdcf354a9bfda92b02b79fa23dee0b61a0564c6766db9b8fc9",
+    "tests/desktop_tests.cpp": "a2bf2c4df0164da91f176214bb54ba4fb8d815b5ae4c6ff8828b549509b2a077",
+    "ci/verify.sh": "4aee5983f73f662eba937165b47a8b03ccd0e3e208147d021597de7bd0e2084f"
+  },
+  "result_root": "build/step-editor-ci-results",
+  "result_sha256": {
+    "desktop-LastTest.log": "e3096be9b5ebb5af951eba5df11ae48f32eb6acb3b9cb73a4cbb7bc49297d9cd",
+    "desktop-active-clip.png": "3fc81bf5b457f30fe7442bf9be0161a85cefa1cbdfc598ce75cf53d9574b7496",
+    "desktop-build.log": "ba7ebcd1dec15f9e1f9178824cfd3334393afa5b95cb65b91929452fbeebe91f",
+    "desktop-configure.log": "2187d664e04dc3975ff8bed7d7d24431fd32b4913a8d742f4135166a456d7a67",
+    "desktop-junit.xml": "2a431cb58d3b2e6b9b96edb13a537156f5e8d793e6a88c478ae01ec10da20d92",
+    "desktop-session.png": "64692f0b252f584cc3141a590dd57c60001800be492205fa9211a17bb9b216e1",
+    "desktop-step-editor.png": "64692f0b252f584cc3141a590dd57c60001800be492205fa9211a17bb9b216e1",
+    "desktop-test.log": "3a1bf41b80871dc340b623e2f1470247083184ece0d5fdb029253fc43d21b297",
+    "engine-only-LastTest.log": "d0c5ccb4b055647ecf5a056be5b0622e75182d92bbcbe9bc4b0236f055f4f36a",
+    "engine-only-build.log": "e3d539df8c9351dc95e0540c969eac6625e9867e36f4d1c535c1ea8f1e2a55d7",
+    "engine-only-configure.log": "8d49e5c33aff1d8ad85f3ec6fc542de6029bda8b3a90853166235bcede7e8bdd",
+    "engine-only-junit.xml": "defa53f4155cf8ba60dc8b5e80077b91493f24d12a3e7dec4b54db113369a49d",
+    "engine-only-test.log": "03660931cce820d693b608778800128cd3a80c3e83b374d4077246a07f7fe3fc",
+    "pipewire-sanitize-LastTest.log": "27ccae5cc6895e9baf6a59e91aea6e810dba1bc688869c151c2ff6c0967b5cc0",
+    "pipewire-sanitize-build.log": "e4104acba211b51cf3547ab89127b3127839c7f22d022379599c6791b27bdb52",
+    "pipewire-sanitize-configure.log": "1034994b6a96be3a57cbc9f053a4285032721d45f8a13b9451b075c7e041f3bf",
+    "pipewire-sanitize-junit.xml": "2794b026aa7fd81e67b2cae9b1acefb257f1dbaf420ce440f24cd68c2260d862",
+    "pipewire-sanitize-test.log": "9b2bb45bca28d52179762fda9f277cea5fc2857ad618cc2521da49bf1ef3b530",
+    "release-LastTest.log": "f4d680657288c51556b27ce5cf6c88fa18252d55796d540bce4394a705b4a8f6",
+    "release-build.log": "edb7c099ae483f61d60c3425366df12e66bf01e4c432763665c109a8d5dd16d7",
+    "release-configure.log": "bd8a173aabb4ff89c55d641e55f692cd5d5e8caba240876bc95a881949d1b1c6",
+    "release-junit.xml": "451def1a5369fd3fe1c4887a3fb2912beec982e9cab98efb6f16c55a9df4e6d6",
+    "release-test.log": "681d58fd2c46bc852d4ec512546f3fabc02534c1ab3024ecc57536a017185430",
+    "toolchain.txt": "e405128fd248b24e27acb28e9ed10d8cdf518f3f75f014e23a9acf1b8f857960"
+  }
+}

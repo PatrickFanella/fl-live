@@ -11,16 +11,100 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void legacyMigration() {
+        QTemporaryDir directory;
+        const auto path=directory.filePath("legacy.json");
+        QFile file(path); QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(R"({"format":"fl-live-project","version":1,"template":"pulse-steps-v1","tempo":120,"levels":[70,25],"pitches":[60,64,67,72]})");file.close();
+        const auto settings=readProject(path);
+        QCOMPARE(settings.step_count,4);
+        auto plan=prepareProject(settings);
+        const auto& midi=std::get<fl_live::MidiClip>(plan.tracks[1].clips[0]);
+        QCOMPARE(midi.length,fl_live::Frame(96000));QCOMPARE(midi.notes.size(),std::size_t(4));
+        for (std::size_t i=0;i<4;++i) {
+            QCOMPARE(midi.notes[i].start,fl_live::Frame(i*24000));
+            QCOMPARE(midi.notes[i].duration,fl_live::Frame(18000));
+            QCOMPARE(midi.notes[i].velocity,0.7F);
+        }
+        QVERIFY(!settings.steps[4].enabled);
+        const auto converted=directory.filePath("converted.json");writeProject(converted,settings);
+        QVERIFY(readProject(converted)==settings);
+        QFile convertedFile(converted);QVERIFY(convertedFile.open(QIODevice::ReadOnly));
+        QCOMPARE(QJsonDocument::fromJson(convertedFile.readAll()).object()["version"].toInt(),2);
+    }
+    void patternTimingAndRests() {
+        ProjectSettings settings;
+        settings.step_count=16;settings.levels={0,100};
+        for (auto& step:settings.steps) step={};
+        settings.steps[0]={true,60,100,25};settings.steps[2]={true,64,50,100};settings.steps[15]={true,127,0,1};
+        auto plan=prepareProject(settings);
+        const auto& midi=std::get<fl_live::MidiClip>(plan.tracks[1].clips[0]);
+        QCOMPARE(midi.length,fl_live::Frame(384000));QCOMPARE(midi.notes.size(),std::size_t(3));
+        QCOMPARE(midi.notes[0].duration,fl_live::Frame(6000));
+        QCOMPARE(midi.notes[1].start,fl_live::Frame(48000));QCOMPARE(midi.notes[1].duration,fl_live::Frame(24000));
+        QCOMPARE(midi.notes[1].velocity,0.5F);
+        QCOMPARE(midi.notes[2].start,fl_live::Frame(360000));QCOMPARE(midi.notes[2].duration,fl_live::Frame(240));
+        fl_live::Engine engine(plan);engine.start();
+        QCOMPARE(engine.schedule({fl_live::CommandKind::launch,0,1,0}),fl_live::ScheduleResult::accepted);
+        std::vector<float> output(48000);engine.process(output);
+        QVERIFY(std::any_of(output.begin(),output.begin()+6000,[](float x){return x!=0;}));
+        QVERIFY(std::all_of(output.begin()+6000,output.end(),[](float x){return x==0;}));
+        settings.steps[0].velocity=50;const auto quietPlan=prepareProject(settings);fl_live::Engine quiet(quietPlan);quiet.start();
+        QCOMPARE(quiet.schedule({fl_live::CommandKind::launch,0,1,0}),fl_live::ScheduleResult::accepted);
+        std::vector<float> quietOutput(48000);quiet.process(quietOutput);
+        for (std::size_t i=0;i<6000;++i) QVERIFY(std::abs(output[i]-quietOutput[i]*2)<0.000001F);
+        for (auto& step:settings.steps) step.enabled=false;
+        const auto rests=prepareProject(settings);QVERIFY(std::get<fl_live::MidiClip>(rests.tracks[1].clips[0]).notes.empty());
+        fl_live::Engine silent(rests);silent.start();
+        QCOMPARE(silent.schedule({fl_live::CommandKind::launch,0,1,0}),fl_live::ScheduleResult::accepted);
+        silent.process(output);QVERIFY(std::all_of(output.begin(),output.end(),[](float x){return x==0;}));
+        for (int tempo:{20,137,300}) for (int length=1;length<=16;++length) {
+            settings.tempo=tempo;settings.step_count=length;
+            for (auto& step:settings.steps) step={true,60,70,100};
+            const auto prepared=prepareProject(settings);fl_live::Engine validated(prepared);
+            const auto& notes=std::get<fl_live::MidiClip>(prepared.tracks[1].clips[0]);
+            QCOMPARE(notes.length,(48000ULL*60*static_cast<unsigned>(length)+static_cast<unsigned>(tempo)-1)/static_cast<unsigned>(tempo));
+            QCOMPARE(notes.notes.back().start+notes.notes.back().duration,notes.length);
+        }
+    }
+    void stepEditingAndValidation() {
+        Session session;session.selectStep(1);QVERIFY(!session.dirty());
+        session.setStepCount(16);session.selectStep(15);QCOMPARE(session.selectedStep(),15);
+        session.setStepEnabled(15,true);session.setPitch(15,40);session.setVelocity(15,35);session.setGate(15,100);
+        session.setStepCount(4);QCOMPARE(session.selectedStep(),3);QCOMPARE(session.pitches()[15].toInt(),40);
+        session.setStepCount(16);QVERIFY(session.stepEnabled()[15].toBool());QCOMPARE(session.velocities()[15].toInt(),35);
+        session.play();session.setGate(15,1);QCOMPARE(session.gates()[15].toInt(),100);
+        session.tick();session.setStepCount(1);QCOMPARE(session.stepCount(),16);session.stop();session.tick();
+        QTemporaryDir directory;const auto good=directory.filePath("good.json");QVERIFY(session.saveProject(good));
+        QFile file(good);QVERIFY(file.open(QIODevice::ReadOnly));const auto document=QJsonDocument::fromJson(file.readAll()).object();file.close();
+        const auto bad=directory.filePath("bad.json");
+        auto reject=[&](QJsonObject object) {
+            QFile badFile(bad);QVERIFY(badFile.open(QIODevice::WriteOnly|QIODevice::Truncate));badFile.write(QJsonDocument(object).toJson());badFile.close();
+            QVERIFY(!session.loadProject(bad));QCOMPARE(session.stepCount(),16);QCOMPARE(session.pitches()[15].toInt(),40);QVERIFY(!session.dirty());
+        };
+        for (int length:{0,17}) {auto object=document;auto pattern=object["pattern"].toObject();pattern["length"]=length;object["pattern"]=pattern;reject(object);}
+        for (const auto& key:{QString("pitch"),QString("velocity"),QString("gate"),QString("enabled")}) {
+            auto object=document;auto pattern=object["pattern"].toObject();auto steps=pattern["steps"].toArray();auto step=steps[0].toObject();
+            step[key]=-1;steps[0]=step;pattern["steps"]=steps;object["pattern"]=pattern;reject(object);
+        }
+        auto object=document;auto pattern=object["pattern"].toObject();auto steps=pattern["steps"].toArray();steps.removeLast();pattern["steps"]=steps;object["pattern"]=pattern;reject(object);
+        session.setVelocity(0,101);QCOMPARE(session.velocities()[0].toInt(),70);
+        session.setGate(0,0);QCOMPARE(session.gates()[0].toInt(),75);
+        QVERIFY(session.loadProject(good));QCOMPARE(session.selectedStep(),0);QCOMPARE(session.gates()[15].toInt(),100);
+    }
     void projectRoundTrip() {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());
         const auto path = directory.filePath("session.json");
         ProjectSettings settings;
-        settings.tempo = 137; settings.levels = {35, 60}; settings.pitches = {48, 55, 59, 62};
+        settings.tempo = 137; settings.levels = {35, 60};
+        settings.step_count=12;settings.steps[9]={true,72,32,100};settings.steps[1].enabled=false; const std::array<int,4> pitches{48,55,59,62};
+        for (std::size_t i=0;i<4;++i) settings.steps[i].pitch=pitches[i];
         writeProject(path, settings);
         const auto decoded = readProject(path);
         QVERIFY(decoded == settings);
@@ -43,7 +127,7 @@ private slots:
             const auto plan = prepareProject(settings);
             fl_live::Engine validated(plan);
             QCOMPARE(std::get<fl_live::MidiClip>(plan.tracks[1].clips[0]).length,
-                *fl_live::TempoGrid(48000, static_cast<std::uint32_t>(tempo*1000)).try_next_bar(1));
+                (48000ULL*60*static_cast<unsigned>(settings.step_count)+static_cast<unsigned>(tempo)-1)/static_cast<unsigned>(tempo));
         }
     }
     void documentSafety() {
@@ -76,7 +160,7 @@ private slots:
         QVERIFY(!session.loadProject(file.fileName())); QCOMPARE(session.tempo(),137);
         QFile valid(path); QVERIFY(valid.open(QIODevice::ReadOnly));
         const auto document = QJsonDocument::fromJson(valid.readAll()).object(); valid.close();
-        for (const auto& key : {QString("version"),QString("tempo"),QString("levels"),QString("pitches"),QString("template")}) {
+        for (const auto& key : {QString("version"),QString("tempo"),QString("levels"),QString("pattern"),QString("template")}) {
             auto broken = document; broken.insert(key, -1);
             QVERIFY(file.open(QIODevice::WriteOnly|QIODevice::Truncate)); file.write(QJsonDocument(broken).toJson());file.close();
             QVERIFY(!session.loadProject(file.fileName())); QCOMPARE(session.tempo(),137);
@@ -155,7 +239,7 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(window));
         std::function<QQuickItem*(QQuickItem*, const QString&)> findItem =
             [&](QQuickItem* root, const QString& name) -> QQuickItem* {
-                if (root->objectName() == name) return root;
+                if (root->objectName() == name && root->isVisible()) return root;
                 for (auto* child : root->childItems())
                     if (auto* match = findItem(child, name)) return match;
                 return nullptr;
@@ -170,6 +254,15 @@ private slots:
         QVERIFY(tempo); tempo->forceActiveFocus();
         QTest::keyClick(window,Qt::Key_Up);
         QCOMPARE(session.tempo(),121); QVERIFY(session.dirty());
+        auto key=[&](const char* name,Qt::Key key) {
+            auto* item=findItem(window->contentItem(),QString::fromUtf8(name));QVERIFY(item);item->forceActiveFocus();QTest::keyClick(window,key);
+        };
+        key("stepCount",Qt::Key_Up);QCOMPARE(session.stepCount(),5);
+        click("step4");QCOMPARE(session.selectedStep(),4);
+        click("stepEnabled");QVERIFY(session.stepEnabled()[4].toBool());
+        key("selectedPitch",Qt::Key_Up);QCOMPARE(session.pitches()[4].toInt(),61);
+        key("selectedVelocity",Qt::Key_Down);QCOMPARE(session.velocities()[4].toInt(),69);
+        key("selectedGate",Qt::Key_Down);QCOMPARE(session.gates()[4].toInt(),74);
         QTemporaryDir directory;
         auto* projectFile = window->findChild<QObject*>("projectFile");
         QVERIFY(projectFile); projectFile->setProperty("text",directory.filePath("qml.json"));
@@ -178,9 +271,14 @@ private slots:
         QVERIFY(dialog); QVERIFY(dialog->property("visible").toBool());
         QVERIFY(QMetaObject::invokeMethod(dialog,"close"));
         click("saveProjectButton"); QVERIFY(!session.dirty());
-        QCOMPARE(readProject(directory.filePath("qml.json")).tempo,121);
+        const auto saved=readProject(directory.filePath("qml.json"));QCOMPARE(saved.tempo,121);
+        QCOMPARE(saved.step_count,5);QCOMPARE(saved.steps[4].pitch,61);QCOMPARE(saved.steps[4].velocity,69);QCOMPARE(saved.steps[4].gate,74);
         click("openProjectButton"); QCOMPARE(session.tempo(),121);
+        click("step4");QCOMPARE(session.selectedStep(),4);
+        QCOMPARE(findItem(window->contentItem(),"selectedVelocity")->property("value").toInt(),69);
+        QCOMPARE(findItem(window->contentItem(),"selectedGate")->property("value").toInt(),74);
         QVERIFY(window->grabWindow().save("desktop-session.png"));
+        QVERIFY(window->grabWindow().save("desktop-step-editor.png"));
         click("clip0"); session.tick();
         auto* clipLabel = findItem(window->contentItem(),"clipState0");
         QVERIFY(clipLabel); QCOMPARE(clipLabel->property("text").toString(),QString("Launch queued"));

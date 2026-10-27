@@ -1,5 +1,6 @@
 #include "session.hpp"
 #include <array>
+#include <algorithm>
 #include <QDir>
 #include <QFileInfo>
 #include <stdexcept>
@@ -40,7 +41,51 @@ QVariantList Session::levels() const {
     return {settings_.levels[0], settings_.levels[1]};
 }
 QVariantList Session::pitches() const {
-    return {settings_.pitches[0], settings_.pitches[1], settings_.pitches[2], settings_.pitches[3]};
+    QVariantList result;
+    for (const auto& step : settings_.steps) result.append(step.pitch);
+    return result;
+}
+QVariantList Session::stepEnabled() const {
+    QVariantList result;
+    for (const auto& step : settings_.steps) result.append(step.enabled);
+    return result;
+}
+QVariantList Session::velocities() const {
+    QVariantList result;
+    for (const auto& step : settings_.steps) result.append(step.velocity);
+    return result;
+}
+QVariantList Session::gates() const {
+    QVariantList result;
+    for (const auto& step : settings_.steps) result.append(step.gate);
+    return result;
+}
+void Session::selectStep(int index) {
+    if (index < 0 || index >= settings_.step_count) return;
+    selected_step_ = index;
+    emit changed();
+}
+void Session::setStepCount(int value) {
+    auto next = settings_; next.step_count = value;
+    if (next != settings_ && replace(next)) {
+        selected_step_ = std::min(selected_step_, value - 1);
+        dirty_ = true; emit changed();
+    }
+}
+void Session::setStepEnabled(int index, bool value) {
+    if (index < 0 || index >= settings_.step_count) return;
+    auto next = settings_; next.steps[static_cast<std::size_t>(index)].enabled = value;
+    if (next != settings_ && replace(next)) { dirty_ = true; emit changed(); }
+}
+void Session::setVelocity(int index, int value) {
+    if (index < 0 || index >= settings_.step_count) return;
+    auto next = settings_; next.steps[static_cast<std::size_t>(index)].velocity = value;
+    if (next != settings_ && replace(next)) { dirty_ = true; emit changed(); }
+}
+void Session::setGate(int index, int value) {
+    if (index < 0 || index >= settings_.step_count) return;
+    auto next = settings_; next.steps[static_cast<std::size_t>(index)].gate = value;
+    if (next != settings_ && replace(next)) { dirty_ = true; emit changed(); }
 }
 bool Session::editable() {
     status_ = prepared_->controller.status();
@@ -88,8 +133,8 @@ void Session::setLevel(int track, int value) {
     if (next != settings_ && replace(next)) { dirty_ = true; emit changed(); }
 }
 void Session::setPitch(int note, int value) {
-    if (note < 0 || note >= 4) return;
-    auto next = settings_; next.pitches[static_cast<std::size_t>(note)] = value;
+    if (note < 0 || note >= settings_.step_count) return;
+    auto next = settings_; next.steps[static_cast<std::size_t>(note)].pitch = value;
     if (next != settings_ && replace(next)) { dirty_ = true; emit changed(); }
 }
 bool Session::saveProject(const QString& path) {
@@ -115,6 +160,7 @@ bool Session::loadProject(const QString& path) {
         if (!replace(next)) return false;
         project_path_ = owned_path_ = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
         dirty_ = false;
+        selected_step_ = 0;
         message_ = "Project opened. Launch clips, then press Play.";
         emit changed();
         return true;

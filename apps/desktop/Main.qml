@@ -4,7 +4,7 @@ import QtQuick.Layouts
 
 ApplicationWindow {
     id: window
-    width: 1040; height: 660
+    width: 1040; height: 820
     minimumWidth: 900; minimumHeight: 620
     visible: true
     property bool discardOnClose: false
@@ -71,35 +71,78 @@ ApplicationWindow {
                         required property int index
                         required property string modelData
                         Layout.fillWidth: true; Layout.fillHeight: true; spacing: 14
+                        Layout.preferredWidth: index === 0 ? 280 : 620
+                        Layout.minimumWidth: index === 0 ? 220 : 500
                         Label { text: modelData; font.bold: true; font.pixelSize: 18 }
                         Button {
                             objectName: "clip" + index
-                            Layout.fillWidth: true; Layout.preferredHeight: 112
+                            Layout.fillWidth: true; Layout.preferredHeight: 72
                             highlighted: session.activeClips[index] === 0
-                            text: (session.activeClips[index] === 0 ? "●  " : "▶  ") + (index === 0 ? "Low pulse\nAudio loop · 1 beat" : "Rising steps\nMIDI loop · 1 bar")
+                            text: (session.activeClips[index] === 0 ? "●  " : "▶  ") + (index === 0 ? "Low pulse\nAudio loop · 1 beat" : "Step pattern\nMIDI loop · " + session.stepCount + " beats")
                             onClicked: session.launch(index, 0)
-                            Accessible.name: index === 0 ? "Launch low pulse audio clip" : "Launch rising steps MIDI clip"
+                            Accessible.name: index === 0 ? "Launch low pulse audio clip" : "Launch MIDI step pattern"
                             Accessible.description: session.clipStates[index]
                         }
                         Label { objectName: "clipState" + index; text: session.clipStates[index]; color: session.activeClips[index] >= 0 ? "#68d9a4" : "#b7c5d8" }
                         Button { text: "Stop track on next bar"; Layout.fillWidth: true; onClicked: session.stopTrack(index) }
-                        Label { visible: index === 1; text: "MIDI pitches · quarter-note steps"; color: "#9daabd" }
-                        RowLayout {
-                            visible: index === 1
-                            Layout.fillWidth: true
-                            Repeater {
-                                model: 4
-                                SpinBox {
-                                    required property int index
-                                    objectName: "pitch" + index
-                                    Layout.fillWidth: true; Layout.preferredWidth: 66
-                                    from: 0; to: 127; value: session.pitches[index]; enabled: session.canEdit
-                                    onValueModified: session.setPitch(index, value)
-                                    Accessible.name: "MIDI pitch " + (index + 1)
+                        Loader {
+                            active: index === 1; visible: active
+                            Layout.fillWidth: true; Layout.fillHeight: true
+                            sourceComponent: Component {
+                                ScrollView {
+                                    id: patternScroll
+                                    clip: true
+                                    contentWidth: availableWidth
+                                    ColumnLayout {
+                                        width: patternScroll.availableWidth
+                                        spacing: 8
+                                        RowLayout {
+                                            Label { text: "Quarter-note steps"; Layout.fillWidth: true }
+                                            SpinBox { objectName: "stepCount"; from: 1; to: 16; value: session.stepCount; enabled: session.canEdit; onValueModified: session.setStepCount(value); Accessible.name: "Pattern length in quarter notes" }
+                                        }
+                                        GridLayout {
+                                            columns: 4
+                                            Layout.fillWidth: true
+                                            Repeater {
+                                                model: 16
+                                                Button {
+                                                    required property int index
+                                                    objectName: "step" + index
+                                                    Layout.fillWidth: true; Layout.preferredHeight: 34
+                                                    text: (index + 1) + " · " + (session.stepEnabled[index] ? session.pitches[index] : "Rest")
+                                                    enabled: index < session.stepCount
+                                                    checkable: true; checked: session.selectedStep === index
+                                                    highlighted: session.selectedStep === index
+                                                    palette.highlight: "#e4bc75"
+                                                    onClicked: session.selectStep(index)
+                                                    Accessible.name: "Select step " + (index + 1)
+                                                }
+                                            }
+                                        }
+                                        RowLayout {
+                                            Label { text: "Step " + (session.selectedStep + 1); Layout.fillWidth: true }
+                                            CheckBox { objectName: "stepEnabled"; text: "Note enabled"; checked: session.stepEnabled[session.selectedStep]; enabled: session.canEdit; onClicked: session.setStepEnabled(session.selectedStep, checked) }
+                                        }
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            ColumnLayout {
+                                                Label { text: "Pitch (MIDI)" }
+                                                SpinBox { objectName: "selectedPitch"; from: 0; to: 127; value: session.pitches[session.selectedStep]; enabled: session.canEdit; onValueModified: session.setPitch(session.selectedStep,value); Accessible.name: "Selected step MIDI pitch" }
+                                            }
+                                            ColumnLayout {
+                                                Label { text: "Velocity %" }
+                                                SpinBox { objectName: "selectedVelocity"; from: 0; to: 100; value: session.velocities[session.selectedStep]; enabled: session.canEdit; onValueModified: session.setVelocity(session.selectedStep,value); Accessible.name: "Selected step velocity percent" }
+                                            }
+                                            ColumnLayout {
+                                                Label { text: "Gate %" }
+                                                SpinBox { objectName: "selectedGate"; from: 1; to: 100; value: session.gates[session.selectedStep]; enabled: session.canEdit; onValueModified: session.setGate(session.selectedStep,value); Accessible.name: "Selected step gate percent" }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
-                        Item { Layout.fillHeight: true }
+                        Item { visible: index === 0; Layout.fillHeight: true }
                         RowLayout {
                             Label { text: "Level %"; color: "#9daabd" }
                             SpinBox { objectName: "level" + index; from: 0; to: 100; value: session.levels[index]; enabled: session.canEdit; onValueModified: session.setLevel(index, value); Accessible.name: "Track " + (index + 1) + " level percent" }

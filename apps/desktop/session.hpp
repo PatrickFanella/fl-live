@@ -13,6 +13,11 @@ class Session final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList activeClips READ activeClips NOTIFY changed)
     Q_PROPERTY(QVariantList clipStates READ clipStates NOTIFY changed)
+    Q_PROPERTY(int stepCount READ stepCount NOTIFY changed)
+    Q_PROPERTY(int selectedStep READ selectedStep NOTIFY changed)
+    Q_PROPERTY(QVariantList stepEnabled READ stepEnabled NOTIFY changed)
+    Q_PROPERTY(QVariantList velocities READ velocities NOTIFY changed)
+    Q_PROPERTY(QVariantList gates READ gates NOTIFY changed)
     Q_PROPERTY(int tempo READ tempo NOTIFY changed)
     Q_PROPERTY(QVariantList levels READ levels NOTIFY changed)
     Q_PROPERTY(QVariantList pitches READ pitches NOTIFY changed)
@@ -29,6 +34,16 @@ public:
     ~Session() override;
     QVariantList activeClips() const;
     QVariantList clipStates() const;
+    int stepCount() const { return settings_.step_count; }
+    int selectedStep() const { return selected_step_; }
+    QVariantList stepEnabled() const;
+    QVariantList velocities() const;
+    QVariantList gates() const;
+    Q_INVOKABLE void selectStep(int index);
+    Q_INVOKABLE void setStepCount(int value);
+    Q_INVOKABLE void setStepEnabled(int index, bool value);
+    Q_INVOKABLE void setVelocity(int index, int value);
+    Q_INVOKABLE void setGate(int index, int value);
     int tempo() const { return settings_.tempo; }
     QVariantList levels() const;
     QVariantList pitches() const;
@@ -67,6 +82,7 @@ private:
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
     bool dirty_ = false;
+    int selected_step_ = 0;
     bool replace(const ProjectSettings& settings);
     bool editable();
     QTimer timer_;
