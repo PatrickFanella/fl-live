@@ -7,10 +7,85 @@
 #include <array>
 #include <functional>
 #include <limits>
+#include <QTemporaryDir>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void projectRoundTrip() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath("session.json");
+        ProjectSettings settings;
+        settings.tempo = 137; settings.levels = {35, 60}; settings.pitches = {48, 55, 59, 62};
+        writeProject(path, settings);
+        const auto decoded = readProject(path);
+        QVERIFY(decoded == settings);
+        auto render = [](const ProjectSettings& value) {
+            const auto plan = prepareProject(value);
+            fl_live::Engine engine(plan);
+            engine.start();
+            if (engine.schedule({fl_live::CommandKind::launch, 0, 0, 0}) != fl_live::ScheduleResult::accepted ||
+                engine.schedule({fl_live::CommandKind::launch, 0, 1, 0}) != fl_live::ScheduleResult::accepted)
+                throw std::runtime_error("test launch failed");
+            std::vector<float> samples(180000);
+            engine.process(samples);
+            return samples;
+        };
+        const auto before = render(settings);
+        QVERIFY(before == render(decoded));
+        QVERIFY(before != render(ProjectSettings{}));
+        for (int tempo : {20, 137, 300}) {
+            settings.tempo = tempo;
+            const auto plan = prepareProject(settings);
+            fl_live::Engine validated(plan);
+            QCOMPARE(std::get<fl_live::MidiClip>(plan.tracks[1].clips[0]).length,
+                *fl_live::TempoGrid(48000, static_cast<std::uint32_t>(tempo*1000)).try_next_bar(1));
+        }
+    }
+    void documentSafety() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        Session session;
+        session.setTempo(137); session.setLevel(0,35); session.setPitch(0,48);
+        QVERIFY(session.dirty());
+        const auto path = directory.filePath("saved.json");
+        QVERIFY(session.saveProject(path)); QVERIFY(!session.dirty());
+        session.setTempo(150); QVERIFY(session.dirty());
+        QVERIFY(!session.loadProject(path)); QCOMPARE(session.tempo(),150);
+        const auto other = directory.filePath("other.json");
+        QVERIFY(session.saveProject(other));
+        QVERIFY(session.loadProject(path)); QCOMPARE(session.tempo(),137);
+        QCOMPARE(session.levels()[0].toInt(),35); QCOMPARE(session.pitches()[0].toInt(),48);
+        QCOMPARE(session.position(),QString("1.1"));
+        session.play();
+        session.setTempo(180); QCOMPARE(session.tempo(),137); // queued start blocks editing
+        session.tick();
+        session.setTempo(200); QCOMPARE(session.tempo(),137);
+        QVERIFY(!session.loadProject(path)); QVERIFY(session.running());
+        session.stop(); session.tick();
+        QFile file(directory.filePath("unrelated.json"));
+        QVERIFY(file.open(QIODevice::WriteOnly)); file.write("keep me"); file.close();
+        QVERIFY(!session.saveProject(file.fileName()));
+        QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(),QByteArray("keep me")); file.close();
+        QVERIFY(!session.loadProject(file.fileName())); QCOMPARE(session.tempo(),137);
+        QVERIFY(file.open(QIODevice::WriteOnly|QIODevice::Truncate));file.write(QByteArray(65537,' '));file.close();
+        QVERIFY(!session.loadProject(file.fileName())); QCOMPARE(session.tempo(),137);
+        QFile valid(path); QVERIFY(valid.open(QIODevice::ReadOnly));
+        const auto document = QJsonDocument::fromJson(valid.readAll()).object(); valid.close();
+        for (const auto& key : {QString("version"),QString("tempo"),QString("levels"),QString("pitches"),QString("template")}) {
+            auto broken = document; broken.insert(key, -1);
+            QVERIFY(file.open(QIODevice::WriteOnly|QIODevice::Truncate)); file.write(QJsonDocument(broken).toJson());file.close();
+            QVERIFY(!session.loadProject(file.fileName())); QCOMPARE(session.tempo(),137);
+        }
+        session.setLevel(0,101); QCOMPARE(session.levels()[0].toInt(),35); QVERIFY(!session.dirty());
+        session.setPitch(0,-1); QCOMPARE(session.pitches()[0].toInt(),48);
+        QVERIFY(!session.saveProject(directory.filePath("missing/child.json"))); QVERIFY(!session.dirty());
+        session.setTempo(160); QVERIFY(session.saveProject(path)); QCOMPARE(readProject(path).tempo,160);
+    }
     void acknowledgement() {
         Session session;
         session.play();
@@ -72,6 +147,20 @@ private slots:
             const auto point = item->mapToScene(QPointF(item->width()/2,item->height()/2));
             QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, point.toPoint());
         };
+        auto* tempo = findItem(window->contentItem(), "tempoSpin");
+        QVERIFY(tempo); tempo->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_Up);
+        QCOMPARE(session.tempo(),121); QVERIFY(session.dirty());
+        QTemporaryDir directory;
+        auto* projectFile = window->findChild<QObject*>("projectFile");
+        QVERIFY(projectFile); projectFile->setProperty("text",directory.filePath("qml.json"));
+        QVERIFY(!window->close()); // dirty close must leave the window open
+        auto* dialog = window->findChild<QObject*>("closeDialog");
+        QVERIFY(dialog); QVERIFY(dialog->property("visible").toBool());
+        QVERIFY(QMetaObject::invokeMethod(dialog,"close"));
+        click("saveProjectButton"); QVERIFY(!session.dirty());
+        QCOMPARE(readProject(directory.filePath("qml.json")).tempo,121);
+        click("openProjectButton"); QCOMPARE(session.tempo(),121);
         QVERIFY(window->grabWindow().save("desktop-session.png"));
         click("clip0"); session.tick();
         click("playButton"); session.tick(); QVERIFY(session.running());

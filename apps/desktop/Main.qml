@@ -5,9 +5,29 @@ import QtQuick.Layouts
 ApplicationWindow {
     id: window
     width: 1040; height: 660
-    minimumWidth: 760; minimumHeight: 520
+    minimumWidth: 900; minimumHeight: 620
     visible: true
-    title: "fl-live · Session prototype"
+    property bool discardOnClose: false
+    title: "fl-live · Session" + (session.dirty ? " · Unsaved changes" : "")
+    onClosing: function(close) {
+        if (session.dirty && !discardOnClose) {
+            close.accepted = false
+            closeDialog.open()
+        }
+    }
+    Dialog {
+        id: closeDialog
+        objectName: "closeDialog"
+        anchors.centerIn: parent
+        title: "Unsaved changes"
+        modal: true
+        Label { text: "Save the project before closing, or discard your edits." }
+        footer: RowLayout {
+            Button { text: "Save and close"; onClicked: { if (session.saveProject(projectFile.text)) { window.discardOnClose = true; window.close() } } }
+            Button { text: "Discard and close"; onClicked: { window.discardOnClose = true; window.close() } }
+            Button { objectName: "cancelClose"; text: "Cancel"; onClicked: closeDialog.close() }
+        }
+    }
     color: "#191d24"
     palette.windowText: "#e8edf5"
     palette.buttonText: "#e8edf5"
@@ -28,8 +48,16 @@ ApplicationWindow {
             Button { text: "Return to start"; enabled: !session.running && !session.pending; onClicked: session.rewind() }
             Label { objectName: "transportState"; text: session.running ? "Playing" : "Stopped"; Layout.preferredWidth: 80 }
             Label { text: session.position; font.pixelSize: 24; font.family: "monospace"; Layout.fillWidth: true }
-            Label { text: "120 BPM · 4/4 · 1 bar"; color: "#9daabd" }
+            Label { text: "BPM"; color: "#9daabd" }
+            SpinBox { objectName: "tempoSpin"; from: 20; to: 300; value: session.tempo; enabled: session.canEdit; editable: true; onValueModified: session.setTempo(value); Accessible.name: "Tempo in beats per minute" }
             Button { text: "Silence now"; onClicked: session.panic() }
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            TextField { id: projectFile; objectName: "projectFile"; Layout.fillWidth: true; text: session.projectPath; placeholderText: "Project file path"; Accessible.name: "Project file path" }
+            Button { objectName: "saveProjectButton"; text: "Save"; onClicked: session.saveProject(projectFile.text) }
+            Button { objectName: "openProjectButton"; text: "Open"; enabled: session.canEdit; onClicked: session.loadProject(projectFile.text) }
+            Label { text: session.dirty ? "Unsaved changes" : "No pending edits"; color: "#e4bc75" }
         }
         Rectangle {
             color: "#242c37"; radius: 8
@@ -51,15 +79,34 @@ ApplicationWindow {
                             Accessible.name: index === 0 ? "Launch low pulse audio clip" : "Launch rising steps MIDI clip"
                         }
                         Button { text: "Stop track on next bar"; Layout.fillWidth: true; onClicked: session.stopTrack(index) }
+                        Label { visible: index === 1; text: "MIDI pitches · quarter-note steps"; color: "#9daabd" }
+                        RowLayout {
+                            visible: index === 1
+                            Layout.fillWidth: true
+                            Repeater {
+                                model: 4
+                                SpinBox {
+                                    required property int index
+                                    objectName: "pitch" + index
+                                    Layout.fillWidth: true; Layout.preferredWidth: 66
+                                    from: 0; to: 127; value: session.pitches[index]; enabled: session.canEdit
+                                    onValueModified: session.setPitch(index, value)
+                                    Accessible.name: "MIDI pitch " + (index + 1)
+                                }
+                            }
+                        }
                         Item { Layout.fillHeight: true }
-                        Label { text: index === 0 ? "Fixed gain 70%" : "Fixed gain 25%"; color: "#9daabd" }
+                        RowLayout {
+                            Label { text: "Level %"; color: "#9daabd" }
+                            SpinBox { objectName: "level" + index; from: 0; to: 100; value: session.levels[index]; enabled: session.canEdit; onValueModified: session.setLevel(index, value); Accessible.name: "Track " + (index + 1) + " level percent" }
+                        }
                     }
                 }
             }
         }
         Label {
             Layout.fillWidth: true; wrapMode: Text.WordWrap
-            text: "Authored demo · Launch clips, then press Play. Transport reflects the engine; clip requests are acknowledged as scheduled, with no active-clip indicator yet."
+            text: "Pulse + Steps · Edit while stopped. Changes return to the start and clear queued launches. Launch clips, then press Play. 4/4 · 1-bar launch grid."
             color: "#9daabd"
         }
         Label { objectName: "statusMessage"; Layout.fillWidth: true; text: session.message; wrapMode: Text.WordWrap }

@@ -162,6 +162,14 @@ context.objects = [
             assert stats["callbacks"] > 0 and stats["frames"] >= 24000 and stats["error"] == 0, stats
             assert stats["bad_buffers"] == stats["rejected"] == 0 and stats["handled_serial"] == 2 and not stats["running"], stats
 
+            project_rebuilds = None
+            if len(sys.argv) > 2:
+                probe = subprocess.run([str(pathlib.Path(sys.argv[2]).resolve()), remote], env=env,
+                                       capture_output=True, text=True, timeout=15)
+                assert probe.returncode == 0, (probe.stdout, probe.stderr)
+                assert "three stopped project rebuilds" in probe.stdout, probe.stdout
+                project_rebuilds = probe.stdout.strip()
+
             # A second actual client must report the loss of this owned server
             # and exit; this does not touch any pre-existing server or stream.
             player = subprocess.Popen([binary, "--remote", remote, "--group", "pipewire.test", "--duration-ms", "5000"],
@@ -187,7 +195,7 @@ context.objects = [
             assert lost["error"] != 0 and lost["callbacks"] > 0 and not lost["running"], lost
             print(json.dumps(dict(passed=True,scope="private software graph; no hardware/audio-device qualification",
                                   captured_frames=len(values), capture_returncode=capture_code,
-                                  silent_prefix=first, playback=stats, server_loss=lost)))
+                                  silent_prefix=first, playback=stats, server_loss=lost, project_rebuilds=project_rebuilds)))
         except Exception:
             print((root / "server.log").read_text(errors="replace")[-2000:], file=sys.stderr)
             raise

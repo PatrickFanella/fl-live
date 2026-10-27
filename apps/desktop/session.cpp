@@ -1,41 +1,116 @@
 #include "session.hpp"
 #include <array>
-#include <cmath>
+#include <QDir>
+#include <QFileInfo>
+#include <stdexcept>
 
-namespace {
-fl_live::SessionPlan demo() {
-    using namespace fl_live;
-    AudioClip pulse;
-    pulse.samples.resize(24000);
-    for (std::size_t n = 0; n < pulse.samples.size(); ++n) {
-        const double t = static_cast<double>(n) / 48000.0;
-        pulse.samples[n] = static_cast<float>(0.18 * std::sin(2 * 3.141592653589793 * 110 * t) * std::exp(-22 * t));
-    }
-    return {48000, 120000, {{0.7F, {pulse}}, {0.25F, {MidiClip{96000,
-        {{0, 18000, 60, 0.7F}, {24000, 18000, 64, 0.7F},
-         {48000, 18000, 67, 0.7F}, {72000, 18000, 72, 0.7F}}, true}}}}};
-}
-}
 Session::Session(fl_live::PipeWireConfig config, QObject* parent)
-    : QObject(parent), plan_(demo()), controller_(plan_), preview_(config.remote.empty()) {
-    if (!preview_) backend_ = std::make_unique<fl_live::PipeWireBackend>(controller_, std::move(config));
+    : QObject(parent), config_(std::move(config)), prepared_(std::make_unique<Prepared>(settings_)),
+      project_path_(QDir::home().filePath("fl-live-project.json")), preview_(config_.remote.empty()) {
+    if (!preview_) prepared_->backend = std::make_unique<fl_live::PipeWireBackend>(prepared_->controller, config_);
     timer_.setInterval(10);
     connect(&timer_, &QTimer::timeout, this, &Session::tick);
     timer_.start();
 }
 Session::~Session() {
     timer_.stop();
-    backend_.reset(); // joins processing before the immutable plan is destroyed
-    controller_.finish();
+    // Prepared's backend is destroyed before its controller and immutable plan.
+    prepared_.reset();
+}
+QVariantList Session::levels() const {
+    return {settings_.levels[0], settings_.levels[1]};
+}
+QVariantList Session::pitches() const {
+    return {settings_.pitches[0], settings_.pitches[1], settings_.pitches[2], settings_.pitches[3]};
+}
+bool Session::editable() {
+    status_ = prepared_->controller.status();
+    if (!canEdit()) {
+        message_ = "Stop transport and wait for acknowledgement before editing or loading.";
+        emit changed();
+        return false;
+    }
+    return true;
+}
+bool Session::replace(const ProjectSettings& settings) {
+    if (!editable()) return false;
+    try {
+        // Allocate and validate a candidate before interrupting the existing backend.
+        auto candidate = std::make_unique<Prepared>(settings);
+        prepared_->backend.reset();
+        try {
+            if (!preview_) candidate->backend = std::make_unique<fl_live::PipeWireBackend>(candidate->controller, config_);
+        } catch (...) {
+            failed_ = true; // old document survives; processing has been joined
+            status_ = prepared_->controller.status();
+            throw;
+        }
+        prepared_.swap(candidate); // old plan is destroyed only on the GUI thread
+        settings_ = settings;
+        serial_ = 0;
+        status_ = prepared_->controller.status();
+        message_ = "Session prepared at the start. Launch clips, then press Play.";
+        return true;
+    } catch (const std::exception& error) {
+        message_ = QString::fromUtf8(error.what());
+        if (failed_) message_ += ". Audio is stopped; restart the app to reconnect.";
+        emit changed();
+        return false;
+    }
+}
+void Session::setTempo(int value) {
+    auto next = settings_; next.tempo = value;
+    if (next != settings_ && replace(next)) { dirty_ = true; emit changed(); }
+}
+void Session::setLevel(int track, int value) {
+    if (track < 0 || track >= 2) return;
+    auto next = settings_; next.levels[static_cast<std::size_t>(track)] = value;
+    if (next != settings_ && replace(next)) { dirty_ = true; emit changed(); }
+}
+void Session::setPitch(int note, int value) {
+    if (note < 0 || note >= 4) return;
+    auto next = settings_; next.pitches[static_cast<std::size_t>(note)] = value;
+    if (next != settings_ && replace(next)) { dirty_ = true; emit changed(); }
+}
+bool Session::saveProject(const QString& path) {
+    try {
+        if (path.trimmed().isEmpty()) throw std::invalid_argument("Enter a project file path");
+        const auto target = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+        if (QFileInfo::exists(target) && target != owned_path_)
+            throw std::invalid_argument("File already exists. Open that project first or choose a new path.");
+        writeProject(target, settings_);
+        project_path_ = owned_path_ = target;
+        dirty_ = false;
+        message_ = "Project saved";
+        emit changed();
+        return true;
+    } catch (const std::exception& error) { message_ = QString::fromUtf8(error.what()); emit changed(); return false; }
+}
+bool Session::loadProject(const QString& path) {
+    if (dirty_) { message_ = "Save your changes before opening another project."; emit changed(); return false; }
+    if (!editable()) return false;
+    try {
+        if (!QFileInfo(path).isFile()) throw std::invalid_argument("Choose a regular project file");
+        const auto next = readProject(path);
+        if (!replace(next)) return false;
+        project_path_ = owned_path_ = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+        dirty_ = false;
+        message_ = "Project opened. Launch clips, then press Play.";
+        emit changed();
+        return true;
+    } catch (const std::exception& error) { message_ = QString::fromUtf8(error.what()); emit changed(); return false; }
 }
 QString Session::position() const {
-    const auto beat = status_.position / 24000;
+    constexpr std::uint64_t frames_per_minute = 48000ULL * 60;
+    // Split the product so a long-running playhead cannot overflow the display.
+    const auto beat = status_.position / frames_per_minute * static_cast<std::uint64_t>(settings_.tempo) +
+        (status_.position % frames_per_minute) * static_cast<std::uint64_t>(settings_.tempo) / frames_per_minute;
     return QString("%1.%2").arg(beat / 4 + 1).arg(beat % 4 + 1);
 }
 void Session::send(fl_live::ControlKind kind, std::size_t track, std::size_t clip) {
     if (failed_) return;
     const auto next = serial_ + 1;
-    if (controller_.submit({kind, {fl_live::CommandKind::launch, 0, track, clip}, next})) {
+    if (prepared_->controller.submit({kind, {fl_live::CommandKind::launch, 0, track, clip}, next})) {
         serial_ = next;
         message_ = "Awaiting render acknowledgement";
     } else message_ = "Control queue full. Try again, or use Silence now.";
@@ -56,22 +131,22 @@ void Session::stopTrack(int track) {
     send(fl_live::ControlKind::stop_next_bar, static_cast<std::size_t>(track));
 }
 void Session::panic() {
-    controller_.panic();
+    prepared_->controller.panic();
     message_ = "Silence requested; awaiting the rendering thread";
     emit changed();
 }
 void Session::tick() {
     if (preview_) {
         std::array<float, 480> discarded{};
-        controller_.process(discarded); // simulated clock, no audio output
+        prepared_->controller.process(discarded); // simulated clock, no audio output
     }
-    if (backend_ && backend_->status().error) {
-        backend_.reset();
+    if (prepared_->backend && prepared_->backend->status().error) {
+        prepared_->backend.reset();
         failed_ = true;
         message_ = "Audio backend disconnected. Restart the application to reconnect.";
     }
     const auto before = status_;
-    status_ = controller_.status();
+    status_ = prepared_->controller.status();
     if (!failed_ && status_.handled_serial != before.handled_serial)
         message_ = status_.rejected != before.rejected ? "Engine rejected a scheduled command" :
             "Render acknowledged. Clip requests are scheduled on the bar grid.";

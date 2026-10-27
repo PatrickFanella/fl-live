@@ -1,6 +1,6 @@
 # Desktop session contract
 
-The optional `desktop` preset builds `fl-live`, an original Qt 6.12/QML session prototype. Two immutable authored tracks provide a decaying audio pulse and a four-note MIDI loop. This is a development slice; it cannot yet edit or persist projects.
+The optional `desktop` preset builds `fl-live`, an original Qt 6.12/QML session prototype. Two immutable authored tracks provide a decaying audio pulse and a four-note MIDI loop. The authored session now supports stopped tempo/level/pitch edits and versioned template project save/reload; see [project contract](projects.md).
 
 `Session` owns the immutable plan before constructing its controller. The GUI thread is the sole command producer. In silent preview, its 10 ms timer renders and discards 480 mono frames per tick on that same thread. Timer delays slow the simulated clock. In PipeWire mode, the backend exclusively owns rendering; the GUI timer only polls status. Backend destruction joins processing before controller/plan destruction. No Qt code runs in the audio callback.
 
@@ -16,4 +16,6 @@ No remote argument selects silent preview. `--remote NAME` explicitly connects t
 
 `desktop-session` uses Qt's offscreen platform and software scene graph. It loads the actual QML resource, sends mouse clicks to the clip/Play/Stop controls and checks transport labels. A deterministic bridge test verifies acknowledgement, rewind, invalid clip and panic. Sample checks verify launch at frame 96,000 and track stop at 192,000 across 257-frame blocks; clock overflow returns no boundary. A local PNG from the actual offscreen window is retained under `build/desktop/desktop-session.png` and was inspected for layout.
 
-The desktop preset also runs engine/controller/offline WAV/private PipeWire tests. The private audio integration still uses the headless playback client, so it does not qualify the QML-to-physical-device journey. Wayland desktop input, hardware audibility, device changes, accessibility and extended playback remain unverified. Licensing, hosted CI, packaging and a useful editable musical workflow remain incomplete.
+The desktop preset also runs engine/controller/offline WAV/private PipeWire tests. The private audio integration still uses the headless playback client, so it does not qualify the QML-to-physical-device journey. Wayland desktop input, hardware audibility, device changes, accessibility and extended playback remain unverified. Licensing, packaging and a useful general editing workflow remain incomplete. Hosted CI is configured and passed on the preceding foundation.
+
+The private-graph test now also performs three stopped backend replacements through the desktop `Session` bridge. Offscreen QML checks cover tempo editing, save/open and dirty-close refusal. General clip/media editing and physical audio qualification remain open.

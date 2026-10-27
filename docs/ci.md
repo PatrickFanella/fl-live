@@ -10,7 +10,7 @@ After building the image, CI runs it as an unprivileged user with networking dis
 
 | Preset | Coverage |
 |---|---|
-| desktop | Engine, control handoff, WAV round trip, private PipeWire graph, offscreen QML mouse/transport checks |
+| desktop | Engine, control handoff, WAV round trip, private PipeWire graph, offscreen QML editing/save/open checks and stopped desktop backend replacements |
 | release | Optimized engine/controller and WAV checks with assertions active |
 | engine-only | Core build without Qt, PipeWire, libsndfile or Python as linked dependencies |
 | pipewire-sanitize | Engine/controller/WAV/private audio checks with ASan and UBSan |
