@@ -47,6 +47,23 @@ with tempfile.TemporaryDirectory(prefix="fl-live-pw-") as temporary:
     env = dict(os.environ, XDG_RUNTIME_DIR=str(root), PIPEWIRE_RUNTIME_DIR=str(root),
                PIPEWIRE_REMOTE=remote, XDG_CONFIG_HOME=str(root / "config"),
                DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent", PIPEWIRE_DEBUG="0")
+    # Own the client configuration as well as the server. This software-only
+    # test does not use desktop RTKit/portal scheduling or a session manager.
+    client_dir = root / "config" / "pipewire"
+    client_dir.mkdir(parents=True)
+    (client_dir / "client.conf").write_text('''
+context.properties = { support.dbus = false }
+context.spa-libs = {
+    audio.convert.* = audioconvert/libspa-audioconvert
+    support.* = support/libspa-support
+}
+context.modules = [
+    { name = libpipewire-module-protocol-native }
+    { name = libpipewire-module-client-node }
+    { name = libpipewire-module-adapter }
+    { name = libpipewire-module-metadata }
+]
+''')
     configuration = root / "private.conf"
     configuration.write_text('''
 context.properties = {

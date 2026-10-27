@@ -1,0 +1,63 @@
+{
+  "recorded_at": "2026-10-27T00:10:13.393586+00:00",
+  "base_commit": "3685d12acc15c02813370bde391d1e739958de1e",
+  "scope": "Local fresh Docker image build and full isolated verification; hosted admission pending",
+  "archive_snapshot": "2026-10-20",
+  "base_digest": "sha256:2acfa2683d458b7803b7aa4ee3c139d2ba6922cd84666fcb7496a3a02fcc4c83",
+  "network": "none during verification",
+  "user": "builder uid1000",
+  "tests": {
+    "desktop": {
+      "tests": "5",
+      "failures": "0"
+    },
+    "release": {
+      "tests": "3",
+      "failures": "0"
+    },
+    "engine-only": {
+      "tests": "2",
+      "failures": "0"
+    },
+    "pipewire-sanitize": {
+      "tests": "4",
+      "failures": "0"
+    }
+  },
+  "total_ctest_executions": 14,
+  "shellcheck": "passed ci/verify.sh",
+  "yaml_parse": "passed",
+  "log_root": "build/ci-final-container-results",
+  "diagnosis": "Default system client modules produced 652-byte LeakSanitizer report. Balanced pw_init/pw_deinit; fixture now owns minimal software client config. Full final cohort passes with leak detection enabled; system desktop module lifecycle remains unqualified.",
+  "source_sha256": {
+    "ci/Dockerfile": "699c98e2179a6e391fb2f1d075bae43ce7d0edafcccf02883a9c082b8fafd3a2",
+    "ci/verify.sh": "e669d8ee6ca553f1a000d922ff483181235c8d2cda0914eefdf774f233531e5b",
+    ".gitea/workflows/ci.yml": "1e66413b0b39064db8597b4519390b49b39d7d22c7c31d003c7a1fb7011715be",
+    "src/pipewire_backend.cpp": "08e102643844cc83c3ff8943a546ac4379ed8b207b18e8a6f960453d634b6cb6",
+    "tests/pipewire_integration.py": "31dacf9f2e5a98c97988ad3a31300be966716faa4fa440d26574f53fc3e3d001"
+  },
+  "result_sha256": {
+    "desktop-LastTest.log": "69da6eada341ac9cd08d7530777a6d7b12608c12c87dec936ac3954cf6b22d9a",
+    "desktop-build.log": "5ac16e2c59b8e595929cae52b3577fb0c4a2b4031fe50d1f0c6b90f03747ab4d",
+    "desktop-configure.log": "f6291e00d61894c5f14e1097e97edba4ebc13573f1b5b23eb4614f411c9b0d02",
+    "desktop-junit.xml": "81cb6f69752b97c1a34a984fecfebded0eb682daac22974ea1fc605dcef50190",
+    "desktop-session.png": "017c864431072622c5103c8a7fb6351bad835066b3662e113917c074c98cd6b3",
+    "desktop-test.log": "76d83564bfeffe1b0d9231c040bcea07bae31b293765aca5fcc498e53161b929",
+    "engine-only-LastTest.log": "6438b57bc77b61df9e9c83a28b2a863724d57d24a8911f7b944488f08e986e90",
+    "engine-only-build.log": "e3d539df8c9351dc95e0540c969eac6625e9867e36f4d1c535c1ea8f1e2a55d7",
+    "engine-only-configure.log": "8d49e5c33aff1d8ad85f3ec6fc542de6029bda8b3a90853166235bcede7e8bdd",
+    "engine-only-junit.xml": "03dd7a50492e7bcc36a250fe325cc245c60eb855068a273c6b542495900a5ff2",
+    "engine-only-test.log": "dd9a5320af8f09a6b8fe8a9c8bb95d4c2bef3b1b1ea0da1b654ef65d98d65d7a",
+    "pipewire-sanitize-LastTest.log": "a5edb321dd1d95a71ed0e17594f90e941e3d914d0fccd7cb1d442e477ccda84f",
+    "pipewire-sanitize-build.log": "e4104acba211b51cf3547ab89127b3127839c7f22d022379599c6791b27bdb52",
+    "pipewire-sanitize-configure.log": "923740c3bbecc7d65371c51109ca798f51e3d3070d19d8194588d728e2c274bb",
+    "pipewire-sanitize-junit.xml": "c41c79248f7806e54b6e877bbf868de552b8881dbfa6af508c70ee30ed93fdcc",
+    "pipewire-sanitize-test.log": "60e023584029b0fb7e35019ab65ddfe6a55d450cedb6204948519ff66fc9ccc6",
+    "release-LastTest.log": "1be96790339e59b1ad9ee05d1675738e0f1746098901bb8c32c1715c3b8c69cb",
+    "release-build.log": "ff999d2f8be7c3df11d80a61a5c818877420b7d59d4181b40eaec62561ea0aad",
+    "release-configure.log": "bd8a173aabb4ff89c55d641e55f692cd5d5e8caba240876bc95a881949d1b1c6",
+    "release-junit.xml": "bf5951c1a794b4e5f3491709644beab9951bebd31fe425c89b6100bee75a4961",
+    "release-test.log": "4682513f8e099b700804dde9e65067e0cb5bdb0e6083e1fa25dbaa0fb29c47b6",
+    "toolchain.txt": "9d5c6065563d5d832064c89f9341f3a65b0f516aa30edceafbde8a2c6c8e3481"
+  }
+}

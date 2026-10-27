@@ -19,7 +19,7 @@ struct PipeWireBackend::Impl {
     std::atomic<int> state{PW_STREAM_STATE_UNCONNECTED}, error{0};
     std::atomic<bool> format_ok{false};
     std::atomic<std::uint64_t> callbacks{0}, frames{0}, bad_buffers{0}, max_ns{0}, over_budget{0};
-    bool started = false;
+    bool started = false, initialized = false;
 
     Impl(RenderController& value, PipeWireConfig settings) : controller(value), config(std::move(settings)) {}
     ~Impl() {
@@ -30,6 +30,7 @@ struct PipeWireBackend::Impl {
         if (core) { spa_hook_remove(&core_hook); pw_core_disconnect(core); }
         if (context) pw_context_destroy(context);
         if (loop) pw_thread_loop_destroy(loop);
+        if (initialized) pw_deinit();
         controller.finish();
     }
     static void state_changed(void* data, pw_stream_state, pw_stream_state next, const char*) noexcept {
@@ -94,6 +95,7 @@ struct PipeWireBackend::Impl {
         if (config.remote.empty()) throw std::invalid_argument("PipeWire remote must be explicit");
         if (config.sample_rate != controller.sample_rate()) throw std::invalid_argument("backend rate must match prepared session");
         pw_init(nullptr, nullptr);
+        initialized = true;
         loop = pw_thread_loop_new("fl-live-control", nullptr);
         if (!loop) throw std::runtime_error("cannot create PipeWire loop");
         context = pw_context_new(pw_thread_loop_get_loop(loop), nullptr, 0);

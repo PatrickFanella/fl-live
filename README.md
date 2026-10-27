@@ -47,6 +47,10 @@ rtk proxy ctest --preset pipewire
 
 The test creates a private software-only server in a temporary directory, links only its authored playback/capture clients, validates samples and tests server loss. It loads no hardware modules and changes no running desktop service. `pipewire-sanitize` adds ASan/UBSan. For manual playback, `fl-live-play` requires an explicit `--remote`; `--target` opts into autoconnection to a named node. Without a target, port configuration/linking needs a session manager or explicit setup as in the test.
 
+## Continuous integration
+
+[Gitea Actions](https://git.subcult.tv/subculture-collective/fl-live/actions) runs desktop, release, engine-only and PipeWire sanitizer checks in a pinned Linux container. Test logs, JUnit reports and the offscreen desktop capture are retained as artifacts. See [CI setup and local reproduction](docs/ci.md).
+
 ## Current verification and next work
 
 Debug, release, sanitizer and engine-only checks passed on Kvant. Tests cover integral and fractional tempo boundaries, sample-exact launch/loop/stop, note cleanup, queue bounds and output preservation. The decoded demo PCM matches across block sizes 1/64/128/257/512 on the qualification machine. Instrumented C++ allocation checks report zero allocations during tested render paths. This does not qualify hardware deadlines, all allocators, concurrent access or all platforms.

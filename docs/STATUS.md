@@ -4,7 +4,7 @@ Updated 2026-10-26. The near-term goal is a useful Linux MVP, with a close Live/
 
 | Area | Current evidence | Remaining |
 |---|---|---|
-| Source/build foundation | Separate registered product project; C++20/CMake/Ninja builds | Product license, hosted CI, packaging |
+| Source/build foundation | Separate registered product project; C++20/CMake/Ninja builds | Product license, hosted CI qualification, packaging |
 | Deterministic engine | Offline audio/MIDI clips, gain, launch/stop and rational clock checked | Additional policies, broader workloads, multi-channel engine |
 | Offline export | Actual demo WAV round trip and block-size invariance | General project export, tails/format choices and cancellation |
 | Real-time backend | Mono PipeWire adapter, bounded handoff and actual private-graph capture/server-loss tests | Hardware/device changes, latency, broader quantum/rate behavior and long-duration xrun measurements |
@@ -16,4 +16,4 @@ The first D1 engine slice is implemented. D0/D1 as a whole remain partial. D2–
 
 The Qt UI now uses the same controller; transport state comes from rendering acknowledgements. Next add project save/reload and editable session content, then qualify the full native playback workflow. Preserve the private software-graph checks while qualifying physical devices, rate/quantum changes and extended workloads separately. See [backend contract](pipewire-backend.md) and [validation](../validation/pipewire-foundation.json).
 
-The product repository is hosted privately at https://git.subcult.tv/subculture-collective/fl-live while licensing is undecided. The validated engine foundation is the initial main-branch baseline. Hosted CI and release qualification remain pending. The reference research archive was not moved into this repository. Its preservation requirements still govern native Soyuz experiments, not this local engine build.
+The product repository is hosted privately at https://git.subcult.tv/subculture-collective/fl-live while licensing is undecided. The validated engine foundation is the initial main-branch baseline. A Gitea Actions workflow now covers desktop/release/engine-only/PipeWire sanitizer builds; its hosted result is tracked on the PR. Release qualification remains pending. The reference research archive was not moved into this repository. Its preservation requirements still govern native Soyuz experiments, not this local engine build.

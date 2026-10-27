@@ -1,0 +1,47 @@
+name: Linux CI
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Check CI script syntax
+        run: bash -n ci/verify.sh
+      - name: Build pinned Linux verification image
+        run: docker build --file ci/Dockerfile --tag fl-live-ci:${{ gitea.run_id }}-${{ gitea.run_attempt }} .
+      - name: Verify desktop, release, engine-only and sanitizers
+        shell: bash
+        env:
+          CI_SOURCE_SHA: ${{ gitea.sha }}
+        run: |
+          set -euo pipefail
+          container="fl-live-ci-${{ gitea.run_id }}-${{ gitea.run_attempt }}"
+          cleanup() {
+            docker cp "$container:/src/build/ci-results" ./ci-results || true
+            docker rm -f "$container" >/dev/null || true
+          }
+          trap cleanup EXIT
+          docker create --name "$container" --network none \
+            --env CI_SOURCE_SHA="$CI_SOURCE_SHA" fl-live-ci:${{ gitea.run_id }}-${{ gitea.run_attempt }}
+          docker start --attach "$container"
+          test "$(docker inspect --format '{{.State.ExitCode}}' "$container")" = 0
+      - name: Remove this run's verification image
+        if: always()
+        run: docker image rm fl-live-ci:${{ gitea.run_id }}-${{ gitea.run_attempt }} || true
+      - name: Retain test logs, JUnit reports and desktop capture
+        if: always()
+        uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3; Gitea-compatible artifact protocol
+        with:
+          name: linux-verification
+          path: ci-results/
+          if-no-files-found: warn
+          retention-days: 14
