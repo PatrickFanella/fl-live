@@ -11,6 +11,8 @@
 // there too; a connected backend exclusively owns processing instead.
 class Session final : public QObject {
     Q_OBJECT
+    Q_PROPERTY(QVariantList activeClips READ activeClips NOTIFY changed)
+    Q_PROPERTY(QVariantList clipStates READ clipStates NOTIFY changed)
     Q_PROPERTY(int tempo READ tempo NOTIFY changed)
     Q_PROPERTY(QVariantList levels READ levels NOTIFY changed)
     Q_PROPERTY(QVariantList pitches READ pitches NOTIFY changed)
@@ -25,6 +27,8 @@ class Session final : public QObject {
 public:
     explicit Session(fl_live::PipeWireConfig config = {}, QObject* parent = nullptr);
     ~Session() override;
+    QVariantList activeClips() const;
+    QVariantList clipStates() const;
     int tempo() const { return settings_.tempo; }
     QVariantList levels() const;
     QVariantList pitches() const;
@@ -68,6 +72,8 @@ private:
     QTimer timer_;
     fl_live::RenderStatus status_{};
     std::uint64_t serial_ = 0;
+    std::array<std::uint64_t, 2> track_serials_{};
+    std::array<fl_live::ControlKind, 2> track_requests_{};
     QString message_ = "Ready. Launches use the next 4/4 bar.";
     const bool preview_;
     bool failed_ = false;

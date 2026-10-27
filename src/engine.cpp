@@ -5,6 +5,7 @@
 #include <limits>
 #include <numbers>
 #include <stdexcept>
+#include <type_traits>
 
 namespace fl_live {
 namespace {
@@ -24,7 +25,7 @@ std::optional<Frame> ceil_mul_div(Frame value, Frame multiplier, Frame divisor) 
 
 void validate(const SessionPlan& plan) {
     (void)TempoGrid(plan.sample_rate, plan.bpm_milli);
-    if (plan.tracks.size() > 64) throw std::invalid_argument("at most 64 tracks in engine slice");
+    if (plan.tracks.size() > Engine::track_capacity) throw std::invalid_argument("at most 64 tracks in engine slice");
     for (const auto& track : plan.tracks) {
         if (!std::isfinite(track.gain) || track.gain < 0 || track.gain > 4)
             throw std::invalid_argument("track gain must be finite in [0,4]");
@@ -165,6 +166,32 @@ void Engine::process(std::span<float> output) noexcept {
         for (std::size_t track = 0; track < runtime_.size(); ++track) sample += render_track(track);
         ++position_;
     }
+}
+std::array<TrackStatus, Engine::track_capacity> Engine::track_statuses() const noexcept {
+    std::array<TrackStatus, track_capacity> result{};
+    for (std::size_t i = 0; i < runtime_.size(); ++i) {
+        const auto& state = runtime_[i];
+        if (!state.clip) continue;
+        const auto& clip = plan_.tracks[i].clips[*state.clip];
+        const auto age = position_ - state.launched;
+        const bool active = std::visit([&](const auto& value) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(value)>, AudioClip>)
+                return value.loop || age < value.samples.size();
+            else return value.loop || age < value.length;
+        }, clip);
+        if (active) result[i].active_clip = static_cast<int>(*state.clip);
+    }
+    // Only the earliest pending action per track is exposed; queue order is
+    // unchanged, including multiple actions at the same sample.
+    for (std::size_t n = 0; n < count_; ++n) {
+        const auto& command = commands_[(head_ + n) % command_capacity];
+        auto& status = result[command.track];
+        if (status.pending != PendingAction::none) continue;
+        status.pending = command.kind == CommandKind::launch ? PendingAction::launch : PendingAction::stop;
+        status.pending_clip = command.kind == CommandKind::launch ? static_cast<int>(command.clip) : -1;
+        status.pending_at = command.at;
+    }
+    return result;
 }
 std::size_t Engine::active_voices() const noexcept {
     std::size_t count = 0;

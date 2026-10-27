@@ -33,3 +33,5 @@ All engine operations belong to one rendering owner and occur at block boundarie
 `engine-contracts` checks 120,000 rational bar-boundary examples with an independent closed-form oracle, audio scheduling with block sizes 1/64/128/257/512/4096, MIDI duration/loop/replacement/stop, queue overflow/order/wrap and invalid plans. It remains active in optimized builds; it does not depend on disabled C assert macros.
 
 `render-roundtrip` invokes the real command, opens each WAV independently with Python's standard wave reader, checks format/frame count/silent boundaries, compares decoded PCM across five block sizes and verifies existing output is preserved. This qualifies a finite offline output journey on the recorded machine, not live audio or GUI operation.
+
+`track_statuses()` is a single-render-owner query returning fixed-capacity activity and earliest queued-action state. Its one-shot end is exclusive; multiple same-frame commands retain insertion order. Cross-thread readers use `RenderController::status()`, which publishes these fields atomically with transport. See [clip feedback](desktop-session.md#clip-feedback) for block-boundary semantics and verification.

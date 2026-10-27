@@ -34,6 +34,7 @@ ApplicationWindow {
     palette.button: "#333e4d"
     palette.base: "#242c37"
     palette.text: "#e8edf5"
+    palette.highlight: "#68d9a4"
     ColumnLayout {
         anchors.fill: parent; anchors.margins: 24; spacing: 18
         RowLayout {
@@ -74,10 +75,13 @@ ApplicationWindow {
                         Button {
                             objectName: "clip" + index
                             Layout.fillWidth: true; Layout.preferredHeight: 112
-                            text: index === 0 ? "▶  Low pulse\nAudio loop · 1 beat" : "▶  Rising steps\nMIDI loop · 1 bar"
+                            highlighted: session.activeClips[index] === 0
+                            text: (session.activeClips[index] === 0 ? "●  " : "▶  ") + (index === 0 ? "Low pulse\nAudio loop · 1 beat" : "Rising steps\nMIDI loop · 1 bar")
                             onClicked: session.launch(index, 0)
                             Accessible.name: index === 0 ? "Launch low pulse audio clip" : "Launch rising steps MIDI clip"
+                            Accessible.description: session.clipStates[index]
                         }
+                        Label { objectName: "clipState" + index; text: session.clipStates[index]; color: session.activeClips[index] >= 0 ? "#68d9a4" : "#b7c5d8" }
                         Button { text: "Stop track on next bar"; Layout.fillWidth: true; onClicked: session.stopTrack(index) }
                         Label { visible: index === 1; text: "MIDI pitches · quarter-note steps"; color: "#9daabd" }
                         RowLayout {
