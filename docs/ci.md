@@ -1,6 +1,6 @@
 # Linux CI
 
-Gitea Actions runs `.gitea/workflows/ci.yml` for pull requests targeting main, pushes to main and manual dispatch. The `linux-contracts` job uses the existing `ubuntu-latest` Docker runner label; no new runner or host configuration is required.
+Gitea Actions runs `.gitea/workflows/ci.yml` for pull requests targeting main, pushes to any branch and manual dispatch. The `linux-contracts` job uses the existing `ubuntu-latest` Docker runner label; no new runner or host configuration is required.
 
 `ci/Dockerfile` pins the amd64 Arch base image by digest and package repositories to the 2026-10-20 archive. This supplies the project's Qt 6.12 / PipeWire 1.6.9 / libsndfile 1.2.2 baseline. Keep the digest, repository date and qualified dependency requirements in sync when upgrading. Installed package versions are recorded in the results. The image is a verification environment, not a distributable product or release.
 
