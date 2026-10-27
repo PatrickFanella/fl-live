@@ -57,6 +57,13 @@ struct Command {
     std::size_t clip = 0;
 };
 enum class ScheduleResult { accepted, full, out_of_order, in_past, invalid };
+enum class PendingAction { none, launch, stop };
+struct TrackStatus {
+    int active_clip = -1;
+    PendingAction pending = PendingAction::none;
+    int pending_clip = -1;
+    Frame pending_at = 0;
+};
 
 // Single-owner engine: transport, scheduling and process are called on one
 // rendering owner, at block boundaries. This is NOT a concurrent UI queue.
@@ -64,6 +71,7 @@ enum class ScheduleResult { accepted, full, out_of_order, in_past, invalid };
 class Engine {
 public:
     static constexpr std::size_t command_capacity = 64;
+    static constexpr std::size_t track_capacity = 64;
     static constexpr std::size_t voices_per_track = 16;
     explicit Engine(const SessionPlan& plan);
     Engine(SessionPlan&&) = delete;
@@ -75,6 +83,7 @@ public:
     [[nodiscard]] Frame position() const noexcept { return position_; }
     [[nodiscard]] bool running() const noexcept { return running_; }
     [[nodiscard]] std::size_t active_voices() const noexcept;
+    [[nodiscard]] std::array<TrackStatus, track_capacity> track_statuses() const noexcept;
 private:
     struct Voice { Frame remaining = 0; double phase = 0; double step = 0; float level = 0; };
     struct Runtime {

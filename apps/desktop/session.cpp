@@ -17,6 +17,25 @@ Session::~Session() {
     // Prepared's backend is destroyed before its controller and immutable plan.
     prepared_.reset();
 }
+QVariantList Session::activeClips() const {
+    return {status_.tracks[0].active_clip, status_.tracks[1].active_clip};
+}
+QVariantList Session::clipStates() const {
+    QVariantList result;
+    for (std::size_t i = 0; i < 2; ++i) {
+        const auto& track = status_.tracks[i];
+        QString label;
+        if (track_serials_[i] > status_.handled_serial)
+            label = track_requests_[i] == fl_live::ControlKind::launch_next_bar ? "Launch requested" : "Stop requested";
+        else if (track.pending == fl_live::PendingAction::launch)
+            label = track.active_clip >= 0 ? "Active · launch queued" : "Launch queued";
+        else if (track.pending == fl_live::PendingAction::stop)
+            label = track.active_clip >= 0 ? "Active · stop queued" : "Stop queued";
+        else label = track.active_clip >= 0 ? "Active" : "Stopped";
+        result.append(label);
+    }
+    return result;
+}
 QVariantList Session::levels() const {
     return {settings_.levels[0], settings_.levels[1]};
 }
@@ -48,6 +67,7 @@ bool Session::replace(const ProjectSettings& settings) {
         prepared_.swap(candidate); // old plan is destroyed only on the GUI thread
         settings_ = settings;
         serial_ = 0;
+        track_serials_.fill(0);
         status_ = prepared_->controller.status();
         message_ = "Session prepared at the start. Launch clips, then press Play.";
         return true;
@@ -112,6 +132,10 @@ void Session::send(fl_live::ControlKind kind, std::size_t track, std::size_t cli
     const auto next = serial_ + 1;
     if (prepared_->controller.submit({kind, {fl_live::CommandKind::launch, 0, track, clip}, next})) {
         serial_ = next;
+        if ((kind == fl_live::ControlKind::launch_next_bar || kind == fl_live::ControlKind::stop_next_bar) && track < 2) {
+            track_serials_[track] = next;
+            track_requests_[track] = kind;
+        }
         message_ = "Awaiting render acknowledgement";
     } else message_ = "Control queue full. Try again, or use Silence now.";
     emit changed();
@@ -149,6 +173,6 @@ void Session::tick() {
     status_ = prepared_->controller.status();
     if (!failed_ && status_.handled_serial != before.handled_serial)
         message_ = status_.rejected != before.rejected ? "Engine rejected a scheduled command" :
-            "Render acknowledged. Clip requests are scheduled on the bar grid.";
+            "Render acknowledged. Track indicators show active clips and queued actions.";
     emit changed();
 }

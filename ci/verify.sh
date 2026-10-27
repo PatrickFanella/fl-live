@@ -9,9 +9,11 @@ collect() {
             cp "build/$preset/Testing/Temporary/LastTest.log" "$results/$preset-LastTest.log"
         fi
     done
-    if [[ -f build/desktop/desktop-session.png ]]; then
-        cp build/desktop/desktop-session.png "$results/desktop-session.png"
-    fi
+    for capture in desktop-session desktop-active-clip; do
+        if [[ -f "build/desktop/$capture.png" ]]; then
+            cp "build/desktop/$capture.png" "$results/$capture.png"
+        fi
+    done
 }
 trap collect EXIT
 {

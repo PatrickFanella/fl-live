@@ -86,6 +86,25 @@ private slots:
         QVERIFY(!session.saveProject(directory.filePath("missing/child.json"))); QVERIFY(!session.dirty());
         session.setTempo(160); QVERIFY(session.saveProject(path)); QCOMPARE(readProject(path).tempo,160);
     }
+    void clipFeedback() {
+        Session session;
+        QCOMPARE(session.activeClips()[0].toInt(),-1);
+        QCOMPARE(session.clipStates()[0].toString(),QString("Stopped"));
+        session.launch(0,0); QCOMPARE(session.clipStates()[0].toString(),QString("Launch requested"));
+        session.tick(); QCOMPARE(session.clipStates()[0].toString(),QString("Launch queued"));
+        QCOMPARE(session.activeClips()[0].toInt(),-1);
+        session.play();session.tick();
+        QCOMPARE(session.activeClips()[0].toInt(),0); QCOMPARE(session.clipStates()[0].toString(),QString("Active"));
+        session.stopTrack(0); QCOMPARE(session.clipStates()[0].toString(),QString("Stop requested"));
+        session.tick(); QCOMPARE(session.clipStates()[0].toString(),QString("Active · stop queued"));
+        for (int n=0;n<198;++n) session.tick();
+        QCOMPARE(session.activeClips()[0].toInt(),0); // frame 96000 has not yet been rendered
+        session.tick(); QCOMPARE(session.activeClips()[0].toInt(),-1);
+        QCOMPARE(session.clipStates()[0].toString(),QString("Stopped"));
+        session.launch(0,0);session.tick();QCOMPARE(session.clipStates()[0].toString(),QString("Launch queued"));
+        session.panic();session.tick();QCOMPARE(session.clipStates()[0].toString(),QString("Stopped"));
+        session.setTempo(137);QCOMPARE(session.activeClips()[0].toInt(),-1);
+    }
     void acknowledgement() {
         Session session;
         session.play();
@@ -163,10 +182,17 @@ private slots:
         click("openProjectButton"); QCOMPARE(session.tempo(),121);
         QVERIFY(window->grabWindow().save("desktop-session.png"));
         click("clip0"); session.tick();
+        auto* clipLabel = findItem(window->contentItem(),"clipState0");
+        QVERIFY(clipLabel); QCOMPARE(clipLabel->property("text").toString(),QString("Launch queued"));
+        QVERIFY(!findItem(window->contentItem(),"clip0")->property("highlighted").toBool());
         click("playButton"); session.tick(); QVERIFY(session.running());
+        QCOMPARE(clipLabel->property("text").toString(),QString("Active"));
+        QVERIFY(findItem(window->contentItem(),"clip0")->property("highlighted").toBool());
+        QVERIFY(window->grabWindow().save("desktop-active-clip.png"));
         auto* label = window->findChild<QObject*>("transportState");
         QVERIFY(label); QCOMPARE(label->property("text").toString(), QString("Playing"));
         click("stopButton"); session.tick(); QVERIFY(!session.running());
+        QCOMPARE(clipLabel->property("text").toString(),QString("Stopped"));
         QCOMPARE(label->property("text").toString(), QString("Stopped"));
     }
 };

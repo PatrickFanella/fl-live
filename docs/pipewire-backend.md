@@ -8,7 +8,7 @@ RenderController owns Engine. Exactly one control producer submits start/stop/re
 
 Panic uses a separate atomic flag, so queue saturation cannot prevent requesting silence. At the next callback it stops the engine, discards at most 64 pending controls and emits silence. A newly submitted command may run on a later block; panic is not a persistent mute latch. Handled serial includes discarded controls, so it does not mean every command was applied. Playing state comes from the running field.
 
-Status uses atomic fields and a versioned snapshot. The control-side reader may retry for a coherent block-completion snapshot; the rendering writer never waits for it. Queue indices/status atomics must be lock-free on the target. The immutable plan still outlives all processing.
+Status uses atomic fields and a versioned snapshot, including each track’s active clip and earliest scheduled action. The control-side reader may retry for a coherent block-completion snapshot; the rendering writer never waits for it. Queue indices/status atomics must be lock-free on the target. The immutable plan still outlives all processing.
 
 The backend owns the PipeWire control loop, context/core and stream. Shutdown stops the control loop and destroys the stream/context before transferring engine ownership back to the caller. `finish()` stops the engine, clears pending controls and publishes stopped state. Device/server failure can prevent a final callback acknowledgement; teardown still silences engine state after processing resources are gone.
 

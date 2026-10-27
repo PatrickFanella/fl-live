@@ -1,0 +1,73 @@
+{
+  "recorded_at": "2026-10-27T19:16:58.727378+00:00",
+  "base_commit": "2512b4a61c46e4c83cbaaca062817e3c693b6c5e",
+  "base_tree_equals_tested_parent": "2ae93345ac7b6cb4650be0e5a48f4715f2a451a1",
+  "qualification": "Local Qt offscreen and pinned container; new hosted checks pending",
+  "ctest": {
+    "desktop": 5,
+    "release": 3,
+    "engine-only": 2,
+    "pipewire-sanitize": 4
+  },
+  "total_ctest_executions": 14,
+  "thread_sanitizer": {
+    "passed": true,
+    "compile": "c++ -std=c++20 -O1 -g -fsanitize=thread -pthread -Iinclude tests/controller_tests.cpp src/engine.cpp -o build/feedback-controller-tsan",
+    "run": "./build/feedback-controller-tsan",
+    "binary_sha256": "22c2f020de96617b3c6a1f8bb47364a81ec27591c9f80e4e2188070a22a512ea",
+    "coverage": "10000 concurrent track/transport cycles, 50000 controls and 200000 ordered messages"
+  },
+  "process_allocations": 0,
+  "shellcheck": "ci/verify.sh passed",
+  "checks": [
+    "queued launch is inactive until target frame renders",
+    "audio and MIDI one-shot end",
+    "replacement, same-frame order and rejected scheduling",
+    "panic cleanup",
+    "coherent track/transport publication",
+    "QML requested/queued/active labels and button highlight"
+  ],
+  "not_qualified": [
+    "hardware presentation time",
+    "very short clips that start and end inside a block",
+    "native Wayland or physical audio",
+    "maximum-track real-time deadlines"
+  ],
+  "source_sha256": {
+    "include/fl_live/engine.hpp": "7dbefbbe022627e359e4543ed85610ee2249ce38f1f6ea0270656c1a4cffc197",
+    "src/engine.cpp": "a7870bd84ae7632122d61c052fe12b1e6d998cf66f7352c09da7d9fa6eed9189",
+    "include/fl_live/controller.hpp": "dbc9e7f1e6ec2021307da7f6215d9fcddcf5798698b65ab77c7f60dd87593a08",
+    "apps/desktop/session.hpp": "07d93d5381cef065608848bb22ff25cf232b92d0b6fdee1123efcdd65659366c",
+    "apps/desktop/session.cpp": "e1d25cf22ce34db931c6b95aaab3bef4142bee153721e0d1174e4cc34acdb35c",
+    "apps/desktop/Main.qml": "5b226ad661747c0eaf70ba41d454c653c392d66c8813b1f4635a315ec971b3e0",
+    "tests/controller_tests.cpp": "429969eb9de792bc63c8ca8b266582d1a21220a841811f27ed193a1f9646b11b",
+    "tests/desktop_tests.cpp": "dbefa27f80a48af2e0851d15f2457aceec0eff4afebda2c97b593c19dfb16685",
+    "ci/verify.sh": "986a0592f0b62a9cd0c288b0eed3da9102df508fe7325129fff4f83b6e3c4659"
+  },
+  "result_root": "build/feedback-ci-results",
+  "result_sha256": {
+    "desktop-LastTest.log": "850646132fa931d3a2bfeb6e7ce5178104b09871dc37cdeb4fd36ab82ad83d97",
+    "desktop-active-clip.png": "a3d0bcfe5bd7f9c852a4899d29362d785c1d9a1ab49d52689f2057aa6d6cfe3a",
+    "desktop-build.log": "9fa96287d76682d0af12b26c049b7f98266285c6e86a29a1c9299654f8108c88",
+    "desktop-configure.log": "e2a51c6d8821b012b077a1efc5a7a0d3b470452b8b93dbb2677ca5b8ebd667bc",
+    "desktop-junit.xml": "40cde40114fc58a8ffaddaa841df69b6fb6ec7b2ee8213029913a97f35db28e1",
+    "desktop-session.png": "6770874a3df70469cf504c2dd78a38716e329f44940967da133feb5ef2c76f8d",
+    "desktop-test.log": "ad9869190768bdaa90796a310139deb812cadbddc391f063288624fca12031ce",
+    "engine-only-LastTest.log": "3c8e7e323607bb84c699618cad5e19ebafd8235b4c56fc9185135eeea8d9b240",
+    "engine-only-build.log": "e3d539df8c9351dc95e0540c969eac6625e9867e36f4d1c535c1ea8f1e2a55d7",
+    "engine-only-configure.log": "8d49e5c33aff1d8ad85f3ec6fc542de6029bda8b3a90853166235bcede7e8bdd",
+    "engine-only-junit.xml": "0b745f2b319cad84b8748282cb87eadb7bd2314075867e3411cb2fdda6a3237f",
+    "engine-only-test.log": "82675d9c08d683ec06487354022aa92bbcae989d7c92c1d70a58c802c041d05c",
+    "pipewire-sanitize-LastTest.log": "4f7e7d1f8b008fc8869e1bbe8283e1e46b8c6500413a2427f7eb3faa3ade73e9",
+    "pipewire-sanitize-build.log": "e4104acba211b51cf3547ab89127b3127839c7f22d022379599c6791b27bdb52",
+    "pipewire-sanitize-configure.log": "2d940c2d93888bbf6ab010a5242d198a041154b6226e60f4ce78b989d5419198",
+    "pipewire-sanitize-junit.xml": "04b00b0b3663234d761c6bf1eaccba14acc4424b3814c9ba1775baf265d2d6c4",
+    "pipewire-sanitize-test.log": "78a3ca93a8fda34a1c1a4499f59fb399b6f12ab1a10bb715efc924d20da6bb3b",
+    "release-LastTest.log": "541175823db67ec76c822f273b7dd84af1e68b3aa51137bff192e5f3bf27aef9",
+    "release-build.log": "edb7c099ae483f61d60c3425366df12e66bf01e4c432763665c109a8d5dd16d7",
+    "release-configure.log": "bd8a173aabb4ff89c55d641e55f692cd5d5e8caba240876bc95a881949d1b1c6",
+    "release-junit.xml": "d62010c02436b3653e72391ac6ac7be2ee86e173c33a0d8a6f22eb911b921a7e",
+    "release-test.log": "56ad9fd46d8c1b6d5e4fcf5f7790e0832694d6415df8398db16b269429473a99",
+    "toolchain.txt": "9cff8feeeff6c097dcc6724ab9856f12db272782d7b3321e5480018af85a9f52"
+  }
+}

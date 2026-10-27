@@ -68,7 +68,7 @@ rtk proxy ctest --preset desktop
 rtk proxy ./build/desktop/fl-live
 ```
 
-The default is **silent preview**: launch either authored clip, then press Play. The preview discards rendered samples and advances 480 frames per 10 ms timer tick; it is a simulated clock, not a latency or timing benchmark. Stop clears clips and queued launches; relaunch them to resume. Return to start works only while stopped. The interface shows transport acknowledgements and queued-control feedback, not active-clip playback state. While stopped, edit tempo, levels and the four MIDI pitches, then save a new JSON path or reopen a saved project. Edits return to the start and clear launches. See [project format and ownership](docs/projects.md).
+The default is **silent preview**: launch either authored clip, then press Play. The preview discards rendered samples and advances 480 frames per 10 ms timer tick; it is a simulated clock, not a latency or timing benchmark. Stop clears clips and queued launches; relaunch them to resume. Return to start works only while stopped. The interface shows render-owned active clips and the earliest queued track action. A requested launch becomes queued after render acknowledgement and highlights only after it is rendered. While stopped, edit tempo, levels and the four MIDI pitches, then save a new JSON path or reopen a saved project. Edits return to the start and clear launches. See [project format and ownership](docs/projects.md).
 
 For output through an existing session manager, explicitly choose a server and target:
 
