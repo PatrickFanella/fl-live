@@ -1,0 +1,48 @@
+{
+  "recorded_at": "2026-10-26T23:54:19.431497+00:00",
+  "base_commit": "5313bd1df5a95b0a016e9af5764be44a04cc8f7d",
+  "host": "kvant",
+  "qt": "6.12.0",
+  "qualification": {
+    "offscreen_qml_mouse_input": true,
+    "render_acknowledged_transport": true,
+    "render_owned_quantized_launch_stop": true,
+    "nonthrowing_clock_overflow": true,
+    "private_headless_pipewire_capture_and_server_loss": true,
+    "native_wayland": false,
+    "physical_audio": false,
+    "qml_to_audio_graph_integration": false,
+    "editable_project": false,
+    "usable_mvp": false,
+    "hosted_ci": false
+  },
+  "checks": {
+    "desktop": {
+      "ctest_passed": 5,
+      "log": "build/desktop/Testing/Temporary/LastTest.log"
+    },
+    "pipewire-sanitize": {
+      "ctest_passed": 4,
+      "log": "build/pipewire-sanitize/Testing/Temporary/LastTest.log"
+    }
+  },
+  "screenshot": {
+    "path": "build/desktop/desktop-session.png",
+    "sha256": "6c8c65d3791f0e9cd758a70fded4cc46518e4f65f7952089eff196bbf36a2b14",
+    "inspected": true
+  },
+  "source_sha256": {
+    "CMakeLists.txt": "bb79229ffb7520ea129a05ee7d071351be5c49782cafde92aa832e2b738ff680",
+    "CMakePresets.json": "ed0217a0db39a435ef016433ae73b02458de7d770e0553d38a8d55449b815a7e",
+    "include/fl_live/controller.hpp": "a2eea7602cd1940ac5fd4956bea0f0d11c0196195a1d959302f1ff9446a23b4b",
+    "include/fl_live/engine.hpp": "8d15c6f6461f1d500afc542f76b013f8d3198d1b64f55477b158e08c6201dd07",
+    "src/engine.cpp": "bcaed589b05597efd5919030988aadb0f6660bac72283a272c365060e6013a2a",
+    "tests/engine_tests.cpp": "1cec0e662bb2d0dcc432c558ffb89f144d6a5dca2a27fc1271776cacaf66b595",
+    "tests/desktop_tests.cpp": "940cf589587d42946679249d5d2b7b4f70ee8f761cbe6edbc8d71960987f797b",
+    "apps/desktop/session.hpp": "d7ea5cd96458eaa5b5d85daf1de09caf10fab37afba5e44cc04bc2fd3a590758",
+    "apps/desktop/session.cpp": "ad4f23072bee4643aa49d861821beb53a75b8d82c4dde8a03b3e9d3ad7ffa297",
+    "apps/desktop/main.cpp": "5223d109df243b924f94776569d5dfdf5937b136362d53e224be5db947b139f9",
+    "apps/desktop/Main.qml": "23e1c5d360801365e2bf2e139b7d617089361819c20b9621ecf3354749c47041",
+    "docs/desktop-session.md": "d8303f60bebbb866c1d50b80895401f8e96f29809cf4ccbf4f4bef4f99804e1d"
+  }
+}

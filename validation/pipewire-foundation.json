@@ -1,0 +1,196 @@
+{
+  "utc": "2026-10-26T22:37:04.226479+00:00",
+  "host": "kvant",
+  "base_commit": "964adf28d7265acd07794cb5de1e9dc0fb1b7a1b",
+  "branch": "feat/pipewire-output",
+  "sources": [
+    {
+      "path": ".gitignore",
+      "sha256": "3fb82b6ade819e4cc102841c0e3684c814f3466da974a068df1714124fe5d84b"
+    },
+    {
+      "path": "AGENTS.md",
+      "sha256": "38625fb5863b68441e57c8132f0a1deb2b8509ef9ed6dc2be668c5e0b144b103"
+    },
+    {
+      "path": "CMakeLists.txt",
+      "sha256": "0892e0980106527435dd4907ee718904259303849d5a4356d0700ede7ed90603"
+    },
+    {
+      "path": "CMakePresets.json",
+      "sha256": "d8705a9734fcd5339a36b6b6149b591426b7bca390f2cb2c48355db2282f88f0"
+    },
+    {
+      "path": "README.md",
+      "sha256": "97335fbba412e2ea7a86c1314ed984ecf68096043703a83b69a3e9aafbcf55dd"
+    },
+    {
+      "path": "apps/play.cpp",
+      "sha256": "b62f6b7248cd749bcdf5f8f92225e1dac2bead2201599a39607aacd946a5df8f"
+    },
+    {
+      "path": "apps/render.cpp",
+      "sha256": "7ac7ae0004872980152aeaffa4ab8b84bb2b7eeae50fc2598d6684a066f40da6"
+    },
+    {
+      "path": "docs/STATUS.md",
+      "sha256": "e46b4b4ad6e269e2debbb86b8939fe1c60c31b884498d6321d0bf371a17f41e1"
+    },
+    {
+      "path": "docs/engine-contract.md",
+      "sha256": "57d435f483fb647b426e133fed394b3d0d5e8755b142aef2d5dbf9af7754f430"
+    },
+    {
+      "path": "docs/pipewire-backend.md",
+      "sha256": "caba5c6bcc25b9d38d792775fff9eef2334760ebb6b7644845b5d94c59797c47"
+    },
+    {
+      "path": "include/fl_live/controller.hpp",
+      "sha256": "e7c6d3b30b7291104bcf09a6f8cb3065386bd0bba7aaf8dd10fea21f15ed7e16"
+    },
+    {
+      "path": "include/fl_live/engine.hpp",
+      "sha256": "b7b5a4ea2aeca558237af13314d499211d5ebba048ed1a7f65cd933f4ea571fc"
+    },
+    {
+      "path": "include/fl_live/pipewire_backend.hpp",
+      "sha256": "c55700606988fd88b6f25fd8ef9a7d49af14a1ec17eacd36314b8ac308e79ca2"
+    },
+    {
+      "path": "src/engine.cpp",
+      "sha256": "a572106e9f6e60b96f6803b67e75d9e186ba86a957d758baa0e266c8f67dc052"
+    },
+    {
+      "path": "src/pipewire_backend.cpp",
+      "sha256": "1023e55bcff93e71ce1e8c4e5f9e30a8bc751b5aff28a147af47c730135094a9"
+    },
+    {
+      "path": "tests/controller_tests.cpp",
+      "sha256": "647a3627d1fb74d81d4118b751d2c0ddc839f4a60eafc507d517d2be870a60a3"
+    },
+    {
+      "path": "tests/engine_tests.cpp",
+      "sha256": "4e7333b7635459606cfa8fe2fcb4fa0c9a3febd090ee260fa7a1a17d4b9fa4f1"
+    },
+    {
+      "path": "tests/pipewire_integration.py",
+      "sha256": "8d54e135b293d1488de2d06ae47bf2e48ae3762c56f946007a0d560514735af9"
+    },
+    {
+      "path": "tests/render_roundtrip.py",
+      "sha256": "cb1261d7930e498388a0c5de5dc7ff17f24e200ced8c9896027f344893c98996"
+    }
+  ],
+  "checks": [
+    {
+      "preset": "debug",
+      "tests_passed": 3,
+      "log_sha256": "b7353a81df3408d2ec8aeb23a5e7bffceacdc3252bcb7cde035eb3919b90fa09",
+      "stdout": "Start testing: Oct 26 17:34 CDT\n----------------------------------------------------------\n1/3 Testing: engine-contracts\n1/3 Test: engine-contracts\nCommand: \"/home/onnwee/Work/Audio/fl-live/build/debug/engine-tests\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/debug\n\"engine-contracts\" start time: Oct 26 17:34 CDT\nOutput:\n----------------------------------------------------------\nPASS: grid, audio, MIDI, command bounds, validation; process allocations=0\n<end of output>\nTest time =   0.02 sec\n----------------------------------------------------------\nTest Passed.\n\"engine-contracts\" end time: Oct 26 17:34 CDT\n\"engine-contracts\" time elapsed: 00:00:00\n----------------------------------------------------------\n\n2/3 Testing: control-handoff\n2/3 Test: control-handoff\nCommand: \"/home/onnwee/Work/Audio/fl-live/build/debug/controller-tests\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/debug\n\"control-handoff\" start time: Oct 26 17:34 CDT\nOutput:\n----------------------------------------------------------\nPASS: 200000 ordered messages; 50000 controls with concurrent status reader; rejection, full-queue panic and restart\n<end of output>\nTest time =   0.04 sec\n----------------------------------------------------------\nTest Passed.\n\"control-handoff\" end time: Oct 26 17:34 CDT\n\"control-handoff\" time elapsed: 00:00:00\n----------------------------------------------------------\n\n3/3 Testing: render-roundtrip\n3/3 Test: render-roundtrip\nCommand: \"/home/onnwee/.local/bin/python3.11\" \"/home/onnwee/Work/Audio/fl-live/tests/render_roundtrip.py\" \"/home/onnwee/Work/Audio/fl-live/build/debug/fl-live-render\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/debug\n\"render-roundtrip\" start time: Oct 26 17:34 CDT\nOutput:\n----------------------------------------------------------\nPASS: mono PCM16 WAV, 384000 frames, exact silent boundaries, identical PCM across five block sizes, output preservation\n<end of output>\nTest time =   0.24 sec\n----------------------------------------------------------\nTest Passed.\n\"render-roundtrip\" end time: Oct 26 17:34 CDT\n\"render-roundtrip\" time elapsed: 00:00:00\n----------------------------------------------------------\n\nEnd testing: Oct 26 17:34 CDT\n"
+    },
+    {
+      "preset": "release",
+      "tests_passed": 3,
+      "log_sha256": "e5708757e49f80f7953a461edfef3c44912eeba37430d0d9b52a6a55d26d81d6",
+      "stdout": "Start testing: Oct 26 17:34 CDT\n----------------------------------------------------------\n1/3 Testing: engine-contracts\n1/3 Test: engine-contracts\nCommand: \"/home/onnwee/Work/Audio/fl-live/build/release/engine-tests\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/release\n\"engine-contracts\" start time: Oct 26 17:34 CDT\nOutput:\n----------------------------------------------------------\nPASS: grid, audio, MIDI, command bounds, validation; process allocations=0\n<end of output>\nTest time =   0.01 sec\n----------------------------------------------------------\nTest Passed.\n\"engine-contracts\" end time: Oct 26 17:34 CDT\n\"engine-contracts\" time elapsed: 00:00:00\n----------------------------------------------------------\n\n2/3 Testing: control-handoff\n2/3 Test: control-handoff\nCommand: \"/home/onnwee/Work/Audio/fl-live/build/release/controller-tests\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/release\n\"control-handoff\" start time: Oct 26 17:34 CDT\nOutput:\n----------------------------------------------------------\nPASS: 200000 ordered messages; 50000 controls with concurrent status reader; rejection, full-queue panic and restart\n<end of output>\nTest time =   0.01 sec\n----------------------------------------------------------\nTest Passed.\n\"control-handoff\" end time: Oct 26 17:34 CDT\n\"control-handoff\" time elapsed: 00:00:00\n----------------------------------------------------------\n\n3/3 Testing: render-roundtrip\n3/3 Test: render-roundtrip\nCommand: \"/home/onnwee/.local/bin/python3.11\" \"/home/onnwee/Work/Audio/fl-live/tests/render_roundtrip.py\" \"/home/onnwee/Work/Audio/fl-live/build/release/fl-live-render\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/release\n\"render-roundtrip\" start time: Oct 26 17:34 CDT\nOutput:\n----------------------------------------------------------\nPASS: mono PCM16 WAV, 384000 frames, exact silent boundaries, identical PCM across five block sizes, output preservation\n<end of output>\nTest time =   0.12 sec\n----------------------------------------------------------\nTest Passed.\n\"render-roundtrip\" end time: Oct 26 17:34 CDT\n\"render-roundtrip\" time elapsed: 00:00:00\n----------------------------------------------------------\n\nEnd testing: Oct 26 17:34 CDT\n"
+    },
+    {
+      "preset": "engine-only",
+      "tests_passed": 2,
+      "log_sha256": "413a04ffdaf28cd286b017b6a465e935df79c344be29a0f44d51317868061720",
+      "stdout": "Start testing: Oct 26 17:35 CDT\n----------------------------------------------------------\n1/2 Testing: engine-contracts\n1/2 Test: engine-contracts\nCommand: \"/home/onnwee/Work/Audio/fl-live/build/engine-only/engine-tests\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/engine-only\n\"engine-contracts\" start time: Oct 26 17:35 CDT\nOutput:\n----------------------------------------------------------\nPASS: grid, audio, MIDI, command bounds, validation; process allocations=0\n<end of output>\nTest time =   0.02 sec\n----------------------------------------------------------\nTest Passed.\n\"engine-contracts\" end time: Oct 26 17:35 CDT\n\"engine-contracts\" time elapsed: 00:00:00\n----------------------------------------------------------\n\n2/2 Testing: control-handoff\n2/2 Test: control-handoff\nCommand: \"/home/onnwee/Work/Audio/fl-live/build/engine-only/controller-tests\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/engine-only\n\"control-handoff\" start time: Oct 26 17:35 CDT\nOutput:\n----------------------------------------------------------\nPASS: 200000 ordered messages; 50000 controls with concurrent status reader; rejection, full-queue panic and restart\n<end of output>\nTest time =   0.02 sec\n----------------------------------------------------------\nTest Passed.\n\"control-handoff\" end time: Oct 26 17:35 CDT\n\"control-handoff\" time elapsed: 00:00:00\n----------------------------------------------------------\n\nEnd testing: Oct 26 17:35 CDT\n"
+    },
+    {
+      "preset": "pipewire",
+      "tests_passed": 4,
+      "log_sha256": "0395f5387efe43ffc260b62505e646ba9f7b462f469e1a41ceca82c51249a591",
+      "stdout": "Start testing: Oct 26 17:34 CDT\n----------------------------------------------------------\n1/4 Testing: engine-contracts\n1/4 Test: engine-contracts\nCommand: \"/home/onnwee/Work/Audio/fl-live/build/pipewire/engine-tests\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/pipewire\n\"engine-contracts\" start time: Oct 26 17:34 CDT\nOutput:\n----------------------------------------------------------\nPASS: grid, audio, MIDI, command bounds, validation; process allocations=0\n<end of output>\nTest time =   0.02 sec\n----------------------------------------------------------\nTest Passed.\n\"engine-contracts\" end time: Oct 26 17:34 CDT\n\"engine-contracts\" time elapsed: 00:00:00\n----------------------------------------------------------\n\n2/4 Testing: control-handoff\n2/4 Test: control-handoff\nCommand: \"/home/onnwee/Work/Audio/fl-live/build/pipewire/controller-tests\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/pipewire\n\"control-handoff\" start time: Oct 26 17:34 CDT\nOutput:\n----------------------------------------------------------\nPASS: 200000 ordered messages; 50000 controls with concurrent status reader; rejection, full-queue panic and restart\n<end of output>\nTest time =   0.01 sec\n----------------------------------------------------------\nTest Passed.\n\"control-handoff\" end time: Oct 26 17:34 CDT\n\"control-handoff\" time elapsed: 00:00:00\n----------------------------------------------------------\n\n3/4 Testing: render-roundtrip\n3/4 Test: render-roundtrip\nCommand: \"/home/onnwee/.local/bin/python3.11\" \"/home/onnwee/Work/Audio/fl-live/tests/render_roundtrip.py\" \"/home/onnwee/Work/Audio/fl-live/build/pipewire/fl-live-render\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/pipewire\n\"render-roundtrip\" start time: Oct 26 17:34 CDT\nOutput:\n----------------------------------------------------------\nPASS: mono PCM16 WAV, 384000 frames, exact silent boundaries, identical PCM across five block sizes, output preservation\n<end of output>\nTest time =   0.20 sec\n----------------------------------------------------------\nTest Passed.\n\"render-roundtrip\" end time: Oct 26 17:34 CDT\n\"render-roundtrip\" time elapsed: 00:00:00\n----------------------------------------------------------\n\n4/4 Testing: pipewire-private-graph\n4/4 Test: pipewire-private-graph\nCommand: \"/home/onnwee/.local/bin/python3.11\" \"/home/onnwee/Work/Audio/fl-live/tests/pipewire_integration.py\" \"/home/onnwee/Work/Audio/fl-live/build/pipewire/fl-live-play\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/pipewire\n\"pipewire-private-graph\" start time: Oct 26 17:34 CDT\nOutput:\n----------------------------------------------------------\n{\"passed\": true, \"scope\": \"private software graph; no hardware/audio-device qualification\", \"captured_frames\": 24000, \"capture_returncode\": 1, \"silent_prefix\": 256, \"playback\": {\"callbacks\": 1125, \"frames\": 144000, \"bad_buffers\": 0, \"max_process_ns\": 18410, \"processing_over_budget\": 0, \"error\": 0, \"position\": 143872, \"running\": false, \"handled_serial\": 2, \"rejected\": 0}, \"server_loss\": {\"callbacks\": 11, \"frames\": 1408, \"bad_buffers\": 0, \"max_process_ns\": 7340, \"processing_over_budget\": 0, \"error\": -32, \"position\": 1408, \"running\": false, \"handled_serial\": 2, \"rejected\": 0}}\n<end of output>\nTest time =   3.10 sec\n----------------------------------------------------------\nTest Passed.\n\"pipewire-private-graph\" end time: Oct 26 17:34 CDT\n\"pipewire-private-graph\" time elapsed: 00:00:03\n----------------------------------------------------------\n\nEnd testing: Oct 26 17:34 CDT\n"
+    },
+    {
+      "preset": "pipewire-sanitize",
+      "tests_passed": 4,
+      "log_sha256": "4faec0019a3f24fcc7a3b8c2c8e6196c4516b494c9c4f54fb36532e933bb84df",
+      "stdout": "Start testing: Oct 26 17:34 CDT\n----------------------------------------------------------\n1/4 Testing: engine-contracts\n1/4 Test: engine-contracts\nCommand: \"/home/onnwee/Work/Audio/fl-live/build/pipewire-sanitize/engine-tests\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/pipewire-sanitize\n\"engine-contracts\" start time: Oct 26 17:34 CDT\nOutput:\n----------------------------------------------------------\nPASS: grid, audio, MIDI, command bounds, validation; process allocations=0\n<end of output>\nTest time =   0.08 sec\n----------------------------------------------------------\nTest Passed.\n\"engine-contracts\" end time: Oct 26 17:34 CDT\n\"engine-contracts\" time elapsed: 00:00:00\n----------------------------------------------------------\n\n2/4 Testing: control-handoff\n2/4 Test: control-handoff\nCommand: \"/home/onnwee/Work/Audio/fl-live/build/pipewire-sanitize/controller-tests\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/pipewire-sanitize\n\"control-handoff\" start time: Oct 26 17:34 CDT\nOutput:\n----------------------------------------------------------\nPASS: 200000 ordered messages; 50000 controls with concurrent status reader; rejection, full-queue panic and restart\n<end of output>\nTest time =   0.03 sec\n----------------------------------------------------------\nTest Passed.\n\"control-handoff\" end time: Oct 26 17:34 CDT\n\"control-handoff\" time elapsed: 00:00:00\n----------------------------------------------------------\n\n3/4 Testing: render-roundtrip\n3/4 Test: render-roundtrip\nCommand: \"/home/onnwee/.local/bin/python3.11\" \"/home/onnwee/Work/Audio/fl-live/tests/render_roundtrip.py\" \"/home/onnwee/Work/Audio/fl-live/build/pipewire-sanitize/fl-live-render\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/pipewire-sanitize\n\"render-roundtrip\" start time: Oct 26 17:34 CDT\nOutput:\n----------------------------------------------------------\nPASS: mono PCM16 WAV, 384000 frames, exact silent boundaries, identical PCM across five block sizes, output preservation\n<end of output>\nTest time =   0.61 sec\n----------------------------------------------------------\nTest Passed.\n\"render-roundtrip\" end time: Oct 26 17:34 CDT\n\"render-roundtrip\" time elapsed: 00:00:00\n----------------------------------------------------------\n\n4/4 Testing: pipewire-private-graph\n4/4 Test: pipewire-private-graph\nCommand: \"/home/onnwee/.local/bin/python3.11\" \"/home/onnwee/Work/Audio/fl-live/tests/pipewire_integration.py\" \"/home/onnwee/Work/Audio/fl-live/build/pipewire-sanitize/fl-live-play\"\nDirectory: /home/onnwee/Work/Audio/fl-live/build/pipewire-sanitize\n\"pipewire-private-graph\" start time: Oct 26 17:34 CDT\nOutput:\n----------------------------------------------------------\n{\"passed\": true, \"scope\": \"private software graph; no hardware/audio-device qualification\", \"captured_frames\": 24000, \"capture_returncode\": 1, \"silent_prefix\": 512, \"playback\": {\"callbacks\": 1126, \"frames\": 144128, \"bad_buffers\": 0, \"max_process_ns\": 99519, \"processing_over_budget\": 0, \"error\": 0, \"position\": 144000, \"running\": false, \"handled_serial\": 2, \"rejected\": 0}, \"server_loss\": {\"callbacks\": 11, \"frames\": 1408, \"bad_buffers\": 0, \"max_process_ns\": 99989, \"processing_over_budget\": 0, \"error\": -32, \"position\": 1408, \"running\": false, \"handled_serial\": 2, \"rejected\": 0}}\n<end of output>\nTest time =   3.12 sec\n----------------------------------------------------------\nTest Passed.\n\"pipewire-private-graph\" end time: Oct 26 17:34 CDT\n\"pipewire-private-graph\" time elapsed: 00:00:03\n----------------------------------------------------------\n\nEnd testing: Oct 26 17:34 CDT\n"
+    }
+  ],
+  "private_graphs": [
+    {
+      "preset": "pipewire",
+      "result": {
+        "passed": true,
+        "scope": "private software graph; no hardware/audio-device qualification",
+        "captured_frames": 24000,
+        "capture_returncode": 1,
+        "silent_prefix": 256,
+        "playback": {
+          "callbacks": 1125,
+          "frames": 144000,
+          "bad_buffers": 0,
+          "max_process_ns": 18410,
+          "processing_over_budget": 0,
+          "error": 0,
+          "position": 143872,
+          "running": false,
+          "handled_serial": 2,
+          "rejected": 0
+        },
+        "server_loss": {
+          "callbacks": 11,
+          "frames": 1408,
+          "bad_buffers": 0,
+          "max_process_ns": 7340,
+          "processing_over_budget": 0,
+          "error": -32,
+          "position": 1408,
+          "running": false,
+          "handled_serial": 2,
+          "rejected": 0
+        }
+      }
+    },
+    {
+      "preset": "pipewire-sanitize",
+      "result": {
+        "passed": true,
+        "scope": "private software graph; no hardware/audio-device qualification",
+        "captured_frames": 24000,
+        "capture_returncode": 1,
+        "silent_prefix": 512,
+        "playback": {
+          "callbacks": 1126,
+          "frames": 144128,
+          "bad_buffers": 0,
+          "max_process_ns": 99519,
+          "processing_over_budget": 0,
+          "error": 0,
+          "position": 144000,
+          "running": false,
+          "handled_serial": 2,
+          "rejected": 0
+        },
+        "server_loss": {
+          "callbacks": 11,
+          "frames": 1408,
+          "bad_buffers": 0,
+          "max_process_ns": 99989,
+          "processing_over_budget": 0,
+          "error": -32,
+          "position": 1408,
+          "running": false,
+          "handled_serial": 2,
+          "rejected": 0
+        }
+      }
+    }
+  ],
+  "thread_sanitizer": {
+    "receipt": "validation/controller-thread-sanitizer.json",
+    "sha256": "a6feafe679f7c57ce0d0b4e2acb57468af01377af77a635864acc6285ebed3a3",
+    "passed": true
+  },
+  "hardware_audio_qualified": false,
+  "long_duration_xruns_qualified": false,
+  "Qt_UI_implemented": false,
+  "hosted_CI_configured": false,
+  "MVP_complete": false
+}

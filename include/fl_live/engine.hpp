@@ -17,6 +17,7 @@ class TempoGrid {
 public:
     TempoGrid(std::uint32_t sample_rate, std::uint32_t bpm_milli);
     [[nodiscard]] Frame next_bar(Frame at) const;
+    [[nodiscard]] std::optional<Frame> try_next_bar(Frame at) const noexcept;
 private:
     Frame numerator_;
     Frame denominator_;

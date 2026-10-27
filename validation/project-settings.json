@@ -1,0 +1,62 @@
+{
+  "recorded_at": "2026-10-27T03:52:48.296734+00:00",
+  "base_commit": "b1674e20ccbe4bfaa448c277e4e0ffc777b5e3c4",
+  "scope": "Local desktop plus pinned CI container; final runtime sources synced before final cohort",
+  "ctest_executions": {
+    "desktop": 5,
+    "release": 3,
+    "engine-only": 2,
+    "pipewire-sanitize": 4
+  },
+  "total": 14,
+  "checks": [
+    "settings JSON and bit-identical rendered-sample round trip",
+    "tempo extremes and malformed/oversized input",
+    "stopped/pending edit restrictions and unrelated file preservation",
+    "QML tempo edit, save/open and dirty-close refusal",
+    "three stopped desktop backend rebuilds in private PipeWire server"
+  ],
+  "hosted_result": "pending on new commit",
+  "not_qualified": [
+    "general media/project format",
+    "native Wayland and physical audio",
+    "edited desktop stream capture",
+    "desktop ASan/UBSan (sanitizer preset covers the headless engine/backend)"
+  ],
+  "source_sha256": {
+    "CMakeLists.txt": "b6c2576b5af4d570c0e810b15ee7c8767f1d4dcdefef23052b44a099c15ce7b2",
+    "apps/desktop/session.hpp": "e0b7194d2ab1bfd2827b7d262fc20fd0249e79d0bc3041b8031dc3f8014fd76e",
+    "apps/desktop/session.cpp": "ec8fe3fe5e6da5e3a9fa8b24bdd3e1662177db73c8fe3103da672707bfc2090f",
+    "apps/desktop/project.hpp": "e57ccbfa5c7dbef80d8b8d9064bd8615ca493d630f90b855ceff461a30dafcef",
+    "apps/desktop/project.cpp": "ac17d3d73b08f28c293aaf63885b958f94850b5b8f54bbda43c40d164aa74099",
+    "apps/desktop/Main.qml": "8b59b546a6e1e4d99375af589001ba3af120f5419fb6d3daa614b99ff168e892",
+    "tests/desktop_tests.cpp": "6088ed5aebab444d959dc2929b39e4cc64db78557576d5c206b9d3f437cf4f94",
+    "tests/desktop_backend_probe.cpp": "4b41d229a74e88d4bca5f82ce9308b0519810dd99fe11adcb3fc2f4f524be539",
+    "tests/pipewire_integration.py": "7459af51fb811e15b05609822edbb6f4cbd77a16d181928392be4eaa5fa0f315"
+  },
+  "results": "build/project-ci-results",
+  "log_sha256": {
+    "desktop-LastTest.log": "24c61ac53dbc6f819bacf40e7e03dc9a6df9fc13934ec145982f365b14af5203",
+    "desktop-build.log": "1341a8382117af3ec77a92cc2e30c549dfe473ca0a38f3e252277e384309d066",
+    "desktop-configure.log": "ab6632522427052b47d021fec4eb8cc57cb10fb37e092f4797255c3be4d0339a",
+    "desktop-junit.xml": "86e128cff1bc101be708cbdaf968b20e2e87727a37d6414b82d7adfdea081777",
+    "desktop-session.png": "63432e9c02c1de0feef13183cf7a12867bef5e885f229cd3f48ff48c9ad2b522",
+    "desktop-test.log": "817c3046bbcb4b5dedfce05449d351f4897dc2b07b5ead25e88893df0526fe59",
+    "engine-only-LastTest.log": "5431ea633ae4f35dacadfe989b3bba96854c6608cb7a3c251fda81227bdedef8",
+    "engine-only-build.log": "8c35b1682f73592d30612d7b0fabdb384fcfff35cb5a076cb48b85b1368aa794",
+    "engine-only-configure.log": "3cfb0f72b1e5c6493d6be1fec78398384acc459953ed3f9817e2a8c5fe56000e",
+    "engine-only-junit.xml": "056b6b690cc50a8f7c1785c2b56b6651f3ea32e52c81137958dac5c39da6471f",
+    "engine-only-test.log": "03660931cce820d693b608778800128cd3a80c3e83b374d4077246a07f7fe3fc",
+    "pipewire-sanitize-LastTest.log": "2e14171081c791b3a796064c9bc8a4a656c9a05047fb9281277171ca48795cc4",
+    "pipewire-sanitize-build.log": "8c35b1682f73592d30612d7b0fabdb384fcfff35cb5a076cb48b85b1368aa794",
+    "pipewire-sanitize-configure.log": "8a53deabff5a303642d3ca0ddea047876e4cb459bb84369d4f1b16da67614440",
+    "pipewire-sanitize-junit.xml": "3efa06b30a5e6fa6c59f401704454fdc290444865b9a16c6a0b4102ef9b87c21",
+    "pipewire-sanitize-test.log": "5eddeb094decd4a0df08500f3b73ebfa90b787c140a2c369adde1f1c43a1e735",
+    "release-LastTest.log": "ee5b6c85e353bdc6b35a95082bc68dd8ae138b70b52de5cb631c63399eb6169b",
+    "release-build.log": "8c35b1682f73592d30612d7b0fabdb384fcfff35cb5a076cb48b85b1368aa794",
+    "release-configure.log": "284f34b2adb4e60412664f2db6b1f4e9ee7b00acb3a8f530d0c430b959ab5f98",
+    "release-junit.xml": "a24d34fba744b7aad65841979221cc121acd519c2986a9515f7321a63796e736",
+    "release-test.log": "54378960b6a523390de3b6e8054557b59a930539e7dfe0ecfa8c83a693cffc5d",
+    "toolchain.txt": "859570f18891bb8005f96acc2b66148201e56961123a9a916baa299c39acdfac"
+  }
+}
