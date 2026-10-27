@@ -12,8 +12,12 @@ void validate(const ProjectSettings& s) {
     if (s.tempo < 20 || s.tempo > 300) throw std::invalid_argument("Tempo must be 20 to 300 BPM");
     for (int level : s.levels)
         if (level < 0 || level > 100) throw std::invalid_argument("Track level must be 0 to 100 percent");
-    for (int pitch : s.pitches)
-        if (pitch < 0 || pitch > 127) throw std::invalid_argument("MIDI pitch must be 0 to 127");
+    if (s.step_count < 1 || s.step_count > 16) throw std::invalid_argument("Pattern length must be 1 to 16 steps");
+    for (const auto& step : s.steps) {
+        if (step.pitch < 0 || step.pitch > 127) throw std::invalid_argument("MIDI pitch must be 0 to 127");
+        if (step.velocity < 0 || step.velocity > 100) throw std::invalid_argument("Velocity must be 0 to 100 percent");
+        if (step.gate < 1 || step.gate > 100) throw std::invalid_argument("Gate must be 1 to 100 percent");
+    }
 }
 int integer(const QJsonValue& value, int low, int high) {
     if (!value.isDouble()) throw std::invalid_argument("Project requires numeric settings");
@@ -27,20 +31,25 @@ fl_live::SessionPlan prepareProject(const ProjectSettings& s) {
     validate(s);
     using namespace fl_live;
     // Each boundary rounds independently, rather than accumulating rounded beats.
-    const auto boundary = [&](unsigned quarter_beats) -> Frame {
-        const auto numerator = 48000ULL * 15 * quarter_beats;
-        return (numerator + static_cast<unsigned>(s.tempo) - 1) / static_cast<unsigned>(s.tempo);
+    const auto boundary = [&](unsigned hundredths_of_a_beat) -> Frame {
+        const auto numerator = 48000ULL * 60 * hundredths_of_a_beat;
+        const auto denominator = static_cast<unsigned>(s.tempo) * 100;
+        return (numerator + denominator - 1) / denominator;
     };
     AudioClip pulse;
-    pulse.samples.resize(static_cast<std::size_t>(boundary(4)));
+    pulse.samples.resize(static_cast<std::size_t>(boundary(100)));
     for (std::size_t n = 0; n < pulse.samples.size(); ++n) {
         const double t = static_cast<double>(n) / 48000.0;
         pulse.samples[n] = static_cast<float>(0.18 * std::sin(2 * 3.141592653589793 * 110 * t) * std::exp(-22 * t));
     }
-    MidiClip midi{boundary(16), {}, true};
-    for (unsigned n = 0; n < 4; ++n)
-        midi.notes.push_back({boundary(n * 4), boundary(n * 4 + 3) - boundary(n * 4),
-            static_cast<std::uint8_t>(s.pitches[n]), 0.7F});
+    MidiClip midi{boundary(static_cast<unsigned>(s.step_count) * 100), {}, true};
+    for (unsigned n = 0; n < static_cast<unsigned>(s.step_count); ++n) {
+        const auto& step = s.steps[n];
+        if (!step.enabled) continue;
+        const auto start = boundary(n * 100);
+        midi.notes.push_back({start, boundary(n * 100 + static_cast<unsigned>(step.gate)) - start,
+            static_cast<std::uint8_t>(step.pitch), static_cast<float>(step.velocity) / 100});
+    }
     return {48000, static_cast<std::uint32_t>(s.tempo * 1000),
         {{static_cast<float>(s.levels[0]) / 100, {std::move(pulse)}},
          {static_cast<float>(s.levels[1]) / 100, {std::move(midi)}}}};
@@ -58,27 +67,49 @@ ProjectSettings readProject(const QString& path) {
     if (error.error != QJsonParseError::NoError || !document.isObject())
         throw std::invalid_argument("Project is not a valid JSON object");
     const auto object = document.object();
-    if (object.size() != 6 || object.value("format") != "fl-live-project" ||
-        integer(object.value("version"), 1, 1) != 1 || object.value("template") != "pulse-steps-v1")
-        throw std::invalid_argument("Unsupported project format, version or template");
+    if (object.size() != 6 || object.value("format") != "fl-live-project")
+        throw std::invalid_argument("Unsupported project format");
+    const int version = integer(object.value("version"), 1, 2);
+    const auto expected_template = version == 1 ? "pulse-steps-v1" : "pulse-step-sequencer-v1";
+    if (object.value("template") != expected_template)
+        throw std::invalid_argument("Unsupported project template");
     ProjectSettings s;
     s.tempo = integer(object.value("tempo"), 20, 300);
     const auto levels = object.value("levels").toArray();
-    const auto pitches = object.value("pitches").toArray();
-    if (levels.size() != 2 || pitches.size() != 4)
-        throw std::invalid_argument("Project requires two track levels and four MIDI notes");
+    if (levels.size() != 2) throw std::invalid_argument("Project requires two track levels");
     for (int i = 0; i < 2; ++i) s.levels[static_cast<std::size_t>(i)] = integer(levels[i], 0, 100);
-    for (int i = 0; i < 4; ++i) s.pitches[static_cast<std::size_t>(i)] = integer(pitches[i], 0, 127);
+    if (version == 1) {
+        const auto pitches = object.value("pitches").toArray();
+        if (pitches.size() != 4) throw std::invalid_argument("Version 1 requires four MIDI pitches");
+        for (int i = 0; i < 4; ++i) s.steps[static_cast<std::size_t>(i)].pitch = integer(pitches[i], 0, 127);
+    } else {
+        const auto pattern = object.value("pattern").toObject();
+        if (pattern.size() != 2) throw std::invalid_argument("Invalid pattern object");
+        s.step_count = integer(pattern.value("length"), 1, 16);
+        const auto steps = pattern.value("steps").toArray();
+        if (steps.size() != 16) throw std::invalid_argument("Project requires 16 stored steps");
+        for (int i = 0; i < 16; ++i) {
+            const auto value = steps[i].toObject();
+            if (value.size() != 4 || !value.value("enabled").isBool())
+                throw std::invalid_argument("Invalid step object");
+            s.steps[static_cast<std::size_t>(i)] = {value.value("enabled").toBool(),
+                integer(value.value("pitch"), 0, 127), integer(value.value("velocity"), 0, 100),
+                integer(value.value("gate"), 1, 100)};
+        }
+    }
     validate(s);
     return s;
 }
 void writeProject(const QString& path, const ProjectSettings& s) {
     validate(s);
-    QJsonArray levels, pitches;
+    QJsonArray levels, steps;
     for (int n : s.levels) levels.append(n);
-    for (int n : s.pitches) pitches.append(n);
-    const auto bytes = QJsonDocument(QJsonObject{{"format", "fl-live-project"}, {"version", 1},
-        {"template", "pulse-steps-v1"}, {"tempo", s.tempo}, {"levels", levels}, {"pitches", pitches}}).toJson();
+    for (const auto& step : s.steps)
+        steps.append(QJsonObject{{"enabled", step.enabled}, {"pitch", step.pitch},
+            {"velocity", step.velocity}, {"gate", step.gate}});
+    const auto bytes = QJsonDocument(QJsonObject{{"format", "fl-live-project"}, {"version", 2},
+        {"template", "pulse-step-sequencer-v1"}, {"tempo", s.tempo}, {"levels", levels},
+        {"pattern", QJsonObject{{"length", s.step_count}, {"steps", steps}}}}).toJson();
     QSaveFile file(path);
     file.setDirectWriteFallback(false);
     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit())

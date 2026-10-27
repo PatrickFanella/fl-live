@@ -1,6 +1,6 @@
 # Desktop session contract
 
-The optional `desktop` preset builds `fl-live`, an original Qt 6.12/QML session prototype. Two immutable authored tracks provide a decaying audio pulse and a four-note MIDI loop. The authored session now supports stopped tempo/level/pitch edits and versioned template project save/reload; see [project contract](projects.md).
+The optional `desktop` preset builds `fl-live`, an original Qt 6.12/QML session prototype. Two immutable authored tracks provide a decaying audio pulse and a configurable MIDI step loop. The authored session now supports stopped tempo/level/step-pattern edits and versioned template project save/reload; see [project contract](projects.md).
 
 `Session` owns the immutable plan before constructing its controller. The GUI thread is the sole command producer. In silent preview, its 10 ms timer renders and discards 480 mono frames per tick on that same thread. Timer delays slow the simulated clock. In PipeWire mode, the backend exclusively owns rendering; the GUI timer only polls status. Backend destruction joins processing before controller/plan destruction. No Qt code runs in the audio callback.
 
@@ -31,3 +31,5 @@ The GUI distinguishes an unhandled control request (Launch requested / Stop requ
 Snapshots are published after a block. A command at the next unrendered frame stays queued until that frame is processed; the UI refreshes on its polling timer. A very short clip that starts and ends within one block may never appear active in a block-completion snapshot. Stop, panic, backend finish and project replacement clear activity and queued actions. The snapshot describes rendering state, not hardware presentation time.
 
 Tests check sample boundaries, audio/MIDI one-shot completion, clip replacement, same-frame launch/stop ordering, rejection and panic cleanup. A concurrent reader checks coherent activity/transport over 10,000 launch/stop cycles. Qt checks cover requested/queued/active states, quantized track stop and button highlights using real QML controls. `build/desktop/desktop-active-clip.png` records the rendered active state and is retained with CI artifacts.
+
+The MIDI editor now offers 1–16 quarter-note steps with enabled/rest, pitch, velocity and gate controls. Its panel scrolls on smaller windows. Selecting a step is independent of playback and does not edit the document. The highlighted editor step is a selection, not a per-note playback cursor. Version 1 projects migrate on read; saves use version 2. See [project format](projects.md).
