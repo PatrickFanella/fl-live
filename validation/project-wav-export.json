@@ -1,0 +1,35 @@
+{
+  "verified_at": "2026-10-28T07:53:23.265635+00:00",
+  "base": "9d68dd3d179b0e4a061006e1dc49fbdeac68abc6",
+  "local_pinned_container_cohorts": {
+    "desktop": 5,
+    "release": 3,
+    "engine-only": 2,
+    "pipewire-sanitize": 4
+  },
+  "checks": [
+    "decoded PCM equals edited two-track engine mix at 137 BPM across different render block sizes",
+    "mono 48 kHz 16-bit WAV and exact bar-rounded duration",
+    "silent mix produces zero PCM",
+    "existing output byte-preserved; invalid length creates no file",
+    "pending and running export refused",
+    "dirty state, project path and Undo label unchanged",
+    "offscreen mouse click on QML export button creates WAV"
+  ],
+  "sha256": {
+    "CMakeLists.txt": "0c8e6ff15146fd4a83c5942935a28bdcecb32af5e5e69db369b3824729d401e4",
+    "apps/desktop/export.cpp": "c4ad8d8204f4a2fa91a0e8de806e3487e196f85476dc492530b2dbd84e714061",
+    "apps/desktop/project.hpp": "1a5ff26ba02757f66c7056fc82ddc1b88472481aa488cac86e08bdecc0c1fbb5",
+    "apps/desktop/session.hpp": "27b79a5ac7845fa60b440d7bf4e958f0c692c24d6c9da99ca596b56cc660ba6f",
+    "apps/desktop/session.cpp": "833420f8fa8fde7f05de710ebf9d795ee30ea14b013be225142fcf9f775075a4",
+    "apps/desktop/Main.qml": "d7fcaaaf4b2907ee52ed39f2ad32973ff58858c3adece6c4f9fe257facdc6aad",
+    "tests/desktop_tests.cpp": "0d0bd5b701e1e9669279f217bd959adb675355862ac7b587a378a10f3a48eaa1"
+  },
+  "limitations": [
+    "1\u201316 bars; both template clips start at zero; hard end",
+    "synchronous GUI operation without cancellation/progress",
+    "crash can leave partial WAV; ordinary write/flush failure attempts removal",
+    "native Wayland and hardware playback unqualified",
+    "hosted checks pending"
+  ]
+}

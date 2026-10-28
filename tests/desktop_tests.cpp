@@ -4,6 +4,8 @@
 #include <QQmlContext>
 #include <QQuickWindow>
 #include <QQuickItem>
+#include <QtEndian>
+#include <cmath>
 #include <array>
 #include <functional>
 #include <limits>
@@ -16,6 +18,41 @@
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void projectWavExport() {
+        QTemporaryDir directory;
+        const auto path=directory.filePath("mix.wav");
+        ProjectSettings settings;settings.tempo=137;settings.levels={70,40};
+        settings.step_count=1;settings.steps[0]={true,69,50,100};
+        exportProjectWav(path,settings,1);
+        QFile file(path);QVERIFY(file.open(QIODevice::ReadOnly));const auto bytes=file.readAll();file.close();
+        const auto frames=(48000ULL*60*4+136)/137;
+        QCOMPARE(bytes.size(),static_cast<qsizetype>(44+frames*2));
+        QCOMPARE(bytes.first(4),QByteArray("RIFF"));QCOMPARE(bytes.mid(8,8),QByteArray("WAVEfmt "));
+        QCOMPARE(qFromLittleEndian<quint32>(bytes.constData()+24),48000U);
+        QCOMPARE(qFromLittleEndian<quint16>(bytes.constData()+22),1);
+        QCOMPARE(qFromLittleEndian<quint16>(bytes.constData()+34),16);
+        const auto plan=prepareProject(settings);fl_live::Engine engine(plan);
+        QCOMPARE(engine.schedule({fl_live::CommandKind::launch,0,0,0}),fl_live::ScheduleResult::accepted);
+        QCOMPARE(engine.schedule({fl_live::CommandKind::launch,0,1,0}),fl_live::ScheduleResult::accepted);engine.start();
+        std::vector<float> expected(static_cast<std::size_t>(frames));engine.process(expected);
+        for (std::size_t i=0;i<expected.size();++i)
+            QCOMPARE(qFromLittleEndian<qint16>(bytes.constData()+44+i*2),static_cast<qint16>(std::lround(expected[i]*32767.0F)));
+        QVERIFY_EXCEPTION_THROWN(exportProjectWav(path,settings,1),std::runtime_error);
+        QVERIFY(file.open(QIODevice::ReadOnly));QCOMPARE(file.readAll(),bytes);file.close();
+        const auto invalid=directory.filePath("invalid.wav");
+        QVERIFY_EXCEPTION_THROWN(exportProjectWav(invalid,settings,0),std::invalid_argument);
+        QVERIFY_EXCEPTION_THROWN(exportProjectWav(invalid,settings,17),std::invalid_argument);
+        QVERIFY(!QFile::exists(invalid));
+        settings.levels={0,0};exportProjectWav(directory.filePath("silent.wav"),settings,1);
+        QFile silent(directory.filePath("silent.wav"));QVERIFY(silent.open(QIODevice::ReadOnly));silent.seek(44);
+        QCOMPARE(silent.readAll(),QByteArray(static_cast<qsizetype>(frames*2),'\0'));
+        Session session;session.setTempo(150);const auto projectPath=session.projectPath();const auto undo=session.undoText();
+        QVERIFY(session.exportWav(directory.filePath("session.wav"),1));
+        QVERIFY(session.dirty());QCOMPARE(session.projectPath(),projectPath);QCOMPARE(session.undoText(),undo);
+        session.play();QVERIFY(!session.exportWav(invalid,1));session.tick();
+        QVERIFY(!session.exportWav(invalid,1));QVERIFY(!QFile::exists(invalid));
+        session.stop();session.tick();QVERIFY(session.exportWav(invalid,1));
+    }
     void historyAndSavedState() {
         QTemporaryDir directory;
         Session session;
@@ -326,6 +363,9 @@ private slots:
         key("selectedVelocity",Qt::Key_Down);QCOMPARE(session.velocities()[4].toInt(),69);
         key("selectedGate",Qt::Key_Down);QCOMPARE(session.gates()[4].toInt(),74);
         QTemporaryDir directory;
+        auto* exportFile=findItem(window->contentItem(),"exportFile");QVERIFY(exportFile);
+        exportFile->setProperty("text",directory.filePath("qml.wav"));
+        click("exportWavButton");QVERIFY(QFile::exists(directory.filePath("qml.wav")));QVERIFY(session.dirty());
         auto* projectFile = window->findChild<QObject*>("projectFile");
         QVERIFY(projectFile); projectFile->setProperty("text",directory.filePath("qml.json"));
         findItem(window->contentItem(),"projectFile")->forceActiveFocus();
