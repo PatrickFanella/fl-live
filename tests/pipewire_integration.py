@@ -131,7 +131,7 @@ context.objects = [
                node.group = pipewire.test priority.driver = 20000 } }
 ]
 ''')
-    server = player = capture = None
+    server = player = capture = recovery = None
     with (root / "server.log").open("wb") as server_log:
         try:
             server = subprocess.Popen(["pipewire", "-c", str(configuration)], env=env,
@@ -258,19 +258,38 @@ context.objects = [
                            check=True, capture_output=True, timeout=2)
             loss_data, loss_errors = capture.communicate(timeout=3)
             assert len(loss_data) == 4096 and not loss_errors, (len(loss_data), loss_errors)
+            if len(sys.argv) > 2:
+                recovery = subprocess.Popen([str(pathlib.Path(sys.argv[2]).resolve()), remote, "--recovery"],
+                    env=dict(env, QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software"),
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                ready(recovery)
             stop(server)
             tail, errors = player.communicate(timeout=4)
             assert player.returncode != 0, (tail, errors)
             lost = json.loads(tail.strip())
             assert lost["error"] != 0 and lost["callbacks"] > 0 and not lost["running"], lost
+            desktop_recovery = None
+            if recovery is not None:
+                ready(recovery)  # stopped, saved, and failed retry against absent server
+                server = subprocess.Popen(["pipewire", "-c", str(configuration)], env=env,
+                                          stdout=server_log, stderr=server_log)
+                until(lambda: (root / remote).exists() if server.poll() is None else False)
+                recovery.stdin.write("g"); recovery.stdin.flush()
+                output, errors = recovery.communicate(timeout=8)
+                assert recovery.returncode == 0, (output, errors)
+                assert "explicit stopped reconnect and retained history" in output
+                desktop_recovery = output.strip()
+                stop(server)
             print(json.dumps(dict(passed=True,scope="private software graph; no hardware/audio-device qualification",
                                   captured_frames=len(values), capture_returncode=capture_code,
-                                  silent_prefix=first, playback=stats, server_loss=lost, project_rebuilds=project_rebuilds, desktop_workflow=desktop_workflow)))
+                                  silent_prefix=first, playback=stats, server_loss=lost, project_rebuilds=project_rebuilds,
+                                  desktop_workflow=desktop_workflow, desktop_recovery=desktop_recovery)))
         except Exception:
             print((root / "server.log").read_text(errors="replace")[-2000:], file=sys.stderr)
             raise
         finally:
             stop(capture)
+            stop(recovery)
             stop(player)
             stop(server)
     absent = subprocess.run([binary, "--remote", remote, "--duration-ms", "100"], env=env,

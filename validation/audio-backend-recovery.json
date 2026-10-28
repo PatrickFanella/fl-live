@@ -1,0 +1,63 @@
+{
+  "verified_at": "2026-10-28T09:56:11.001028+00:00",
+  "issue": "https://git.subcult.tv/subculture-collective/fl-live/issues/25",
+  "base": "9a73837bdf890ce7379abdb9a2544848a00740cf",
+  "scope": "Local software recovery slice; issue remains open for physical target reconnection qualification",
+  "environment": {
+    "host": "kvant",
+    "system": "Linux-7.2.8-9-omarchy-x86_64-with-glibc2.44",
+    "qt": "6.12.0",
+    "pipewire": "1.6.9",
+    "native_wayland_session": false
+  },
+  "checks": [
+    {
+      "command": "cmake --preset desktop; cmake --build --preset desktop -j 4; ctest --preset desktop",
+      "passed": 5,
+      "total": 5,
+      "scope": "Includes offscreen desktop and owned private server recovery"
+    },
+    {
+      "command": "ctest --preset desktop -R desktop-session",
+      "passed": 1,
+      "total": 1,
+      "scope": "Final added offscreen retry-button mouse test"
+    },
+    {
+      "command": "cmake --preset engine-only; cmake --build --preset engine-only -j 4; ctest --preset engine-only",
+      "passed": 2,
+      "total": 2
+    },
+    {
+      "command": "cmake --preset pipewire-sanitize; cmake --build --preset pipewire-sanitize -j 4; ctest --preset pipewire-sanitize",
+      "passed": 4,
+      "total": 4,
+      "scope": "ASan/UBSan engine and headless backend; excludes Qt recovery code"
+    }
+  ],
+  "verified_behaviors": [
+    "Missing-server startup leaves UI open with stopped transport",
+    "Offscreen Retry audio button is visible and clickable; Play is disabled on failure",
+    "Server loss clears pending controls and active clips after joined teardown",
+    "Failed retry preserves project; save works while disconnected",
+    "Explicit retry after private server restart creates a fresh stopped runtime without automatic playback",
+    "Tempo, pitch, Undo/Redo and saved-content tracking survive reconnection"
+  ],
+  "limitations": [
+    "Physical output loss/reappearance and session-manager target routing unqualified",
+    "Missing target on a live server may wait without reporting an error",
+    "No native Wayland session or physical latency measurement",
+    "Reconnect retains original configured remote/target; no device selector or rate adaptation",
+    "Retry creates backend synchronously on GUI thread with existing bounded connection wait",
+    "No hosted CI, PR, distribution or release verification"
+  ],
+  "sha256": {
+    "apps/desktop/Main.qml": "befd60fef17e98bf880d6dbbce8675f15c7dbb069c552f235e34c5f29c1a87af",
+    "apps/desktop/session.cpp": "7c3118c566ec6a6be30f226cccc64e7b200fdb39c41a31f644514b6aa75bbf75",
+    "apps/desktop/session.hpp": "533aa5c7f1c6530d94504e4cf5fffb4b26ab9a672b76ad3ed8842e35ec2cb4d0",
+    "tests/desktop_tests.cpp": "805177f061f4a9bb6f3e482c1347af826b7223ba1517c767fac998708620313d",
+    "tests/desktop_backend_probe.cpp": "fb97e8fff04b650152afcf0e8991098b5107a704588eb457cda5b4e7aa94a4d7",
+    "tests/pipewire_integration.py": "b91875abc215b1b8ba9384791bca39e6e7f2ae2f06adafde9285d90a2abaec84",
+    "docs/desktop-session.md": "c774c3f8f5034e47f36e70efd5c10ae920a778b2ca4e76ccbf4139f89b7dac9b"
+  }
+}

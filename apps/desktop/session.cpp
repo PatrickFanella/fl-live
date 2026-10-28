@@ -10,7 +10,10 @@ Session::Session(fl_live::PipeWireConfig config, QObject* parent)
       project_path_(QDir::home().filePath("fl-live-project.json")), preview_(config_.remote.empty()) {
     history_[0].settings = settings_;
     saved_settings_ = settings_;
-    if (!preview_) prepared_->backend = std::make_unique<fl_live::PipeWireBackend>(prepared_->controller, config_);
+    if (!preview_) {
+        try { prepared_->backend = std::make_unique<fl_live::PipeWireBackend>(prepared_->controller, config_); }
+        catch (const std::exception& error) { audioFailed(QString::fromUtf8(error.what())); }
+    }
     timer_.setInterval(10);
     connect(&timer_, &QTimer::timeout, this, &Session::tick);
     timer_.start();
@@ -19,6 +22,35 @@ Session::~Session() {
     timer_.stop();
     // Prepared's backend is destroyed before its controller and immutable plan.
     prepared_.reset();
+}
+void Session::audioFailed(const QString& reason) {
+    // Destruction joins processing before the GUI becomes the controller owner.
+    prepared_->backend.reset();
+    prepared_->controller.finish();
+    status_ = prepared_->controller.status();
+    failed_ = true;
+    message_ = reason + ". Audio is stopped. Save your project or choose Retry audio after restoring the server/output.";
+    emit changed();
+}
+bool Session::reconnectAudio() {
+    if (preview_ || !failed_) return false;
+    try {
+        // Fresh stopped runtime prevents old launches or notes resuming. Musical
+        // settings, saved-content tracking, selection and history stay intact.
+        auto candidate = std::make_unique<Prepared>(settings_);
+        candidate->backend = std::make_unique<fl_live::PipeWireBackend>(candidate->controller, config_);
+        prepared_.swap(candidate);
+        failed_ = false;
+        serial_ = 0;
+        track_serials_.fill(0);
+        status_ = prepared_->controller.status();
+        message_ = "Audio reconnected and stopped. Launch clips, then press Play.";
+        emit changed();
+        return true;
+    } catch (const std::exception& error) {
+        audioFailed(QString::fromUtf8(error.what()));
+        return false;
+    }
 }
 QVariantList Session::activeClips() const {
     return {status_.tracks[0].active_clip, status_.tracks[1].active_clip};
@@ -153,8 +185,7 @@ bool Session::replace(const ProjectSettings& settings) {
         try {
             if (!preview_) candidate->backend = std::make_unique<fl_live::PipeWireBackend>(candidate->controller, config_);
         } catch (...) {
-            failed_ = true; // old document survives; processing has been joined
-            status_ = prepared_->controller.status();
+            audioFailed("Cannot prepare audio"); // old document survives
             throw;
         }
         prepared_.swap(candidate); // old plan is destroyed only on the GUI thread
@@ -166,7 +197,7 @@ bool Session::replace(const ProjectSettings& settings) {
         return true;
     } catch (const std::exception& error) {
         message_ = QString::fromUtf8(error.what());
-        if (failed_) message_ += ". Audio is stopped; restart the app to reconnect.";
+        if (failed_) message_ += ". Audio is stopped. Save your project or choose Retry audio.";
         emit changed();
         return false;
     }
@@ -255,6 +286,7 @@ void Session::stopTrack(int track) {
     send(fl_live::ControlKind::stop_next_bar, static_cast<std::size_t>(track));
 }
 void Session::panic() {
+    if (failed_) return;
     prepared_->controller.panic();
     message_ = "Silence requested; awaiting the rendering thread";
     emit changed();
@@ -265,9 +297,7 @@ void Session::tick() {
         prepared_->controller.process(discarded); // simulated clock, no audio output
     }
     if (prepared_->backend && prepared_->backend->status().error) {
-        prepared_->backend.reset();
-        failed_ = true;
-        message_ = "Audio backend disconnected. Restart the application to reconnect.";
+        audioFailed("Audio backend disconnected");
     }
     const auto before = status_;
     status_ = prepared_->controller.status();

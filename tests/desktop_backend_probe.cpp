@@ -7,6 +7,7 @@
 #include <QQuickItem>
 #include <functional>
 #include <QElapsedTimer>
+#include <QTemporaryDir>
 #include <iostream>
 
 // Invoked only by the owned private-server fixture. Exercises stopped graph
@@ -19,6 +20,38 @@ int main(int argc, char** argv) {
         fl_live::PipeWireConfig config;
         config.remote = argv[1]; config.node_group = "pipewire.test";
         Session session(config);
+        if (argc == 3 && std::string_view(argv[2]) == "--recovery") {
+            session.setTempo(137);
+            session.setPitch(0, 48);
+            session.play();
+            session.launch(1, 0);
+            std::cout << "{\"ready\":true}" << std::endl;
+            QElapsedTimer deadline; deadline.start();
+            while (session.audioAvailable() && deadline.elapsed() < 4000) QTest::qWait(10);
+            if (session.audioAvailable() || session.running() || session.pending() ||
+                session.activeClips()[1].toInt() != -1 || !session.dirty()) return 1;
+            const auto position = session.position();
+            session.play(); session.launch(1, 0); session.panic(); session.tick();
+            if (session.running() || session.pending() || session.position() != position) return 1;
+            QTemporaryDir directory;
+            const auto path = directory.filePath("recovered.json");
+            if (!session.saveProject(path) || readProject(path).tempo != 137 ||
+                readProject(path).steps[0].pitch != 48 || session.dirty()) return 1;
+            if (session.reconnectAudio() || session.audioAvailable()) return 1;
+            std::cout << "{\"ready\":true}" << std::endl;
+            if (std::cin.get() != 'g' || !session.reconnectAudio()) return 1;
+            if (!session.audioAvailable() || session.running() || session.pending() ||
+                !session.canEdit() || session.dirty() || session.position() != "1.1" ||
+                session.activeClips()[1].toInt() != -1 || !session.canUndo()) return 1;
+            QTest::qWait(100);
+            if (session.running() || session.pending()) return 1;
+            session.undo();
+            if (session.pitches()[0].toInt() != 60 || !session.canRedo() || !session.dirty()) return 1;
+            session.redo();
+            if (session.pitches()[0].toInt() != 48 || session.dirty()) return 1;
+            std::cout << "PASS: server loss, failed retry, save, explicit stopped reconnect and retained history" << std::endl;
+            return 0;
+        }
         if (argc == 3) {
             QQmlApplicationEngine engine;
             engine.rootContext()->setContextProperty("session", &session);

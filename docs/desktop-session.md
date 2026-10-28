@@ -10,7 +10,11 @@ Launch and track stop use new controller commands resolved against the current p
 
 Stop freezes transport and clears all clips and scheduled commands. Return to start is enabled only while acknowledged stopped with no pending controls. Launch while stopped schedules a clip but does not start transport. Silence now uses out-of-band panic; it clears queued controls and stops on the next callback, without persistent muting. New controls can subsequently restart playback.
 
-No remote argument selects silent preview. `--remote NAME` explicitly connects the audio backend; `--target NODE` additionally opts into autoconnection through the user's session manager. A target requires a remote. Backend failure joins/tears down processing, displays stopped transport and disables further submissions until app restart. Device selection, reconnect and rate adaptation remain future work.
+No remote argument selects silent preview. `--remote NAME` explicitly connects the audio backend; `--target NODE` additionally opts into autoconnection through the user's session manager. A target requires a remote. Missing-server startup and reported backend errors leave the application open with an **Audio unavailable** label, stopped transport and a **Retry audio** button. Save remains available; musical edits and playback submissions are blocked until reconnection succeeds.
+
+Restore the requested server/output, then choose **Retry audio**. Retry uses the original remote/target configuration and prepares a fresh stopped runtime from the retained document. It preserves musical settings, selection, Undo/Redo history, project path and saved-content tracking, while clearing old launches and notes. Playback requires a new Launch and Play action. Failed retries keep the document and error state. Backend destruction joins processing before the GUI reads the final stopped controller state or replaces the plan.
+
+The private software-server fixture checks loss, a failed retry, saving while disconnected, explicit reconnection after server restart, stopped transport and retained Undo/Redo. Missing-server startup is also covered offscreen. Physical target disappearance/reappearance, session-manager routing and rate adaptation remain unqualified; a missing target may leave a live server stream waiting rather than reporting an error. Retry is available for reported backend failure, not as a device selector.
 
 ## Verification boundary
 
