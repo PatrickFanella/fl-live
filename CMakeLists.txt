@@ -77,7 +77,8 @@ if(FL_LIVE_BUILD_DESKTOP)
     if(BUILD_TESTING)
         find_package(Qt6 6.12 REQUIRED COMPONENTS Test)
         add_executable(desktop-backend-probe tests/desktop_backend_probe.cpp)
-        target_link_libraries(desktop-backend-probe PRIVATE fl_live_session)
+        target_link_libraries(desktop-backend-probe PRIVATE fl_live_session Qt6::QuickControls2 Qt6::Test)
+        qt_add_resources(desktop-backend-probe "ui" PREFIX "/ui" BASE apps/desktop FILES apps/desktop/Main.qml)
         if(FL_LIVE_PIPEWIRE_INTEGRATION_TEST)
             # Extend the same owned graph instead of starting a second fixture.
             add_test(NAME pipewire-private-graph COMMAND ${Python3_EXECUTABLE}

@@ -36,7 +36,7 @@ def ready(process):
         if not selector.select(timeout=4):
             raise AssertionError("playback ready response timed out")
         line = process.stdout.readline()
-    assert line and json.loads(line)["ready"], (line, process.poll())
+    assert line and json.loads(line)["ready"], (line, process.poll(), process.stderr.read() if process.poll() is not None else "still running")
 
 
 binary = str(pathlib.Path(sys.argv[1]).resolve())
@@ -164,11 +164,46 @@ context.objects = [
 
             project_rebuilds = None
             if len(sys.argv) > 2:
-                probe = subprocess.run([str(pathlib.Path(sys.argv[2]).resolve()), remote], env=env,
+                probe = subprocess.run([str(pathlib.Path(sys.argv[2]).resolve()), remote],
+                                       env=dict(env, QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software"),
                                        capture_output=True, text=True, timeout=15)
                 assert probe.returncode == 0, (probe.stdout, probe.stderr)
                 assert "five stopped project rebuilds including Undo/Redo" in probe.stdout, probe.stdout
                 project_rebuilds = probe.stdout.strip()
+
+            desktop_workflow = None
+            if len(sys.argv) > 2:
+                player = subprocess.Popen([str(pathlib.Path(sys.argv[2]).resolve()), remote, "--workflow"],
+                    env=dict(env, QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software"),
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                ready(player)
+                capture = subprocess.Popen(["pw-cat", "--remote", remote, "--record", "--raw", "--format", "f32",
+                    "--rate", "48000", "--channels", "1", "--channel-map", "MONO", "--target", "0",
+                    "--sample-count", "144000", "--properties",
+                    "{ node.name = fixture-desktop-capture node.group = pipewire.test node.always-process = true }", "-"],
+                    env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                until(lambda: configure_node("fl-live-output", "Output"))
+                until(lambda: configure_node("fixture-desktop-capture", "Input"))
+                subprocess.run(["pw-link", "--remote", remote,
+                    until(lambda: port("--output", "fl-live-output:")),
+                    until(lambda: port("--input", "fixture-desktop-capture:"))],
+                    env=env, check=True, capture_output=True, timeout=2)
+                player.stdin.write("g"); player.stdin.flush()
+                audio, errors = capture.communicate(timeout=5)
+                assert capture.returncode in (0, 1) and not errors and len(audio)==144000*4
+                samples = struct.unpack("<144000f", audio)
+                # Independent pitch/gain check, away from the quantized launch.
+                # One 200ms step repeats a 440Hz sine at 0.1*0.5*0.4 gain.
+                tail = samples[72000:96000]
+                peak = max(abs(v) for v in tail)
+                crossings = sum(a <= 0 < b for a, b in zip(tail, tail[1:]))
+                assert 0.0199 < peak < 0.0201, peak
+                assert 219 <= crossings <= 221, crossings
+                assert all(v == 0 for v in samples[132000:]), "audio after acknowledged stop"
+                output, errors = player.communicate(timeout=5)
+                assert player.returncode == 0, (output, errors)
+                assert "QML edits, play, MIDI launch and acknowledged stop" in output
+                desktop_workflow = dict(frames=144000, peak=peak, positive_crossings_half_second=crossings, stopped_silence_frames=12000)
 
             # A second actual client must report the loss of this owned server
             # and exit; this does not touch any pre-existing server or stream.
@@ -195,7 +230,7 @@ context.objects = [
             assert lost["error"] != 0 and lost["callbacks"] > 0 and not lost["running"], lost
             print(json.dumps(dict(passed=True,scope="private software graph; no hardware/audio-device qualification",
                                   captured_frames=len(values), capture_returncode=capture_code,
-                                  silent_prefix=first, playback=stats, server_loss=lost, project_rebuilds=project_rebuilds)))
+                                  silent_prefix=first, playback=stats, server_loss=lost, project_rebuilds=project_rebuilds, desktop_workflow=desktop_workflow)))
         except Exception:
             print((root / "server.log").read_text(errors="replace")[-2000:], file=sys.stderr)
             raise

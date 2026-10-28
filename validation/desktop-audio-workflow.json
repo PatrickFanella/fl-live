@@ -1,0 +1,29 @@
+{
+  "verified_at": "2026-10-28T07:07:13.692558+00:00",
+  "base": "c1d8d522658467c7cc77101e956edeb74b231cc1",
+  "scope": "offscreen production QML signals to private PipeWire capture",
+  "local_cohorts": {
+    "desktop": 5,
+    "release": 3,
+    "engine-only": 2,
+    "pipewire-sanitize": 4
+  },
+  "capture": {
+    "frames": 144000,
+    "rate": 48000,
+    "peak": 0.020000001415610313,
+    "positive_crossings_half_second": 220,
+    "stopped_silence_frames": 12000
+  },
+  "container": "pinned ci/Dockerfile; final fixture copied into owned stopped container before full rerun",
+  "sha256": {
+    "CMakeLists.txt": "9252dc44753e053f02e8ee54be06a20b20564c097d3a8e95ca8e91c2605afcf1",
+    "tests/desktop_backend_probe.cpp": "737c88b184e311237fbdcdf70993bc01c1b3016fc219df6ebfaa857236e96488",
+    "tests/pipewire_integration.py": "71d3e29b2083b80af3aa26ade35a73aa993b0d0a8b0552d67c06a878e523ab5b"
+  },
+  "limitations": [
+    "QML signals invoked directly; native input and Wayland unqualified",
+    "No physical audio, latency or long-run qualification",
+    "Hosted CI pending"
+  ]
+}
