@@ -276,3 +276,17 @@ void Session::tick() {
             "Render acknowledged. Track indicators show active clips and queued actions.";
     emit changed();
 }
+
+bool Session::exportWav(const QString& path, int bars) {
+    if (!editable()) return false;
+    try {
+        exportProjectWav(path, settings_, bars);
+        message_ = QString("Exported %1 bars: both tracks from the start, mono 48 kHz / 16-bit WAV").arg(bars);
+        emit changed();
+        return true;
+    } catch (const std::exception& error) {
+        message_ = QString::fromUtf8(error.what());
+        emit changed();
+        return false;
+    }
+}

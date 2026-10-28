@@ -6,7 +6,7 @@ Updated 2026-10-28. The near-term goal is a useful Linux MVP, with a close Live/
 |---|---|---|
 | Source/build foundation | Separate registered product project; C++20/CMake/Ninja builds | Product license and packaging |
 | Deterministic engine | Offline audio/MIDI clips, gain, launch/stop and rational clock checked | Additional policies, broader workloads, multi-channel engine |
-| Offline export | Actual demo WAV round trip and block-size invariance | General project export, tails/format choices and cancellation |
+| Offline export | Demo WAV round trip and block-size invariance; stopped desktop export of current two-track mix for 1–16 bars | General media/track export, tails/format choices, progress and cancellation |
 | Real-time backend | Mono PipeWire adapter, bounded handoff and actual private-graph capture/server-loss tests | Hardware/device changes, latency, broader quantum/rate behavior and long-duration xrun measurements |
 | Qt/QML application | Authored two-track clip grid, transport, silent preview and explicit PipeWire mode; offscreen mouse/control checks | Broader editing/mixer, native Wayland and accessibility qualification |
 | Project editing/state | Versioned template JSON with v1 migration, atomic save/reload, stopped 1–16-step MIDI editing, bounded Undo/Redo and saved-content dirty tracking; sample round trip, private backend rebuild checks and QML-to-audio capture | General clip/track editing, imported media, autosave/recovery |

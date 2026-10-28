@@ -64,6 +64,7 @@ public:
     Q_INVOKABLE void setTempo(int value);
     Q_INVOKABLE void setLevel(int track, int value);
     Q_INVOKABLE void setPitch(int note, int value);
+    Q_INVOKABLE bool exportWav(const QString& path, int bars);
     Q_INVOKABLE bool saveProject(const QString& path);
     Q_INVOKABLE bool loadProject(const QString& path);
     bool running() const { return status_.running; }

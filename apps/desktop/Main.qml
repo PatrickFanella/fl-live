@@ -65,6 +65,13 @@ ApplicationWindow {
             Button { objectName: "openProjectButton"; text: "Open"; enabled: session.canEdit; onClicked: session.loadProject(projectFile.text) }
             Label { text: session.dirty ? "Unsaved changes" : "No pending edits"; color: "#e4bc75" }
         }
+        RowLayout {
+            Layout.fillWidth: true
+            TextField { id: exportFile; objectName: "exportFile"; Layout.fillWidth: true; placeholderText: "New WAV file path"; Accessible.name: "New WAV export path" }
+            Label { text: "Bars" }
+            SpinBox { id: exportBars; objectName: "exportBars"; from: 1; to: 16; value: 4; enabled: session.canEdit; Accessible.name: "Export length in bars" }
+            Button { objectName: "exportWavButton"; text: "Export both tracks"; enabled: session.canEdit; onClicked: session.exportWav(exportFile.text, exportBars.value) }
+        }
         Rectangle {
             color: "#242c37"; radius: 8
             Layout.fillWidth: true; Layout.fillHeight: true
