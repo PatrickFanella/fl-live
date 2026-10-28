@@ -35,3 +35,13 @@ Tests check sample boundaries, audio/MIDI one-shot completion, clip replacement,
 The MIDI editor now offers 1–16 quarter-note steps with enabled/rest, pitch, velocity and gate controls. Its panel scrolls on smaller windows. Selecting a step is independent of playback and does not edit the document. The highlighted editor step is a selection, not a per-note playback cursor. Version 1 projects migrate on read; saves use version 2. See [project format](projects.md).
 
 Undo/Redo now use the same stopped prepared-session replacement path. Save preserves history; successful Open resets it. See [editing history](edit-history.md) for the 128-edit bound, saved-content tracking and keyboard/text-input behavior.
+
+## Desktop control-to-audio verification
+
+The desktop variant of `pipewire-private-graph` loads the production QML with a real `Session` and PipeWire backend on the owned software server. It invokes the controls’ `valueModified` and `clicked` signals to set tempo 300, a one-step A4 pattern, velocity 50%, gate 100%, and MIDI track gain 40%, then starts transport and launches only that track. A separate `pw-cat` process records 144,000 mono float samples at 48 kHz.
+
+The capture must contain a 440 Hz tone with peak 0.02 in the 1.5–2.0 second window, and end with 12,000 silent samples after the QML Stop action is acknowledged. The probe also requires active-clip feedback during playback, disabled editing while running, and cleared activity with editing enabled after Stop. Frequency and gain checks use captured samples rather than the engine’s own expected buffer.
+
+This is an offscreen software integration check. It does not establish native pointer/keyboard behavior, Wayland rendering, physical audibility, hardware latency, or xrun performance. The existing offscreen input tests and backend lifecycle checks remain separate evidence.
+
+Play and Launch may be handled in the same render block at frame zero, which is a valid bar boundary. A silent prefix is therefore permitted but not required.
