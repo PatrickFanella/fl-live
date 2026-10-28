@@ -49,7 +49,8 @@ ApplicationWindow {
             Label { text: session.mode; color: "#e4bc75" }
         }
         RowLayout {
-            Button { objectName: "playButton"; text: "Play"; onClicked: session.play() }
+            Button { objectName: "playButton"; text: "Play"; enabled: session.audioAvailable; onClicked: session.play() }
+            Button { objectName: "retryAudioButton"; text: "Retry audio"; visible: !session.audioAvailable; onClicked: session.reconnectAudio() }
             Button { objectName: "stopButton"; text: "Stop"; onClicked: session.stop() }
             Button { text: "Return to start"; enabled: !session.running && !session.pending; onClicked: session.rewind() }
             Label { objectName: "transportState"; text: session.running ? "Playing" : "Stopped"; Layout.preferredWidth: 80 }

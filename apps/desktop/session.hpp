@@ -33,7 +33,8 @@ class Session final : public QObject {
     Q_PROPERTY(bool pending READ pending NOTIFY changed)
     Q_PROPERTY(QString position READ position NOTIFY changed)
     Q_PROPERTY(QString message READ message NOTIFY changed)
-    Q_PROPERTY(QString mode READ mode CONSTANT)
+    Q_PROPERTY(QString mode READ mode NOTIFY changed)
+    Q_PROPERTY(bool audioAvailable READ audioAvailable NOTIFY changed)
 public:
     explicit Session(fl_live::PipeWireConfig config = {}, QObject* parent = nullptr);
     ~Session() override;
@@ -71,7 +72,9 @@ public:
     bool pending() const { return status_.handled_serial < serial_; }
     QString position() const;
     QString message() const { return message_; }
-    QString mode() const { return preview_ ? "Silent preview" : "PipeWire output"; }
+    bool audioAvailable() const { return !failed_; }
+    QString mode() const { return failed_ ? "Audio unavailable" : preview_ ? "Silent preview" : "PipeWire output"; }
+    Q_INVOKABLE bool reconnectAudio();
     Q_INVOKABLE void play();
     Q_INVOKABLE void stop();
     Q_INVOKABLE void rewind();
@@ -118,5 +121,6 @@ private:
     QString message_ = "Ready. Launches use the next 4/4 bar.";
     const bool preview_;
     bool failed_ = false;
+    void audioFailed(const QString& reason);
     void send(fl_live::ControlKind kind, std::size_t track = 0, std::size_t clip = 0);
 };

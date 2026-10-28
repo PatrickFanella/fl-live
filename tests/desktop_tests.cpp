@@ -18,6 +18,41 @@
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void missingAudioServer() {
+        QTemporaryDir directory;
+        fl_live::PipeWireConfig config;
+        config.remote = directory.filePath("missing-pipewire").toStdString();
+        Session session(config);
+        QVERIFY(!session.audioAvailable());
+        QVERIFY(!session.running());
+        QVERIFY(!session.pending());
+        QVERIFY(session.message().contains("Retry audio"));
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("session", &session);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        QCOMPARE(engine.rootObjects().size(), 1);
+        auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+        QVERIFY(window);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        auto* retry = window->findChild<QQuickItem*>("retryAudioButton");
+        auto* play = window->findChild<QQuickItem*>("playButton");
+        QVERIFY(retry && retry->isVisible() && retry->isEnabled());
+        QVERIFY(play && !play->isEnabled());
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+            retry->mapToScene(QPointF(retry->width()/2, retry->height()/2)).toPoint());
+        QVERIFY(!session.audioAvailable());
+        QVERIFY(retry->isVisible());
+        session.play(); session.launch(0, 0); session.panic(); session.tick();
+        QVERIFY(!session.running());
+        QVERIFY(!session.pending());
+        const auto path = directory.filePath("preserved.json");
+        QVERIFY(session.saveProject(path));
+        QCOMPARE(readProject(path).tempo, 120);
+        QVERIFY(!session.reconnectAudio());
+        QVERIFY(!session.audioAvailable());
+        QVERIFY(!session.running());
+        QVERIFY(!session.dirty());
+    }
     void projectWavExport() {
         QTemporaryDir directory;
         const auto path=directory.filePath("mix.wav");
