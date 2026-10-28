@@ -8,6 +8,9 @@ ApplicationWindow {
     minimumWidth: 900; minimumHeight: 620
     visible: true
     property bool discardOnClose: false
+    property bool textOwnsUndo: (activeFocusItem instanceof TextInput || activeFocusItem instanceof TextEdit) && !activeFocusItem.readOnly
+    Shortcut { sequences: [StandardKey.Undo]; enabled: session.canUndo && !window.textOwnsUndo && !closeDialog.visible; onActivated: session.undo() }
+    Shortcut { sequences: [StandardKey.Redo]; enabled: session.canRedo && !window.textOwnsUndo && !closeDialog.visible; onActivated: session.redo() }
     title: "fl-live · Session" + (session.dirty ? " · Unsaved changes" : "")
     onClosing: function(close) {
         if (session.dirty && !discardOnClose) {
@@ -41,6 +44,8 @@ ApplicationWindow {
             Layout.fillWidth: true
             Label { text: "fl-live"; font.pixelSize: 26; font.bold: true }
             Label { text: "SESSION / 001"; color: "#9daabd"; Layout.fillWidth: true }
+            Button { objectName: "undoButton"; text: "Undo"; enabled: session.canUndo; onClicked: session.undo(); ToolTip.visible: hovered; ToolTip.text: session.undoText }
+            Button { objectName: "redoButton"; text: "Redo"; enabled: session.canRedo; onClicked: session.redo(); ToolTip.visible: hovered; ToolTip.text: session.redoText }
             Label { text: session.mode; color: "#e4bc75" }
         }
         RowLayout {

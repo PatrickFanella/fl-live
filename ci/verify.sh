@@ -9,7 +9,7 @@ collect() {
             cp "build/$preset/Testing/Temporary/LastTest.log" "$results/$preset-LastTest.log"
         fi
     done
-    for capture in desktop-session desktop-active-clip desktop-step-editor; do
+    for capture in desktop-session desktop-active-clip desktop-step-editor desktop-history; do
         if [[ -f "build/desktop/$capture.png" ]]; then
             cp "build/desktop/$capture.png" "$results/$capture.png"
         fi

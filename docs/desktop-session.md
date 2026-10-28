@@ -18,7 +18,7 @@ No remote argument selects silent preview. `--remote NAME` explicitly connects t
 
 The desktop preset also runs engine/controller/offline WAV/private PipeWire tests. The private audio integration still uses the headless playback client, so it does not qualify the QML-to-physical-device journey. Wayland desktop input, hardware audibility, device changes, accessibility and extended playback remain unverified. Licensing, packaging and a useful general editing workflow remain incomplete. Hosted CI is configured and passed on the preceding foundation.
 
-The private-graph test now also performs three stopped backend replacements through the desktop `Session` bridge. Offscreen QML checks cover tempo editing, save/open and dirty-close refusal. General clip/media editing and physical audio qualification remain open.
+The private-graph test now also performs five stopped backend replacements, including Undo/Redo through the desktop `Session` bridge. Offscreen QML checks cover tempo editing, save/open and dirty-close refusal. General clip/media editing and physical audio qualification remain open.
 
 ## Clip feedback
 
@@ -33,3 +33,5 @@ Snapshots are published after a block. A command at the next unrendered frame st
 Tests check sample boundaries, audio/MIDI one-shot completion, clip replacement, same-frame launch/stop ordering, rejection and panic cleanup. A concurrent reader checks coherent activity/transport over 10,000 launch/stop cycles. Qt checks cover requested/queued/active states, quantized track stop and button highlights using real QML controls. `build/desktop/desktop-active-clip.png` records the rendered active state and is retained with CI artifacts.
 
 The MIDI editor now offers 1–16 quarter-note steps with enabled/rest, pitch, velocity and gate controls. Its panel scrolls on smaller windows. Selecting a step is independent of playback and does not edit the document. The highlighted editor step is a selection, not a per-note playback cursor. Version 1 projects migrate on read; saves use version 2. See [project format](projects.md).
+
+Undo/Redo now use the same stopped prepared-session replacement path. Save preserves history; successful Open resets it. See [editing history](edit-history.md) for the 128-edit bound, saved-content tracking and keyboard/text-input behavior.

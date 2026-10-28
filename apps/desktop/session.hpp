@@ -6,6 +6,7 @@
 #include <QTimer>
 #include <QString>
 #include <memory>
+#include <type_traits>
 
 // QObject and the sole command producer live on the GUI thread. Preview renders
 // there too; a connected backend exclusively owns processing instead.
@@ -21,8 +22,12 @@ class Session final : public QObject {
     Q_PROPERTY(int tempo READ tempo NOTIFY changed)
     Q_PROPERTY(QVariantList levels READ levels NOTIFY changed)
     Q_PROPERTY(QVariantList pitches READ pitches NOTIFY changed)
+    Q_PROPERTY(bool canUndo READ canUndo NOTIFY changed)
+    Q_PROPERTY(bool canRedo READ canRedo NOTIFY changed)
+    Q_PROPERTY(QString undoText READ undoText NOTIFY changed)
+    Q_PROPERTY(QString redoText READ redoText NOTIFY changed)
     Q_PROPERTY(bool dirty READ dirty NOTIFY changed)
-    Q_PROPERTY(QString projectPath READ projectPath NOTIFY changed)
+    Q_PROPERTY(QString projectPath READ projectPath NOTIFY projectPathChanged)
     Q_PROPERTY(bool canEdit READ canEdit NOTIFY changed)
     Q_PROPERTY(bool running READ running NOTIFY changed)
     Q_PROPERTY(bool pending READ pending NOTIFY changed)
@@ -47,7 +52,13 @@ public:
     int tempo() const { return settings_.tempo; }
     QVariantList levels() const;
     QVariantList pitches() const;
-    bool dirty() const { return dirty_; }
+    bool dirty() const { return settings_ != saved_settings_; }
+    bool canUndo() const { return canEdit() && history_cursor_ > 0; }
+    bool canRedo() const { return canEdit() && history_cursor_ + 1 < history_size_; }
+    QString undoText() const;
+    QString redoText() const;
+    Q_INVOKABLE void undo();
+    Q_INVOKABLE void redo();
     QString projectPath() const { return project_path_; }
     bool canEdit() const { return !failed_ && !running() && !pending(); }
     Q_INVOKABLE void setTempo(int value);
@@ -69,6 +80,7 @@ public:
     void tick(); // shared polling path, also exercised deterministically in tests
 signals:
     void changed();
+    void projectPathChanged();
 private:
     struct Prepared {
         const fl_live::SessionPlan plan;
@@ -81,7 +93,19 @@ private:
     const fl_live::PipeWireConfig config_;
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
-    bool dirty_ = false;
+    enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length };
+    struct HistoryEntry {
+        ProjectSettings settings;
+        EditKind kind = EditKind::none;
+        int index = -1;
+    };
+    static constexpr std::size_t history_capacity = 128;
+    static_assert(std::is_trivially_copyable_v<HistoryEntry>);
+    std::array<HistoryEntry, history_capacity + 1> history_{};
+    std::size_t history_cursor_ = 0, history_size_ = 1;
+    ProjectSettings saved_settings_;
+    static QString editName(const HistoryEntry& entry);
+    void edit(const ProjectSettings& next, EditKind kind, int index = -1);
     int selected_step_ = 0;
     bool replace(const ProjectSettings& settings);
     bool editable();

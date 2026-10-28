@@ -167,7 +167,7 @@ context.objects = [
                 probe = subprocess.run([str(pathlib.Path(sys.argv[2]).resolve()), remote], env=env,
                                        capture_output=True, text=True, timeout=15)
                 assert probe.returncode == 0, (probe.stdout, probe.stderr)
-                assert "three stopped project rebuilds" in probe.stdout, probe.stdout
+                assert "five stopped project rebuilds including Undo/Redo" in probe.stdout, probe.stdout
                 project_rebuilds = probe.stdout.strip()
 
             # A second actual client must report the loss of this owned server

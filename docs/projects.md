@@ -1,6 +1,6 @@
 # Project settings and step patterns
 
-The desktop app edits and persists the Pulse + Steps session: tempo from 20–300 integer BPM, two track levels from 0–100 percent and a MIDI pattern of 1–16 quarter-note steps. Each step stores an enabled flag, MIDI pitch 0–127, velocity 0–100 percent and gate 1–100 percent. Selection is UI state and does not mark the document dirty. Edits require acknowledged stopped transport with no pending control messages, then rebuild at position zero and clear launches.
+The desktop app edits and persists the Pulse + Steps session: tempo from 20–300 integer BPM, two track levels from 0–100 percent and a MIDI pattern of 1–16 quarter-note steps. Each step stores an enabled flag, MIDI pitch 0–127, velocity 0–100 percent and gate 1–100 percent. Selection is UI state and does not mark the document dirty. [Undo/Redo](edit-history.md) restores up to 128 committed document edits while stopped; saved-content equality determines dirty state. Edits require acknowledged stopped transport with no pending control messages, then rebuild at position zero and clear launches.
 
 Select a numbered step in the grid. Note enabled turns it into a note or rest; its pitch, velocity and gate controls retain their values while disabled. Gate is the note duration as a percentage of a quarter note. Velocity scales the engine's normalized velocity, rather than storing a MIDI 7-bit velocity byte. A zero-velocity enabled note is silent. Steps beyond the selected pattern length do not render, but retain their settings when the pattern is shortened and extended. An all-rest pattern is valid.
 
@@ -53,7 +53,7 @@ Enter a local file path in the project field. Save uses `QSaveFile` with direct-
 
 Open requires a regular file no larger than 64 KiB. The parser checks the version/template pair, field counts, array sizes, boolean types and numeric ranges, including stored steps outside the active pattern. Malformed projects preserve current settings and the prepared graph. Unsaved edits must be saved before opening another project. Closing with edits presents Save and close, Discard and close, and Cancel.
 
-Save can run during playback because it serializes GUI-owned settings. Position, active clips, queued launches and selected editor step are not persisted. Open starts stopped at bar 1, beat 1 and selects step 1; launch clips again before playing.
+Save can run during playback because it serializes GUI-owned settings. Position, active clips, queued launches, Undo/Redo history and selected editor step are not persisted. Open starts stopped at bar 1, beat 1 and selects step 1; launch clips again before playing.
 
 ## Ownership and verification
 
