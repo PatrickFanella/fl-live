@@ -19,7 +19,11 @@ int main(int argc, char** argv) {
             std::cerr << session.message().toStdString() << '\n';
             return 1;
         }
-        std::cout << "PASS: three stopped project rebuilds on the private PipeWire server\n";
+        session.undo();
+        if (session.pitches()[0].toInt()!=60 || !session.canRedo()) return 1;
+        session.redo();
+        if (session.pitches()[0].toInt()!=48 || !session.canUndo()) return 1;
+        std::cout << "PASS: five stopped project rebuilds including Undo/Redo on the private PipeWire server\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

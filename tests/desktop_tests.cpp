@@ -16,6 +16,62 @@
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void historyAndSavedState() {
+        QTemporaryDir directory;
+        Session session;
+        QVERIFY(!session.canUndo());QVERIFY(!session.canRedo());QVERIFY(!session.dirty());
+        session.setTempo(130);session.setLevel(0,40);session.setStepCount(8);session.setPitch(4,48);
+        session.setStepEnabled(4,true);session.setVelocity(4,50);session.setGate(4,100);session.selectStep(7);
+        QCOMPARE(session.undoText(),QString("Undo step 5 gate"));
+        const auto path=directory.filePath("saved.json");QVERIFY(session.saveProject(path));QVERIFY(!session.dirty());
+        QVERIFY(session.canUndo());
+        session.undo();QCOMPARE(session.gates()[4].toInt(),75);QVERIFY(session.dirty());QVERIFY(session.canRedo());
+        session.redo();QCOMPARE(session.gates()[4].toInt(),100);QVERIFY(!session.dirty());
+        for (int n=0;n<7;++n) session.undo();
+        QVERIFY(!session.canUndo());QVERIFY(session.canRedo());QVERIFY(session.dirty());
+        QCOMPARE(session.tempo(),120);QCOMPARE(session.levels()[0].toInt(),70);QCOMPARE(session.stepCount(),4);
+        QCOMPARE(session.pitches()[4].toInt(),60);QVERIFY(!session.stepEnabled()[4].toBool());
+        QCOMPARE(session.velocities()[4].toInt(),70);QCOMPARE(session.gates()[4].toInt(),75);QCOMPARE(session.selectedStep(),3);
+        for (int n=0;n<7;++n) session.redo();
+        QVERIFY(!session.canRedo());QVERIFY(!session.dirty());QCOMPARE(session.stepCount(),8);
+        const auto label=session.undoText();session.setGate(4,100);session.setGate(4,0);session.setTempo(999);
+        QCOMPARE(session.undoText(),label);QVERIFY(!session.dirty());
+        session.undo();const auto other=directory.filePath("other.json");QVERIFY(session.saveProject(other));
+        QVERIFY(session.canRedo());session.redo();QVERIFY(session.dirty());session.undo();QVERIFY(!session.dirty());
+        session.setPitch(4,49);QVERIFY(!session.canRedo());QVERIFY(session.dirty());
+        session.undo();QCOMPARE(session.pitches()[4].toInt(),48);QVERIFY(!session.dirty());
+        session.setLevel(0,41);QVERIFY(session.dirty());session.setLevel(0,40);QVERIFY(!session.dirty());
+        session.undo();QVERIFY(session.dirty());session.redo();QVERIFY(!session.dirty());
+        QCOMPARE(readProject(path).steps[4].gate,100);QCOMPARE(readProject(other).steps[4].gate,75);
+    }
+    void historyFailureAndDocumentBoundary() {
+        Session session;session.setTempo(120);session.setTempo(0);QVERIFY(!session.canUndo());
+        session.setTempo(121);session.play();QVERIFY(!session.canUndo());session.undo();QCOMPARE(session.tempo(),121);
+        session.tick();session.undo();QCOMPARE(session.tempo(),121);QVERIFY(session.running());
+        session.stop();session.tick();session.undo();QCOMPARE(session.tempo(),120);QVERIFY(!session.dirty());
+        session.redo();QCOMPARE(session.tempo(),121);
+        QTemporaryDir directory;const auto good=directory.filePath("good.json");QVERIFY(session.saveProject(good));
+        session.setTempo(122);QVERIFY(!session.saveProject(directory.filePath("missing/file.json")));QVERIFY(session.dirty());
+        session.undo();QCOMPARE(session.tempo(),121);QVERIFY(!session.dirty());QVERIFY(session.canRedo());
+        QFile bad(directory.filePath("bad.json"));QVERIFY(bad.open(QIODevice::WriteOnly));bad.write("broken");bad.close();
+        QVERIFY(!session.loadProject(bad.fileName()));QVERIFY(session.canRedo());
+        session.redo();QCOMPARE(session.tempo(),122);QVERIFY(!session.loadProject(good));QVERIFY(session.canUndo());
+        session.undo();QVERIFY(session.loadProject(good));QVERIFY(!session.canUndo());QVERIFY(!session.canRedo());QVERIFY(!session.dirty());
+        session.setTempo(122);session.launch(0,0);session.tick();QCOMPARE(session.clipStates()[0].toString(),QString("Launch queued"));
+        session.undo();QCOMPARE(session.tempo(),121);QCOMPARE(session.position(),QString("1.1"));
+        QCOMPARE(session.clipStates()[0].toString(),QString("Stopped"));QVERIFY(!session.dirty());
+    }
+    void boundedHistory() {
+        Session session;
+        for (int n=0;n<130;++n) session.setTempo(n%2 ? 122 : 121);
+        int undos=0;
+        while (session.canUndo() && undos<130) {session.undo();++undos;}
+        QCOMPARE(undos,128);QVERIFY(!session.canUndo());QCOMPARE(session.tempo(),122);QVERIFY(session.dirty());
+        int redos=0;
+        while (session.canRedo() && redos<130) {session.redo();++redos;}
+        QCOMPARE(redos,128);QCOMPARE(session.tempo(),122);
+        session.setTempo(120);QVERIFY(!session.dirty());QVERIFY(!session.canRedo());
+    }
     void legacyMigration() {
         QTemporaryDir directory;
         const auto path=directory.filePath("legacy.json");
@@ -254,6 +310,12 @@ private slots:
         QVERIFY(tempo); tempo->forceActiveFocus();
         QTest::keyClick(window,Qt::Key_Up);
         QCOMPARE(session.tempo(),121); QVERIFY(session.dirty());
+        click("undoButton");QCOMPARE(session.tempo(),120);QVERIFY(!session.dirty());
+        click("redoButton");QCOMPARE(session.tempo(),121);
+        findItem(window->contentItem(),"undoButton")->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_Z,Qt::ControlModifier);QTRY_COMPARE(session.tempo(),120);
+        findItem(window->contentItem(),"redoButton")->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_Z,Qt::ControlModifier|Qt::ShiftModifier);QTRY_COMPARE(session.tempo(),121);
         auto key=[&](const char* name,Qt::Key key) {
             auto* item=findItem(window->contentItem(),QString::fromUtf8(name));QVERIFY(item);item->forceActiveFocus();QTest::keyClick(window,key);
         };
@@ -266,6 +328,13 @@ private slots:
         QTemporaryDir directory;
         auto* projectFile = window->findChild<QObject*>("projectFile");
         QVERIFY(projectFile); projectFile->setProperty("text",directory.filePath("qml.json"));
+        findItem(window->contentItem(),"projectFile")->forceActiveFocus();
+        session.tick();QCOMPARE(projectFile->property("text").toString(),directory.filePath("qml.json"));
+        QTest::keyClick(window,Qt::Key_End);QTest::keyClick(window,Qt::Key_X);
+        session.tick();QCOMPARE(projectFile->property("text").toString(),directory.filePath("qml.json")+"x");
+        QTest::keyClick(window,Qt::Key_Z,Qt::ControlModifier);
+        QTRY_COMPARE(projectFile->property("text").toString(),directory.filePath("qml.json"));
+        QCOMPARE(session.gates()[4].toInt(),74); // path text undo must not undo music
         QVERIFY(!window->close()); // dirty close must leave the window open
         auto* dialog = window->findChild<QObject*>("closeDialog");
         QVERIFY(dialog); QVERIFY(dialog->property("visible").toBool());
@@ -292,6 +361,10 @@ private slots:
         click("stopButton"); session.tick(); QVERIFY(!session.running());
         QCOMPARE(clipLabel->property("text").toString(),QString("Stopped"));
         QCOMPARE(label->property("text").toString(), QString("Stopped"));
+        session.setTempo(122);session.setTempo(123);session.undo();
+        QVERIFY(session.canUndo());QVERIFY(session.canRedo());QVERIFY(session.dirty());
+        QVERIFY(window->grabWindow().save("desktop-history.png"));
+        session.undo();QCOMPARE(session.tempo(),121);QVERIFY(!session.dirty());
     }
 };
 QTEST_MAIN(DesktopTests)

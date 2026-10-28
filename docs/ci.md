@@ -17,7 +17,7 @@ After building the image, CI runs it as an unprivileged user with networking dis
 
 The current full run contains 14 CTest executions, with repeated tests across configurations. It does not claim 14 distinct tests. ThreadSanitizer, native Wayland input, QML-to-device output, physical audio, performance and packaging are separate qualification work.
 
-Configure/build/test output, CTest logs, JUnit reports, installed toolchain versions and the offscreen desktop/active-clip/step-editor PNGs are collected under `build/ci-results`. The workflow retains them as the `linux-verification` artifact for 14 days, including available diagnostics after a failed test. The Gitea-compatible v3 artifact action and checkout action are pinned to commits. No deployment, publication or automatic merge is configured.
+Configure/build/test output, CTest logs, JUnit reports, installed toolchain versions and the offscreen desktop/active-clip/step-editor/history PNGs are collected under `build/ci-results`. The workflow retains them as the `linux-verification` artifact for 14 days, including available diagnostics after a failed test. The Gitea-compatible v3 artifact action and checkout action are pinned to commits. No deployment, publication or automatic merge is configured.
 
 To reproduce locally with Docker:
 
