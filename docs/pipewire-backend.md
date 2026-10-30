@@ -32,6 +32,24 @@ CTest also runs fixed-quantum private servers at 257 and 1,024 frames. Each case
 
 These cases qualify separate fixed software-server configurations. They do not qualify live quantum transitions, negotiated rate/format changes, physical device changes or preservation of a playing document across such transitions. Issue #23 remains open for those checks.
 
+## Live-quantum continuity finding
+
+The frame-coded control adds a stronger audio oracle than the eight-frame demo loop. A Qt-free test client prepares a 65,521-frame ramp before connecting. Each value encodes its source-frame index using an exactly representable binary fraction. The parent records 72,000 frames and checks the captured sequence independently. The default `pipewire-frame-coded-control` test holds the quantum at 257 frames and requires exact continuity after the retained startup prefix.
+
+The same client can acknowledge live callback-size changes from 257 to 1,024 to 128 frames. The parent waits for actual source samples before changing the owned server's `clock.force-quantum` setting, then requires both transitions to lie within the captured source-frame span. It changes only the private server; no desktop service, physical device or session-manager setting is touched.
+
+On Kvant on 2026-10-30, the fixed control passed, but the live-transition diagnostic failed continuity: it captured an unexpected silent interval followed by a source-frame offset. Successful size acknowledgements and stopped cleanup did not establish continuous audio. The retained receipt distinguishes sample mismatches from unexpected zero frames; a persistent offset can make every later sample differ without every later frame being silent or lost. The responsible layer remains undetermined: this experiment spans the engine/backend, PipeWire adapters/driver and capture client. It does not identify graph xruns or physical latency.
+
+The live case remains an opt-in, failing diagnostic while issue #23 is open. No previous gate is disabled or relaxed. To reproduce it:
+
+```bash
+rtk proxy cmake --preset desktop -DFL_LIVE_LIVE_QUANTUM_DIAGNOSTIC=ON
+rtk proxy cmake --build --preset desktop
+rtk proxy ctest --preset desktop -R '^pipewire-live-quantums$' --output-on-failure
+```
+
+It emits a JSON result with `passed: false`, callback-size acknowledgements, capture hash and sample findings, then exits nonzero. Restore the ordinary gate selection with `rtk proxy cmake --preset desktop -DFL_LIVE_LIVE_QUANTUM_DIAGNOSTIC=OFF`. The diagnostic also works with `pipewire-sanitize`; the fixed frame-coded control is included in both presets' ordinary test suites. See [the dated receipt](../validation/live-quantum-continuity.json).
+
 PipeWire 1.6.9 pw-cat returns exit code 1 on the finite capture-limit path because that path quits without setting its drained flag. The test records the code, requires no stderr, requires the exact full payload and compares the samples. This exception is narrowly tied to the selected helper behavior, not a blanket acceptance of failing capture tools. [Upstream count and exit paths](https://github.com/PipeWire/pipewire/blob/1.6.9/src/tools/pw-cat.c).
 
 Debug/release and backend ASan/UBSan checks pass locally. The concurrent queue/status tests also pass a separately compiled ThreadSanitizer run. These are finite tests, not proof of all races or all library internals. The instrumented engine/controller paths observe zero C++ allocations. Actual physical output, native input recording, hardware hotplug, broader format/rate changes, stereo routing, long-duration xruns and UI operation remain unqualified.

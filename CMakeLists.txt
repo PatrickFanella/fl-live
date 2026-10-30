@@ -6,6 +6,7 @@ option(FL_LIVE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF
 option(FL_LIVE_BUILD_PIPEWIRE "Build the Linux PipeWire backend" OFF)
 option(FL_LIVE_PIPEWIRE_INTEGRATION_TEST "Run a private, hardware-free PipeWire graph" OFF)
 option(FL_LIVE_BUILD_DESKTOP "Build the Qt Quick session application" OFF)
+option(FL_LIVE_LIVE_QUANTUM_DIAGNOSTIC "Run the currently unqualified live-quantum continuity diagnostic" OFF)
 set(CMAKE_CXX_EXTENSIONS OFF)
 if(FL_LIVE_SANITIZERS)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -54,6 +55,18 @@ if(BUILD_TESTING)
     endif()
     if(FL_LIVE_BUILD_PIPEWIRE AND FL_LIVE_PIPEWIRE_INTEGRATION_TEST)
         find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
+        add_executable(live-quantum-probe tests/live_quantum_probe.cpp)
+        target_link_libraries(live-quantum-probe PRIVATE fl_live_pipewire)
+        add_test(NAME pipewire-frame-coded-control COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_integration.py $<TARGET_FILE:fl-live-play>
+            --quantum 257 --live-probe $<TARGET_FILE:live-quantum-probe> --no-quantum-changes)
+        set_tests_properties(pipewire-frame-coded-control PROPERTIES TIMEOUT 30)
+        if(FL_LIVE_LIVE_QUANTUM_DIAGNOSTIC)
+            add_test(NAME pipewire-live-quantums COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_integration.py $<TARGET_FILE:fl-live-play>
+                --quantum 257 --live-probe $<TARGET_FILE:live-quantum-probe>)
+            set_tests_properties(pipewire-live-quantums PROPERTIES TIMEOUT 30)
+        endif()
         foreach(quantum IN ITEMS 257 1024 16384)
             add_test(NAME pipewire-quantum-${quantum} COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_integration.py $<TARGET_FILE:fl-live-play>
