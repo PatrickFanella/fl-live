@@ -1,6 +1,6 @@
 # Delivery status
 
-Updated 2026-10-28. The near-term goal is a useful Linux MVP, with a close Live/Max replacement as the long-term destination. Exhaustive reverse engineering is not an implementation gate.
+Updated 2026-10-30. The near-term goal is a useful Linux MVP, with a close Live/Max replacement as the long-term destination. Exhaustive reverse engineering is not an implementation gate.
 
 | Area | Current evidence | Remaining |
 |---|---|---|
@@ -10,6 +10,7 @@ Updated 2026-10-28. The near-term goal is a useful Linux MVP, with a close Live/
 | Real-time backend | Mono PipeWire adapter, bounded handoff and actual private-graph capture/server-loss tests | Hardware/device changes, latency, broader quantum/rate behavior and long-duration xrun measurements |
 | Qt/QML application | Authored two-track clip grid, transport, silent preview and explicit PipeWire mode; offscreen mouse/control checks | Broader editing/mixer, native Wayland and accessibility qualification |
 | Project editing/state | Versioned template JSON with v1 migration, atomic save/reload, stopped 1–16-step MIDI editing, bounded Undo/Redo and saved-content dirty tracking; sample round trip, private backend rebuild checks and QML-to-audio capture | General clip/track editing, imported media, autosave/recovery |
+| General Session document | [Qt-free metadata model](session-document.md): typed track/clip/scene identities, transactional edits, validated snapshots and reference cleanup | File schema/persistence, media content, UI controls and render integration; issue #26 remains open |
 | Recording/plugins/graphs | Planned | Implementation and integrated qualification |
 
 The first D1 engine slice is implemented. D0/D1 as a whole remain partial. D2–D5 are not complete. A generated WAV is not a usable workstation.

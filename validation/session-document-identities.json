@@ -1,0 +1,56 @@
+{
+  "verified_at": "2026-10-30T18:31:13.143802+00:00",
+  "base": "673ec95be81125b34a88f2798f324c527f6533b7",
+  "host": "kvant",
+  "issue": "https://git.subcult.tv/subculture-collective/fl-live/issues/26",
+  "scope": "Qt-free metadata identities and validated in-memory snapshots; partial issue coverage",
+  "gates": {
+    "desktop": {
+      "passed": 11,
+      "total": 11,
+      "command": "cmake --build --preset desktop -j 4; ctest --preset desktop --output-junit document-tests.xml"
+    },
+    "pipewire-sanitize": {
+      "passed": 10,
+      "total": 10,
+      "command": "cmake --build --preset pipewire-sanitize -j 4; ctest --preset pipewire-sanitize --output-junit document-tests.xml"
+    },
+    "release": {
+      "passed": 4,
+      "total": 4,
+      "command": "cmake --build --preset release -j 4; ctest --preset release --output-junit document-tests.xml"
+    },
+    "engine-only": {
+      "passed": 3,
+      "total": 3,
+      "command": "cmake --build --preset engine-only -j 4; ctest --preset engine-only --output-junit document-tests.xml"
+    }
+  },
+  "verified_behaviors": [
+    "Typed track/clip/scene IDs survive rename and snapshot reconstruction",
+    "Duplicates allocate fresh identities and preserve ownership/scene mappings under the declared copy policy",
+    "Track/clip deletion removes dependent slots and preserves surviving entities",
+    "Invalid edits and snapshots preserve the complete prior state, including the ID cursor",
+    "Restoring older content retains the allocation high-water mark; deleted identities are not reused by subsequent allocation",
+    "Zero/colliding/stale IDs, unknown kinds, invalid names/owners/slots and capacity violations are rejected",
+    "ID exhaustion partway through scene duplication rolls back the candidate",
+    "Document target and tests build without Qt/PipeWire in the engine-only preset"
+  ],
+  "limits": [
+    "Single control or worker owner only; operations allocate and copy metadata",
+    "Clips contain identity/ownership metadata only, without media or note payloads",
+    "No file codec, desktop model adoption, Undo integration or general project migration",
+    "No live engine mutation, stuck-note, scene scheduling or asset-retirement qualification",
+    "Native UI, physical audio and release qualification remain open",
+    "Issue #26 remains open pending persistence and integration evidence",
+    "Hosted CI pending"
+  ],
+  "sha256": {
+    "CMakeLists.txt": "d33ded13eca6a41c7eb4c6c411987c67bda26d6a8dc5a1ea261e7667c5cdc2c5",
+    "include/fl_live/session_document.hpp": "e41628f1645cb7980ebbc82cb00312d41c5abf9981869eb25db5fbcab1320da4",
+    "src/session_document.cpp": "75cf632c23b413a182e1fb1821ea02f77d22161501d9d473dfd9e53b42e9a624",
+    "tests/document_tests.cpp": "0d3486ef3bac0db2b2e951b7214173a8675643602e5132f162d666346b737597",
+    "docs/session-document.md": "e56850c936c8b93cd45304da21e934557d12889ed46e042abef4ae9ac36211b8",
+    "docs/STATUS.md": "0ae4af2886aaa6128723ca346b0105c4653de899dc52098f26915648c8922e61"
+  }
+}
