@@ -50,6 +50,20 @@ rtk proxy ctest --preset desktop -R '^pipewire-live-quantums$' --output-on-failu
 
 It emits a JSON result with `passed: false`, callback-size acknowledgements, capture hash and sample findings, then exits nonzero. Restore the ordinary gate selection with `rtk proxy cmake --preset desktop -DFL_LIVE_LIVE_QUANTUM_DIAGNOSTIC=OFF`. The diagnostic also works with `pipewire-sanitize`; the fixed frame-coded control is included in both presets' ordinary test suites. See [the dated receipt](../validation/live-quantum-continuity.json).
 
+## Reference producer comparison
+
+The follow-up fixture can replace the captured producer with PipeWire's own `pw-cat` playing independently generated raw frame-coded PCM. Only `fixture-reference` is linked to the capture input. The fl-live probe stays unlinked and acknowledges quantum changes on the same private driver. Its frame counts describe the observer, not the reference producer's source indices or actual callback sizes. The result records the linked port names and identifies that distinction. Capture must remain active after the last change; observer counters are not substituted for reference-source time.
+
+The reference's fixed-257 control passes. Its live 257 → 1,024 → 128 diagnostic reproduces the unexpected silent interval and source offset with no fl-live output linked into capture. Continuously draining capture stdout during the metadata commands did not eliminate the failure: both producers still recorded 1,153 unexpected zero frames in the retained runs. This comparison shows that fl-live's linked audio output is not required to reproduce the symptom. It does not distinguish PipeWire graph/adapter behavior from the capture path, identify a graph xrun, or prove that fl-live has no separate fault.
+
+`pipewire-reference-control` joins the ordinary software gates. With the existing diagnostic option enabled, reproduce the failing reference case using:
+
+```bash
+rtk proxy ctest --preset desktop -R '^pipewire-reference-live-quantums$' --output-on-failure
+```
+
+Both live diagnostics retain strict sample comparison and exit nonzero on discontinuity. The fixture now drains capture stdout concurrently during metadata changes to avoid introducing bounded-pipe backpressure. For the fl-live path alone, `--pause-capture-during-changes` retains the serialized-reader comparison; the reference live case requires continuous draining so capture activity can be checked independently of observer counters. See [reference-producer observations](../validation/reference-quantum-continuity.json). Live continuity and issue #23 remain open; this is a reproducer/control change, not a product repair.
+
 PipeWire 1.6.9 pw-cat returns exit code 1 on the finite capture-limit path because that path quits without setting its drained flag. The test records the code, requires no stderr, requires the exact full payload and compares the samples. This exception is narrowly tied to the selected helper behavior, not a blanket acceptance of failing capture tools. [Upstream count and exit paths](https://github.com/PipeWire/pipewire/blob/1.6.9/src/tools/pw-cat.c).
 
 Debug/release and backend ASan/UBSan checks pass locally. The concurrent queue/status tests also pass a separately compiled ThreadSanitizer run. These are finite tests, not proof of all races or all library internals. The instrumented engine/controller paths observe zero C++ allocations. Actual physical output, native input recording, hardware hotplug, broader format/rate changes, stereo routing, long-duration xruns and UI operation remain unqualified.
