@@ -29,7 +29,7 @@ void validate(const SessionPlan& plan) {
     for (const auto& track : plan.tracks) {
         if (!std::isfinite(track.gain) || track.gain < 0 || track.gain > 4)
             throw std::invalid_argument("track gain must be finite in [0,4]");
-        if (track.clips.size() > 64) throw std::invalid_argument("at most 64 clips per track");
+        if (track.clips.size() > Engine::clips_per_track_capacity) throw std::invalid_argument("at most 64 clips per track");
         for (const auto& clip : track.clips) {
             if (const auto* audio = std::get_if<AudioClip>(&clip)) {
                 if (audio->samples.empty() || !std::all_of(audio->samples.begin(), audio->samples.end(),
@@ -37,7 +37,7 @@ void validate(const SessionPlan& plan) {
                     throw std::invalid_argument("audio clip must contain finite samples");
             } else {
                 const auto& midi = std::get<MidiClip>(clip);
-                if (midi.length == 0 || midi.notes.size() > 1024)
+                if (midi.length == 0 || midi.notes.size() > Engine::notes_per_clip_capacity)
                     throw std::invalid_argument("invalid MIDI length or note count");
                 Frame previous = 0;
                 for (const auto& note : midi.notes) {

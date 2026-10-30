@@ -72,6 +72,8 @@ class Engine {
 public:
     static constexpr std::size_t command_capacity = 64;
     static constexpr std::size_t track_capacity = 64;
+    static constexpr std::size_t clips_per_track_capacity = 64;
+    static constexpr std::size_t notes_per_clip_capacity = 1024;
     static constexpr std::size_t voices_per_track = 16;
     explicit Engine(const SessionPlan& plan);
     Engine(SessionPlan&&) = delete;
