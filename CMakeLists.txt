@@ -54,6 +54,12 @@ if(BUILD_TESTING)
     endif()
     if(FL_LIVE_BUILD_PIPEWIRE AND FL_LIVE_PIPEWIRE_INTEGRATION_TEST)
         find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
+        foreach(quantum IN ITEMS 257 1024 16384)
+            add_test(NAME pipewire-quantum-${quantum} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_integration.py $<TARGET_FILE:fl-live-play>
+                --quantum ${quantum})
+            set_tests_properties(pipewire-quantum-${quantum} PROPERTIES TIMEOUT 30)
+        endforeach()
         if(NOT FL_LIVE_BUILD_DESKTOP)
             add_test(NAME pipewire-private-graph COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_integration.py $<TARGET_FILE:fl-live-play>)

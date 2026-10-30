@@ -49,6 +49,8 @@ int main(int argc, char** argv) {
         std::cout << "{\"callbacks\":" << backend_status.callbacks << ",\"frames\":" << backend_status.frames
             << ",\"bad_buffers\":" << backend_status.bad_buffers << ",\"max_process_ns\":" << backend_status.max_process_ns
             << ",\"processing_over_budget\":" << backend_status.processing_over_budget << ",\"error\":" << backend_status.error
+            << ",\"min_render_frames\":" << backend_status.min_render_frames
+            << ",\"max_render_frames\":" << backend_status.max_render_frames
             << ",\"position\":" << render_status.position << ",\"running\":" << (render_status.running ? "true" : "false")
             << ",\"handled_serial\":" << render_status.handled_serial << ",\"rejected\":" << render_status.rejected << "}\n";
         return backend_status.error || !backend_status.callbacks || render_status.running ? 1 : 0;

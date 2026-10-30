@@ -19,6 +19,8 @@ struct BackendStatus {
     std::uint64_t bad_buffers;
     std::uint64_t max_process_ns;
     std::uint64_t processing_over_budget;
+    std::uint64_t min_render_frames;
+    std::uint64_t max_render_frames;
 };
 class PipeWireBackend {
 public:

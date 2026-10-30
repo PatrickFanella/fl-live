@@ -1,5 +1,7 @@
 """Owned private PipeWire graph; no ALSA, desktop remote or service changes."""
 import json
+import argparse
+import errno
 import math
 import statistics
 import os
@@ -75,7 +77,12 @@ def pitch_check_regression():
 
 pitch_check_regression()
 
-binary = str(pathlib.Path(sys.argv[1]).resolve())
+parser = argparse.ArgumentParser()
+parser.add_argument("binary")
+parser.add_argument("desktop_probe", nargs="?")
+parser.add_argument("--quantum", type=int, default=128, choices=[128, 257, 1024, 16384])
+args = parser.parse_args()
+binary = str(pathlib.Path(args.binary).resolve())
 with tempfile.TemporaryDirectory(prefix="fl-live-pw-") as temporary:
     root = pathlib.Path(temporary)
     root.chmod(0o700)
@@ -108,9 +115,11 @@ context.properties = {
     support.dbus = false
     default.clock.rate = 48000
     default.clock.allowed-rates = [ 48000 ]
-    default.clock.quantum = 128
-    default.clock.min-quantum = 128
-    default.clock.max-quantum = 4096
+    default.clock.quantum = QUANTUM
+    default.clock.min-quantum = QUANTUM
+    default.clock.max-quantum = QUANTUM
+    default.clock.quantum-limit = 16384
+    clock.power-of-two-quantum = false
 }
 context.spa-libs = {
     audio.convert.* = audioconvert/libspa-audioconvert
@@ -130,7 +139,7 @@ context.objects = [
       args = { factory.name = support.node.driver node.name = Test-Driver
                node.group = pipewire.test priority.driver = 20000 } }
 ]
-''')
+'''.replace("QUANTUM", str(args.quantum)))
     server = player = capture = recovery = None
     with (root / "server.log").open("wb") as server_log:
         try:
@@ -176,6 +185,19 @@ context.objects = [
             input_port = until(lambda: port("--input", "fixture-capture:"))
             subprocess.run(["pw-link", "--remote", remote, output_port, input_port], env=env,
                            check=True, capture_output=True, timeout=2)
+            if args.quantum > 8192:
+                remaining, errors = player.communicate(timeout=4)
+                stats = json.loads(remaining.strip())
+                assert player.returncode != 0, (remaining, errors)
+                assert stats["error"] == -errno.EMSGSIZE and stats["bad_buffers"] > 0, stats
+                # Once the oversized callback fails, PipeWire may offer a
+                # smaller buffer while teardown is pending. It must stay silent
+                # and never consume the queued start/launch commands.
+                assert stats["min_render_frames"] == stats["max_render_frames"] == stats["position"] == 0, stats
+                assert not stats["running"] and stats["handled_serial"] == 2, stats
+                print(json.dumps(dict(passed=True, scope="private oversized quantum rejection; no hardware",
+                                      requested_quantum=args.quantum, playback=stats)))
+                sys.exit(0)  # finally reaps the owned capture/player/server
             data, errors = capture.communicate(timeout=5)
             # PipeWire 1.6.9 pw-cat's finite capture limit quits without setting
             # `drained`, while main returns success only for that flag. Preserve
@@ -197,10 +219,11 @@ context.objects = [
             stats = json.loads(remaining.strip())
             assert stats["callbacks"] > 0 and stats["frames"] >= 24000 and stats["error"] == 0, stats
             assert stats["bad_buffers"] == stats["rejected"] == 0 and stats["handled_serial"] == 2 and not stats["running"], stats
+            assert stats["min_render_frames"] == stats["max_render_frames"] == args.quantum, stats
 
             project_rebuilds = None
-            if len(sys.argv) > 2:
-                probe = subprocess.run([str(pathlib.Path(sys.argv[2]).resolve()), remote],
+            if args.desktop_probe:
+                probe = subprocess.run([str(pathlib.Path(args.desktop_probe).resolve()), remote],
                                        env=dict(env, QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software"),
                                        capture_output=True, text=True, timeout=15)
                 assert probe.returncode == 0, (probe.stdout, probe.stderr)
@@ -208,8 +231,8 @@ context.objects = [
                 project_rebuilds = probe.stdout.strip()
 
             desktop_workflow = None
-            if len(sys.argv) > 2:
-                player = subprocess.Popen([str(pathlib.Path(sys.argv[2]).resolve()), remote, "--workflow"],
+            if args.desktop_probe:
+                player = subprocess.Popen([str(pathlib.Path(args.desktop_probe).resolve()), remote, "--workflow"],
                     env=dict(env, QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software"),
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 ready(player)
@@ -258,8 +281,8 @@ context.objects = [
                            check=True, capture_output=True, timeout=2)
             loss_data, loss_errors = capture.communicate(timeout=3)
             assert len(loss_data) == 4096 and not loss_errors, (len(loss_data), loss_errors)
-            if len(sys.argv) > 2:
-                recovery = subprocess.Popen([str(pathlib.Path(sys.argv[2]).resolve()), remote, "--recovery"],
+            if args.desktop_probe:
+                recovery = subprocess.Popen([str(pathlib.Path(args.desktop_probe).resolve()), remote, "--recovery"],
                     env=dict(env, QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software"),
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 ready(recovery)
@@ -281,6 +304,7 @@ context.objects = [
                 desktop_recovery = output.strip()
                 stop(server)
             print(json.dumps(dict(passed=True,scope="private software graph; no hardware/audio-device qualification",
+                                  requested_quantum=args.quantum,
                                   captured_frames=len(values), capture_returncode=capture_code,
                                   silent_prefix=first, playback=stats, server_loss=lost, project_rebuilds=project_rebuilds,
                                   desktop_workflow=desktop_workflow, desktop_recovery=desktop_recovery)))
