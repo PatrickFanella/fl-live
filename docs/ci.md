@@ -14,8 +14,9 @@ After building the image, CI runs it as an unprivileged user with networking dis
 | release | Optimized engine/controller and WAV checks with assertions active |
 | engine-only | Core build without Qt, PipeWire, libsndfile or Python as linked dependencies |
 | pipewire-sanitize | Engine/controller/WAV/private audio checks with ASan and UBSan |
+| document-io-sanitize | Engine/document and Qt Core metadata file round trips/admission with ASan and UBSan; no Qt Quick, display or PipeWire |
 
-The current full run contains 14 CTest executions, with repeated tests across configurations. It does not claim 14 distinct tests. ThreadSanitizer, native Wayland input, QML-to-device output, physical audio, performance and packaging are separate qualification work.
+The metadata-persistence revision runs 33 CTest executions across these five cohorts, including repeated tests across configurations. That is not a count of distinct tests. The Qt Core file codec has its own sanitizer cohort; the PipeWire sanitizer cohort still excludes Qt. ThreadSanitizer, native Wayland input, QML-to-device output, physical audio, performance and packaging are separate qualification work.
 
 Configure/build/test output, CTest logs, JUnit reports, installed toolchain versions and the offscreen desktop/active-clip/step-editor/history PNGs are collected under `build/ci-results`. The workflow retains them as the `linux-verification` artifact for 14 days, including available diagnostics after a failed test. The Gitea-compatible v3 artifact action and checkout action are pinned to commits. No deployment, publication or automatic merge is configured.
 

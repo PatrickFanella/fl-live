@@ -14,10 +14,34 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include "fl_live/document_io.hpp"
 
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void metadataIsNotMusicalProject() {
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        fl_live::SessionDocument metadata;
+        metadata.createTrack("Metadata only", fl_live::TrackKind::audio);
+        const auto path = directory.filePath("metadata.json");
+        fl_live::writeDocumentMetadata(path, metadata.snapshot());
+        Session session;
+        session.setTempo(137);
+        const auto templatePath = directory.filePath("musical.json");
+        QVERIFY(session.saveProject(templatePath));
+        const auto undo = session.undoText();
+        QVERIFY(session.canUndo());
+        QVERIFY(!session.loadProject(path));
+        QCOMPARE(session.tempo(), 137);
+        QCOMPARE(session.projectPath(), templatePath);
+        QCOMPARE(session.undoText(), undo);
+        QVERIFY(session.canUndo()); QVERIFY(!session.dirty());
+        QVERIFY(session.message().contains("Unsupported project format"));
+        bool rejected = false;
+        try { fl_live::readDocumentMetadata(templatePath); }
+        catch (const std::exception&) { rejected = true; }
+        QVERIFY(rejected);
+    }
     void mismatchedBackendRate() {
         fl_live::PipeWireConfig config;
         config.remote = "fl-live-unopened-rate-test";
