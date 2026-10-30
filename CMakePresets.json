@@ -5,6 +5,7 @@
     {"name": "release", "inherits": "debug", "binaryDir": "${sourceDir}/build/release", "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}},
     {"name": "sanitize", "inherits": "debug", "binaryDir": "${sourceDir}/build/sanitize", "cacheVariables": {"FL_LIVE_SANITIZERS": "ON"}},
     {"name": "engine-only", "inherits": "debug", "binaryDir": "${sourceDir}/build/engine-only", "cacheVariables": {"FL_LIVE_BUILD_RENDERER": "OFF"}},
+    {"name": "document-io-sanitize", "inherits": "engine-only", "binaryDir": "${sourceDir}/build/document-io-sanitize", "cacheVariables": {"FL_LIVE_SANITIZERS": "ON", "FL_LIVE_BUILD_DOCUMENT_IO": "ON"}},
     {"name": "pipewire", "inherits": "debug", "binaryDir": "${sourceDir}/build/pipewire", "cacheVariables": {"FL_LIVE_BUILD_PIPEWIRE": "ON", "FL_LIVE_PIPEWIRE_INTEGRATION_TEST": "ON"}},
     {"name": "pipewire-sanitize", "inherits": "pipewire", "binaryDir": "${sourceDir}/build/pipewire-sanitize", "cacheVariables": {"FL_LIVE_SANITIZERS": "ON"}},
     {"name": "desktop", "inherits": "pipewire", "binaryDir": "${sourceDir}/build/desktop", "cacheVariables": {"FL_LIVE_BUILD_DESKTOP": "ON"}}
@@ -14,6 +15,7 @@
     {"name": "release", "configurePreset": "release"},
     {"name": "sanitize", "configurePreset": "sanitize"},
     {"name": "engine-only", "configurePreset": "engine-only"},
+    {"name": "document-io-sanitize", "configurePreset": "document-io-sanitize"},
     {"name": "pipewire", "configurePreset": "pipewire"},
     {"name": "desktop", "configurePreset": "desktop"},
     {"name": "pipewire-sanitize", "configurePreset": "pipewire-sanitize"}
@@ -23,6 +25,7 @@
     {"name": "release", "configurePreset": "release", "output": {"outputOnFailure": true}},
     {"name": "sanitize", "configurePreset": "sanitize", "output": {"outputOnFailure": true}},
     {"name": "engine-only", "configurePreset": "engine-only", "output": {"outputOnFailure": true}},
+    {"name": "document-io-sanitize", "configurePreset": "document-io-sanitize", "output": {"outputOnFailure": true}},
     {"name": "pipewire", "configurePreset": "pipewire", "output": {"outputOnFailure": true}},
     {"name": "desktop", "configurePreset": "desktop", "output": {"outputOnFailure": true}},
     {"name": "pipewire-sanitize", "configurePreset": "pipewire-sanitize", "output": {"outputOnFailure": true}}

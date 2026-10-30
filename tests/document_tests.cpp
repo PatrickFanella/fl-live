@@ -33,7 +33,7 @@ void identitiesAndCopies() {
     CHECK(document.snapshot().tracks[0].id == audio);
     CHECK(document.snapshot().clips[0].id == clip);
     CHECK(document.snapshot().scenes[0].id == scene);
-    CHECK(document.snapshot().scenes[0].slots[0] == (SceneSlot{audio, clip}));
+    CHECK(document.snapshot().scenes[0].entries[0] == (SceneSlot{audio, clip}));
     const auto saved = document.snapshot();
     SessionDocument restored(saved);
     CHECK(restored.snapshot() == saved); // validated snapshot boundary, not a file codec
@@ -41,20 +41,20 @@ void identitiesAndCopies() {
     CHECK(duplicate != clip);
     CHECK(document.snapshot().clips.back().track == audio);
     CHECK(document.snapshot().clips.back().name == "Beat");
-    CHECK(document.snapshot().scenes[0].slots[0].clip == clip); // standalone copy is unassigned
+    CHECK(document.snapshot().scenes[0].entries[0].clip == clip); // standalone copy is unassigned
     const auto trackCopy = document.duplicateTrack(audio);
     CHECK(trackCopy != audio);
     CHECK(document.snapshot().tracks.back().name == "Drums");
-    CHECK(document.snapshot().scenes[0].slots.size() == 3);
-    const auto newSlot = document.snapshot().scenes[0].slots.back();
+    CHECK(document.snapshot().scenes[0].entries.size() == 3);
+    const auto newSlot = document.snapshot().scenes[0].entries.back();
     CHECK(newSlot.track == trackCopy && newSlot.clip != clip && newSlot.clip != duplicate);
     const auto sceneCopy = document.duplicateScene(scene);
     CHECK(sceneCopy != scene);
     const auto copied = document.snapshot().scenes.back();
-    CHECK(copied.name == "Intro" && copied.slots.size() == 3);
-    for (std::size_t i = 0; i < copied.slots.size(); ++i) {
-        CHECK(copied.slots[i].track == document.snapshot().scenes[0].slots[i].track);
-        CHECK(copied.slots[i].clip != document.snapshot().scenes[0].slots[i].clip);
+    CHECK(copied.name == "Intro" && copied.entries.size() == 3);
+    for (std::size_t i = 0; i < copied.entries.size(); ++i) {
+        CHECK(copied.entries[i].track == document.snapshot().scenes[0].entries[i].track);
+        CHECK(copied.entries[i].clip != document.snapshot().scenes[0].entries[i].clip);
     }
     const auto highWater = document.snapshot().next_id;
     document.replace(saved);
@@ -85,19 +85,19 @@ void invalidEditsAndDeletion() {
     rejected(document, [&] { document.duplicateClip(ClipId{999}); });
     rejected(document, [&] { document.duplicateScene(SceneId{999}); });
     rejected(document, [&] { document.clearSlot(scene, TrackId{999}); });
-    document.clearSlot(scene, a); CHECK(document.snapshot().scenes[0].slots.empty());
+    document.clearSlot(scene, a); CHECK(document.snapshot().scenes[0].entries.empty());
     document.setSlot(scene, a, clip);
     const auto replacement = document.createClip(a, "Replacement");
     document.setSlot(scene, a, replacement);
-    CHECK(document.snapshot().scenes[0].slots.size() == 1);
-    CHECK(document.snapshot().scenes[0].slots[0].clip == replacement);
+    CHECK(document.snapshot().scenes[0].entries.size() == 1);
+    CHECK(document.snapshot().scenes[0].entries[0].clip == replacement);
     document.deleteClip(clip); // unassigned deletion preserves the other slot
-    CHECK(document.snapshot().scenes[0].slots.size() == 1);
-    document.deleteClip(replacement); CHECK(document.snapshot().scenes[0].slots.empty());
+    CHECK(document.snapshot().scenes[0].entries.size() == 1);
+    document.deleteClip(replacement); CHECK(document.snapshot().scenes[0].entries.empty());
     const auto remaining = document.createClip(a, "Remaining");
     document.setSlot(scene, a, remaining);
     document.deleteTrack(a);
-    CHECK(document.snapshot().clips.empty() && document.snapshot().scenes[0].slots.empty());
+    CHECK(document.snapshot().clips.empty() && document.snapshot().scenes[0].entries.empty());
     CHECK(document.snapshot().tracks.size() == 1 && document.snapshot().tracks[0].id == b);
     document.deleteScene(scene); CHECK(document.snapshot().scenes.empty());
 }
@@ -121,10 +121,10 @@ void invalidSnapshots() {
     bad([](auto& s) { s.clips[0].id.value = s.tracks[0].id.value; });
     bad([](auto& s) { s.tracks.push_back(s.tracks[0]); });
     bad([](auto& s) { s.clips[0].track.value = 999; });
-    bad([](auto& s) { s.scenes[0].slots[0].clip.value = 999; });
-    bad([](auto& s) { s.scenes[0].slots[0].track.value = 999; });
-    bad([](auto& s) { s.scenes[0].slots.push_back(s.scenes[0].slots[0]); });
-    bad([](auto& s) { s.scenes[0].slots.resize(SessionDocument::track_limit + 1, s.scenes[0].slots[0]); });
+    bad([](auto& s) { s.scenes[0].entries[0].clip.value = 999; });
+    bad([](auto& s) { s.scenes[0].entries[0].track.value = 999; });
+    bad([](auto& s) { s.scenes[0].entries.push_back(s.scenes[0].entries[0]); });
+    bad([](auto& s) { s.scenes[0].entries.resize(SessionDocument::track_limit + 1, s.scenes[0].entries[0]); });
     bad([](auto& s) { s.clips[0].name = std::string("bad\0name", 8); });
     auto almostExhausted = valid; almostExhausted.next_id = std::numeric_limits<std::uint64_t>::max() - 1;
     document.replace(almostExhausted);

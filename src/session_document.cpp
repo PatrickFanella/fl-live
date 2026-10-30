@@ -50,11 +50,11 @@ void SessionDocument::validate(const DocumentSnapshot& state) {
     }
     for (const auto& scene : state.scenes) {
         identity(scene.id); nameValid(scene.name);
-        if (scene.slots.size() > track_limit) throw std::invalid_argument("Scene slot limit exceeded");
-        std::unordered_set<std::uint64_t> slots;
-        for (const auto& slot : scene.slots) {
+        if (scene.entries.size() > track_limit) throw std::invalid_argument("Scene slot limit exceeded");
+        std::unordered_set<std::uint64_t> entries;
+        for (const auto& slot : scene.entries) {
             const auto clip = clips.find(slot.clip.value);
-            if (clip == clips.end() || clip->second != slot.track || !slots.insert(slot.track.value).second)
+            if (clip == clips.end() || clip->second != slot.track || !entries.insert(slot.track.value).second)
                 throw std::invalid_argument("Invalid or duplicate scene slot");
         }
     }
@@ -93,16 +93,16 @@ void SessionDocument::renameScene(SceneId id, std::string name) {
 }
 void SessionDocument::setSlot(SceneId scene, TrackId track, ClipId clip) {
     mutate([&](auto& state) {
-        auto& slots = find(state.scenes, scene).slots;
-        std::erase_if(slots, [track](auto slot) { return slot.track == track; });
-        slots.push_back({track, clip});
+        auto& entries = find(state.scenes, scene).entries;
+        std::erase_if(entries, [track](auto slot) { return slot.track == track; });
+        entries.push_back({track, clip});
     });
 }
 void SessionDocument::clearSlot(SceneId scene, TrackId track) {
     mutate([&](auto& state) {
         find(state.tracks, track);
-        auto& slots = find(state.scenes, scene).slots;
-        std::erase_if(slots, [track](auto slot) { return slot.track == track; });
+        auto& entries = find(state.scenes, scene).entries;
+        std::erase_if(entries, [track](auto slot) { return slot.track == track; });
     });
 }
 ClipId SessionDocument::duplicateClip(ClipId id) {
@@ -130,10 +130,10 @@ TrackId SessionDocument::duplicateTrack(TrackId id) {
             state.clips.push_back(std::move(clip));
         }
         for (auto& scene : state.scenes) {
-            const auto slot = std::find_if(scene.slots.begin(), scene.slots.end(), [id](auto entry) { return entry.track == id; });
-            if (slot != scene.slots.end()) {
+            const auto slot = std::find_if(scene.entries.begin(), scene.entries.end(), [id](auto entry) { return entry.track == id; });
+            if (slot != scene.entries.end()) {
                 const auto copy = copies.at(slot->clip.value);
-                scene.slots.push_back({result, copy});
+                scene.entries.push_back({result, copy});
             }
         }
     });
@@ -144,7 +144,7 @@ SceneId SessionDocument::duplicateScene(SceneId id) {
     mutate([&](auto& state) {
         auto scene = find(state.scenes, id);
         result = scene.id = allocate<SceneId>(state);
-        for (auto& slot : scene.slots) {
+        for (auto& slot : scene.entries) {
             auto clip = find(state.clips, slot.clip);
             slot.clip = clip.id = allocate<ClipId>(state);
             state.clips.push_back(std::move(clip));
@@ -157,7 +157,7 @@ void SessionDocument::deleteClip(ClipId id) {
     mutate([&](auto& state) {
         find(state.clips, id);
         std::erase_if(state.clips, [id](const auto& clip) { return clip.id == id; });
-        for (auto& scene : state.scenes) std::erase_if(scene.slots, [id](auto slot) { return slot.clip == id; });
+        for (auto& scene : state.scenes) std::erase_if(scene.entries, [id](auto slot) { return slot.clip == id; });
     });
 }
 void SessionDocument::deleteTrack(TrackId id) {
@@ -165,7 +165,7 @@ void SessionDocument::deleteTrack(TrackId id) {
         find(state.tracks, id);
         std::erase_if(state.tracks, [id](const auto& track) { return track.id == id; });
         std::erase_if(state.clips, [id](const auto& clip) { return clip.track == id; });
-        for (auto& scene : state.scenes) std::erase_if(scene.slots, [id](auto slot) { return slot.track == id; });
+        for (auto& scene : state.scenes) std::erase_if(scene.entries, [id](auto slot) { return slot.track == id; });
     });
 }
 void SessionDocument::deleteScene(SceneId id) {

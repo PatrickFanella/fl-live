@@ -1,0 +1,80 @@
+{
+  "verified_at": "2026-10-30T23:11:24.743901+00:00",
+  "base": "5eaba0c2729518b60a0d0fa576e9387cfb2af487",
+  "host": "kvant",
+  "issues": [
+    26,
+    56
+  ],
+  "scope": "Versioned identity metadata file adapter, separate from musical projects",
+  "gates": {
+    "desktop": {
+      "passed": 12,
+      "total": 12,
+      "command": "cmake --build --preset desktop -j 4; ctest --preset desktop --output-junit metadata-tests.xml"
+    },
+    "release": {
+      "passed": 4,
+      "total": 4,
+      "command": "cmake --build --preset release -j 4; ctest --preset release --output-junit metadata-tests.xml"
+    },
+    "engine-only": {
+      "passed": 3,
+      "total": 3,
+      "command": "cmake --build --preset engine-only -j 4; ctest --preset engine-only --output-junit metadata-tests.xml"
+    },
+    "pipewire-sanitize": {
+      "passed": 10,
+      "total": 10,
+      "command": "cmake --build --preset pipewire-sanitize -j 4; ctest --preset pipewire-sanitize --output-junit metadata-tests.xml"
+    },
+    "document-io-sanitize": {
+      "passed": 4,
+      "total": 4,
+      "command": "cmake --build --preset document-io-sanitize -j 4; ctest --preset document-io-sanitize --output-junit metadata-tests.xml"
+    }
+  },
+  "final_desktop_cross_format_regression": {
+    "command": "ctest --preset desktop -R desktop-session",
+    "passed": 1,
+    "total": 1
+  },
+  "other_checks": [
+    "ShellCheck ci/verify.sh passed",
+    "git diff --check passed"
+  ],
+  "verified_behaviors": [
+    "Hand-authored fixture with IDs above 2^53 and maximum uint64 cursor decodes without numeric rounding",
+    "Names, owners, scene references and allocation cursor survive encode/decode and on-disk save/reopen",
+    "Restore retains higher current allocation cursor; later duplicates use fresh identities",
+    "Unsupported fields/features/versions, malformed UTF-8/Unicode, oversized arrays/files and invalid references are rejected before replacing current state",
+    "Rejected loads preserve current metadata state; invalid writes and failed opens preserve the previous saved file",
+    "Maximum metadata entity/scene-entry workload with escaped 128-byte names and full-width IDs fits the 4 MiB byte budget",
+    "Desktop rejects metadata as a musical project while preserving tempo/path/history/saved state; codec rejects a real template project",
+    "Qt-first header inclusion compiles after C++ scene member rename to entries; serialized key remains slots"
+  ],
+  "limits": [
+    "Identity/ownership metadata only; no media/notes/tempo/mixer/device state in this format",
+    "No desktop document adoption, musical-state migration or general rendered-output equivalence",
+    "QSaveFile atomic replacement exercised for ordinary saves/failures; process-kill, disk-full, short-write and power-loss behavior remain unqualified",
+    "Document model and engine remain Qt-free; file adapter uses optional Qt Core outside the render callback",
+    "Issues #26/#56 retain integration work; no native UI/physical audio/release qualification claimed",
+    "Local host checks; hosted CI pending"
+  ],
+  "sha256": {
+    "CMakeLists.txt": "054507b85de415a490a47f0892743b204d64c35f7e5c84e56072bfe5b344be13",
+    "CMakePresets.json": "c1aa6ae9516e4db20847cb4db859855e212295f810cd7d167111ebf01e488ead",
+    "ci/verify.sh": "cd520a5cc5b4cdb351c824dd093b2a76e1cd878212851e74a81aa750d83b0d16",
+    "include/fl_live/session_document.hpp": "f41e5ba16d0411fe713fb1535c27f43720ae0545f100d8515a0ff6654bef9ee2",
+    "include/fl_live/document_io.hpp": "2f62e0736900eeffb91b5ee021d32b2198eb0283737f0a5e82b3f030d7816cc0",
+    "src/session_document.cpp": "d04779f00885e4e1b734ed0b43f5db269eb003cbf48ce5ff3dcf2dcd89258155",
+    "src/document_io.cpp": "d0936845c65858ab630bfd58c5d9b772c01e3dee47774deca5a77378e57087c7",
+    "tests/document_tests.cpp": "7f23c8a1e77a4624f942a96bc11d6bfc1bb5940582c68bc4c54be80482e243ac",
+    "tests/document_io_tests.cpp": "3c704c55eec3d6b4efe6e6f239924f8e42794906677a6f436c3770291ece0bf7",
+    "tests/desktop_tests.cpp": "787af369b00dc6143593685187258bc5fa37ed834ff9bfdb255a3c43c286df26",
+    "docs/session-document.md": "45d2e821e2134c581194ffcb185356b04808820d6d2119afdf1a332cb81d157c",
+    "docs/session-metadata.md": "267b7604aee935d32995d213d09240e544a95178bf289a1a2aed4342c82974fd",
+    "docs/STATUS.md": "86f0d08359010bd44d1ae38f6ad5587943bb0db4ef46d03ce2ce986fc1a50f30",
+    "docs/ci.md": "b6d4eec8ecf3c078ba24974988461838e7a59ac839902a1e24af38a254b40552"
+  }
+}

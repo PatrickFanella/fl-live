@@ -36,7 +36,7 @@ struct SceneSlot {
 struct DocumentScene {
     SceneId id;
     std::string name;
-    std::vector<SceneSlot> slots;
+    std::vector<SceneSlot> entries;
     bool operator==(const DocumentScene&) const = default;
 };
 struct DocumentSnapshot {
