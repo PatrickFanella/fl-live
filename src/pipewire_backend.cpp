@@ -19,6 +19,7 @@ struct PipeWireBackend::Impl {
     std::atomic<int> state{PW_STREAM_STATE_UNCONNECTED}, error{0};
     std::atomic<bool> format_ok{false};
     std::atomic<std::uint64_t> callbacks{0}, frames{0}, bad_buffers{0}, max_ns{0}, over_budget{0};
+    std::atomic<std::uint64_t> min_render_frames{0}, max_render_frames{0};
     bool started = false, initialized = false;
 
     Impl(RenderController& value, PipeWireConfig settings) : controller(value), config(std::move(settings)) {}
@@ -74,10 +75,16 @@ struct PipeWireBackend::Impl {
             audio.chunk->size = 0;
             self.bad_buffers.fetch_add(1);
             self.error.store(-EMSGSIZE);
-        } else if (!self.format_ok.load()) {
+            self.controller.panic();
+        } else if (self.error.load() || !self.format_ok.load()) {
+            // Errors remain latched until teardown/reconnect. A later valid
+            // buffer must not resume audio while control observes the failure.
             std::fill(output.begin(), output.end(), 0);
             self.bad_buffers.fetch_add(1);
         } else {
+            if (count && (!self.min_render_frames.load() || count < self.min_render_frames.load()))
+                self.min_render_frames.store(count);
+            if (count > self.max_render_frames.load()) self.max_render_frames.store(count);
             self.controller.process(output);
         }
         const auto submitted = audio.chunk->size / sizeof(float);
@@ -85,7 +92,7 @@ struct PipeWireBackend::Impl {
         self.callbacks.fetch_add(1);
         buffer->size = submitted;
         const int queued = pw_stream_queue_buffer(self.stream, buffer);
-        if (queued < 0) self.error.store(queued);
+        if (queued < 0) { self.error.store(queued); self.controller.panic(); }
         const auto elapsed = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now() - start).count());
         if (elapsed > self.max_ns.load()) self.max_ns.store(elapsed);
@@ -142,6 +149,7 @@ PipeWireBackend::PipeWireBackend(RenderController& controller, PipeWireConfig co
 PipeWireBackend::~PipeWireBackend() = default;
 BackendStatus PipeWireBackend::status() const noexcept {
     return {impl_->state.load(), impl_->error.load(), impl_->callbacks.load(), impl_->frames.load(),
-        impl_->bad_buffers.load(), impl_->max_ns.load(), impl_->over_budget.load()};
+        impl_->bad_buffers.load(), impl_->max_ns.load(), impl_->over_budget.load(),
+        impl_->min_render_frames.load(), impl_->max_render_frames.load()};
 }
 } // namespace fl_live

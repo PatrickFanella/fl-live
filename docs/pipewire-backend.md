@@ -20,11 +20,17 @@ The stream requests mono native-endian F32 at the prepared plan's sample rate. A
 
 The data callback dequeues mapped buffers, invokes the controller, sets chunk size/stride and returns the buffer. Error counters, callback/frame counts, maximum measured process duration and duration-over-budget count are exposed. Those duration counts are not PipeWire graph xrun counters and do not establish end-to-end latency. No user logging, file I/O, asset destruction or unbounded command draining occurs there.
 
+Backend errors now stay latched until teardown/reconnect. Oversized callbacks return an empty chunk and request panic; later buffers within the size limit are filled with silence without consuming controls or advancing the engine. Buffer-return errors also request panic. Teardown still performs the final stopped-state publication if no further controller callback runs. The headless client's JSON includes `min_render_frames` and `max_render_frames`: observed nonzero buffer sizes passed to the controller, with zero meaning no such call. These counters distinguish an observed callback size from a requested server setting; `frames` includes submitted silence and is not a count of engine-rendered samples.
+
 ## Qualification
 
 The private integration test starts its own server with a dummy driver and no hardware/session-manager modules. It explicitly configures and links only owned nodes. An independent pw-cat capture receives 24,000 frames and checks every sample of the authored repeating waveform after a measured startup-silence prefix. The test requires at least 20,000 non-silent samples. The prefix is retained as a finding, not treated as measured physical latency.
 
 A second client processes actual samples before that owned server is terminated. The app reports server loss, exits nonzero and publishes stopped state. Missing-server startup also fails without readiness. Every owned process is reaped; no pre-existing server is stopped or reconfigured.
+
+CTest also runs fixed-quantum private servers at 257 and 1,024 frames. Each case requires both observed render-size bounds to equal the requested quantum and compares captured waveform samples before exercising server loss. The existing 128-frame case keeps the complete desktop recovery journey. A separate 16,384-frame case raises the private server's allocation limit beyond its usual 8,192-frame ceiling so the backend's rejection path actually runs. It requires `-EMSGSIZE`, no controller rendering or position advance, and a stopped final state with pending controls drained. The offscreen desktop test also checks that a configured 44,100 Hz backend against the 48,000 Hz template fails clearly, preserves savable project settings and cannot start playback.
+
+These cases qualify separate fixed software-server configurations. They do not qualify live quantum transitions, negotiated rate/format changes, physical device changes or preservation of a playing document across such transitions. Issue #23 remains open for those checks.
 
 PipeWire 1.6.9 pw-cat returns exit code 1 on the finite capture-limit path because that path quits without setting its drained flag. The test records the code, requires no stderr, requires the exact full payload and compares the samples. This exception is narrowly tied to the selected helper behavior, not a blanket acceptance of failing capture tools. [Upstream count and exit paths](https://github.com/PipeWire/pipewire/blob/1.6.9/src/tools/pw-cat.c).
 

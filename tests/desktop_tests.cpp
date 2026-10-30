@@ -18,6 +18,24 @@
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void mismatchedBackendRate() {
+        fl_live::PipeWireConfig config;
+        config.remote = "fl-live-unopened-rate-test";
+        config.sample_rate = 44100; // prepared template remains 48000 Hz
+        Session session(config);
+        QVERIFY(!session.audioAvailable());
+        QVERIFY(!session.running());
+        QVERIFY(session.message().contains("backend rate must match prepared session"));
+        QVERIFY(!session.reconnectAudio());
+        session.play(); session.tick();
+        QVERIFY(!session.running());
+        QVERIFY(!session.pending());
+        QCOMPARE(session.tempo(), 120);
+        QTemporaryDir directory;
+        const auto path = directory.filePath("unchanged.json");
+        QVERIFY(session.saveProject(path));
+        QVERIFY(readProject(path) == ProjectSettings{});
+    }
     void missingAudioServer() {
         QTemporaryDir directory;
         fl_live::PipeWireConfig config;

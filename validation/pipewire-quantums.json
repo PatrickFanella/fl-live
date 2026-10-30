@@ -1,0 +1,196 @@
+{
+  "verified_at": "2026-10-30T11:55:30.041564+00:00",
+  "base": "f69b987f8eee3ffd06696787be8680157cfbe9e3",
+  "host": "kvant",
+  "issue": "https://git.subcult.tv/subculture-collective/fl-live/issues/23",
+  "scope": "Fixed private software-server quantum cases and configured-rate mismatch; partial issue coverage",
+  "checks": [
+    {
+      "command": "cmake --preset desktop; cmake --build --preset desktop -j 4; ctest --preset desktop --output-junit quantum-tests.xml",
+      "passed": 8,
+      "total": 8
+    },
+    {
+      "command": "ctest --preset desktop -R desktop-session",
+      "passed": 1,
+      "total": 1,
+      "scope": "Final configured-rate mismatch and savable-document regression"
+    },
+    {
+      "command": "cmake --preset pipewire-sanitize; cmake --build --preset pipewire-sanitize -j 4; ctest --preset pipewire-sanitize --output-junit quantum-tests.xml",
+      "passed": 7,
+      "total": 7,
+      "scope": "ASan/UBSan engine/headless backend including all new quantum cases; excludes Qt"
+    }
+  ],
+  "observations": [
+    {
+      "passed": true,
+      "scope": "private software graph; no hardware/audio-device qualification",
+      "requested_quantum": 257,
+      "captured_frames": 24000,
+      "capture_returncode": 1,
+      "silent_prefix": 514,
+      "playback": {
+        "callbacks": 561,
+        "frames": 144177,
+        "bad_buffers": 0,
+        "max_process_ns": 38110,
+        "processing_over_budget": 0,
+        "error": 0,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "position": 143920,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "server_loss": {
+        "callbacks": 6,
+        "frames": 1542,
+        "bad_buffers": 0,
+        "max_process_ns": 13330,
+        "processing_over_budget": 0,
+        "error": -32,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "position": 1542,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "project_rebuilds": null,
+      "desktop_workflow": null,
+      "desktop_recovery": null
+    },
+    {
+      "passed": true,
+      "scope": "private software graph; no hardware/audio-device qualification",
+      "requested_quantum": 1024,
+      "captured_frames": 24000,
+      "capture_returncode": 1,
+      "silent_prefix": 1024,
+      "playback": {
+        "callbacks": 141,
+        "frames": 144384,
+        "bad_buffers": 0,
+        "max_process_ns": 301661,
+        "processing_over_budget": 0,
+        "error": 0,
+        "min_render_frames": 1024,
+        "max_render_frames": 1024,
+        "position": 143360,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "server_loss": {
+        "callbacks": 2,
+        "frames": 2048,
+        "bad_buffers": 0,
+        "max_process_ns": 30750,
+        "processing_over_budget": 0,
+        "error": -32,
+        "min_render_frames": 1024,
+        "max_render_frames": 1024,
+        "position": 2048,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "project_rebuilds": null,
+      "desktop_workflow": null,
+      "desktop_recovery": null
+    },
+    {
+      "passed": true,
+      "scope": "private oversized quantum rejection; no hardware",
+      "requested_quantum": 16384,
+      "playback": {
+        "callbacks": 2,
+        "frames": 8192,
+        "bad_buffers": 2,
+        "max_process_ns": 7710,
+        "processing_over_budget": 0,
+        "error": -90,
+        "min_render_frames": 0,
+        "max_render_frames": 0,
+        "position": 0,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      }
+    },
+    {
+      "passed": true,
+      "scope": "private software graph; no hardware/audio-device qualification",
+      "requested_quantum": 128,
+      "captured_frames": 24000,
+      "capture_returncode": 1,
+      "silent_prefix": 384,
+      "playback": {
+        "callbacks": 1124,
+        "frames": 143872,
+        "bad_buffers": 0,
+        "max_process_ns": 21050,
+        "processing_over_budget": 0,
+        "error": 0,
+        "min_render_frames": 128,
+        "max_render_frames": 128,
+        "position": 143744,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "server_loss": {
+        "callbacks": 22,
+        "frames": 2816,
+        "bad_buffers": 0,
+        "max_process_ns": 21350,
+        "processing_over_budget": 0,
+        "error": -32,
+        "min_render_frames": 128,
+        "max_render_frames": 128,
+        "position": 2816,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "project_rebuilds": "PASS: five stopped project rebuilds including Undo/Redo on the private PipeWire server",
+      "desktop_workflow": {
+        "frames": 144000,
+        "peak": 0.020000001415610313,
+        "pitch": {
+          "positive_crossings": 220,
+          "stable_periods": 219,
+          "discontinuous_periods": 0,
+          "median_period_frames": 109
+        },
+        "stopped_silence_frames": 12000
+      },
+      "desktop_recovery": "PASS: server loss, failed retry, save, explicit stopped reconnect and retained history"
+    }
+  ],
+  "fixture_findings": [
+    "Initial requested 16384 quantum was capped at 8192 by default allocation limit; no oversized callback occurred",
+    "Private server quantum-limit raised to 16384 to exercise backend size rejection",
+    "After oversized failure, a later smaller buffer may submit silence; submitted frames are not engine-rendered frames"
+  ],
+  "limitations": [
+    "Separate fixed server configurations only; no live quantum transitions",
+    "Configured backend/template rate mismatch tested; negotiated rate/format changes remain unqualified",
+    "Native Wayland and physical device/latency/hotplug checks remain open",
+    "Callback budget counts are not graph xruns",
+    "Issue #23 remains open",
+    "Hosted CI not yet verified for this change"
+  ],
+  "sha256": {
+    "CMakeLists.txt": "f8b6236b6ce454062508900ebf263c408c413f622bdefddeea213c6d419764c2",
+    "apps/play.cpp": "c39eb3d29a8c9d1d4aabf6a48cbfb3705c7e40535c8f290553fae0b5d4ad38e3",
+    "include/fl_live/pipewire_backend.hpp": "fa1b93122fe6e60c224552468a60bc0d9bffb6c3d9e4a1984218f8c9b36ee503",
+    "src/pipewire_backend.cpp": "1c8e5148195a1648c4d1df223e1c827ddbfad114e2463c1e63bf7853197e6dba",
+    "tests/pipewire_integration.py": "797b52842ac69c4622b134ed14e9919ad2568da1a9da9171ffd27e462d0955a4",
+    "tests/desktop_tests.cpp": "15a4e4a3500df8a8a7d189234f2e20a381b4991c8fe0e4cf67f0de2e1327f0c5",
+    "docs/pipewire-backend.md": "d6f9eba671d62d19984016d99df3f5a1720a50c499c562c6970be3ecb772a8a2"
+  }
+}
