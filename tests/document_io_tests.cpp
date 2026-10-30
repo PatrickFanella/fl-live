@@ -1,5 +1,6 @@
 #include <QFile>
 #include "fl_live/document_io.hpp"
+#include "fl_live/document_render.hpp"
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -7,6 +8,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <algorithm>
 
 using namespace fl_live;
 #define CHECK(condition) do { if (!(condition)) throw std::runtime_error("Failed: " #condition); } while (false)
@@ -64,6 +66,28 @@ void roundTrips() {
     CHECK(restored.snapshot().scenes[0].id == scene);
     CHECK(restored.createScene("After restore").value >= cursor);
     CHECK(decodeDocumentMetadata(encodeDocumentMetadata({})) == DocumentSnapshot{});
+}
+void persistedIdsRender() {
+    QTemporaryDir directory; CHECK(directory.isValid());
+    const auto state=fixture(); const auto id=state.clips[0].id;
+    const std::vector<DocumentClipSource> sources{{id,AudioClip{{0.125F,-0.25F,0.375F},true}}};
+    const DocumentRenderPlan before(state,sources,48000,137125);
+    const auto path=directory.filePath("render-identities.json");
+    writeDocumentMetadata(path,state);
+    const DocumentRenderPlan after(readDocumentMetadata(path),sources,48000,137125);
+    const auto render=[&](const DocumentRenderPlan& prepared,std::size_t block) {
+        Engine engine(prepared.plan());
+        const auto command=prepared.launch(id,17);CHECK(command);
+        CHECK(engine.schedule(*command)==ScheduleResult::accepted);
+        engine.start();std::vector<float> samples(1027);
+        for(std::size_t i=0;i<samples.size();i+=block)
+            engine.process(std::span(samples).subspan(i,std::min(block,samples.size()-i)));
+        CHECK(prepared.clipId(command->track,engine.track_statuses()[command->track].active_clip)==id);
+        return samples;
+    };
+    const auto original=render(before,1);CHECK(original==render(after,257));
+    const float wave[]={0.125F,-0.25F,0.375F};
+    for(std::size_t i=0;i<original.size();++i) CHECK(original[i]==(i<17?0:wave[(i-17)%3]));
 }
 void rejectedInputs() {
     QTemporaryDir directory; CHECK(directory.isValid());
@@ -142,7 +166,7 @@ void savePreservationAndMaximum() {
 }
 int main() {
     try {
-        roundTrips(); rejectedInputs(); savePreservationAndMaximum();
+        roundTrips(); persistedIdsRender(); rejectedInputs(); savePreservationAndMaximum();
         std::cout << "PASS: metadata file identity round trips, strict admission and preservation\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

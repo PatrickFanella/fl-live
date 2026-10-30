@@ -1,0 +1,73 @@
+{
+  "verified_at": "2026-10-30T23:36:02.733638+00:00",
+  "base": "e3cd06971c6104803441f71443b4b168a193f310",
+  "host": "kvant",
+  "issues": [
+    26,
+    27,
+    33,
+    56
+  ],
+  "scope": "Immutable supplied-content preparation and stable-ID render mapping; offline/control-side integration boundary",
+  "gates": {
+    "desktop": {
+      "passed": 13,
+      "total": 13,
+      "command": "cmake --build --preset desktop -j 4; ctest --preset desktop --output-junit render-preparation-tests.xml"
+    },
+    "release": {
+      "passed": 5,
+      "total": 5,
+      "command": "cmake --build --preset release -j 4; ctest --preset release --output-junit render-preparation-tests.xml"
+    },
+    "engine-only": {
+      "passed": 4,
+      "total": 4,
+      "command": "cmake --build --preset engine-only -j 4; ctest --preset engine-only --output-junit render-preparation-tests.xml"
+    },
+    "pipewire-sanitize": {
+      "passed": 11,
+      "total": 11,
+      "command": "cmake --build --preset pipewire-sanitize -j 4; ctest --preset pipewire-sanitize --output-junit render-preparation-tests.xml"
+    },
+    "document-io-sanitize": {
+      "passed": 5,
+      "total": 5,
+      "command": "cmake --build --preset document-io-sanitize -j 4; ctest --preset document-io-sanitize --output-junit render-preparation-tests.xml"
+    }
+  },
+  "verified_behaviors": [
+    "Two audio and two MIDI tracks match an independent waveform/oscillator oracle across 1/64/257-frame render blocks",
+    "Reordered track/clip vectors and independently ordered sources preserve ID-based command targets and matching feedback",
+    "Quantized launch at 137.125 BPM matches an independent rational next-bar boundary under 257-frame processing",
+    "Prepared metadata/clip samples survive mutation and destruction of caller input arrays",
+    "Missing/duplicate/orphan sources, kind mismatch, invalid content/metadata/rate/tempo, renderer clip capacity and content-budget violations are rejected",
+    "Exact reduced-budget boundary passes; budget increases beyond supported ceilings fail",
+    "Old held-note plan stays valid during candidate preparation; explicit stop clears voices and the new plan cannot resolve the deleted clip",
+    "Metadata save/reopen with IDs above 2^53 and the same supplied content preserves exact output across 1/257-frame partitions and an independent sample oracle",
+    "All cohorts retain existing engine/controller/backend/desktop/file checks; no live diagnostic was enabled or weakened"
+  ],
+  "limits": [
+    "Desktop has not adopted the new adapter; no management UI added in this slice",
+    "Content must already be source-rate mono audio or frame-based MIDI; no decoding/resampling/asset-file admission",
+    "Unity gain; no mixer state or scene-batch scheduling added",
+    "64 render clips per track is stricter than the metadata model capacity of 256; unsupported preparation fails explicitly",
+    "Default copied-content limits: 16777216 mono float frames and 65536 notes; not a total-process memory bound",
+    "Metadata persistence test reuses externally supplied content; no musical-state or asset-recovery equivalence claim",
+    "No live graph replacement, acknowledged retirement, concurrent-edit note cleanup, native input or physical audio qualification",
+    "Hosted CI pending"
+  ],
+  "sha256": {
+    "CMakeLists.txt": "295f11181ba0170e2b154f70b2552240e2d27ee151b369b45223d3c19c017c49",
+    "include/fl_live/engine.hpp": "ff71db3291df38c216996c877bd1540db260d804a712d20f34b083afae6bff31",
+    "include/fl_live/document_render.hpp": "206ea78e5b79624c523aab4a4edf7054ccde1a774cb57a637ce5c9befa9d88a8",
+    "src/engine.cpp": "04ecf60eb34b6f18747e2bc15638315ec6ead106c61becb9734f58a85cf9e912",
+    "src/document_render.cpp": "0b60262fa99559296c855584de55b16cd8e0c7867c05291a3393a94b2d572a6a",
+    "tests/document_render_tests.cpp": "b8513d5dbcf1fe5ec56a6d0fe694f715c26a5b5ac9360aa75dccb4f970f54b07",
+    "tests/document_io_tests.cpp": "113d072c25608ef1f6873fbdda4758e54a6b5d66bfccf761d88e84a9abb27ee0",
+    "docs/document-render.md": "61b89fe04f71aac5ce6e54af2429b7f79a7574260c4996ce249924bb99b54ffd",
+    "docs/session-document.md": "c8a39cec840662cbe73210ff30c0c2e344ded8ee2b90f87f2a1aa0cc094d1c80",
+    "docs/ci.md": "16da278a67fef201a28640c32a2879a69c16ba5d548d49adbe99701197cd3a73",
+    "docs/STATUS.md": "700ae8482957f7507a132cf2d9082d18769740312dd0a02897ecfa54eb4b10b5"
+  }
+}
