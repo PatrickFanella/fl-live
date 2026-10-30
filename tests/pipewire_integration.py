@@ -2,6 +2,7 @@
 import json
 import argparse
 import errno
+import hashlib
 import math
 import statistics
 import os
@@ -41,6 +42,21 @@ def ready(process):
             raise AssertionError("playback ready response timed out")
         line = process.stdout.readline()
     assert line and json.loads(line)["ready"], (line, process.poll(), process.stderr.read() if process.poll() is not None else "still running")
+    return json.loads(line)
+
+
+def capture_prefix(process, count):
+    data = bytearray()
+    deadline = time.monotonic() + 3
+    with selectors.DefaultSelector() as selector:
+        selector.register(process.stdout, selectors.EVENT_READ)
+        while len(data) < count:
+            remaining = deadline - time.monotonic()
+            assert remaining > 0 and selector.select(timeout=remaining), "capture startup timed out"
+            chunk = os.read(process.stdout.fileno(), count - len(data))
+            assert chunk, "capture exited before startup samples"
+            data.extend(chunk)
+    return bytes(data)
 
 
 def verify_a4(samples):
@@ -81,7 +97,13 @@ parser = argparse.ArgumentParser()
 parser.add_argument("binary")
 parser.add_argument("desktop_probe", nargs="?")
 parser.add_argument("--quantum", type=int, default=128, choices=[128, 257, 1024, 16384])
+parser.add_argument("--live-probe")
+parser.add_argument("--no-quantum-changes", action="store_true")
 args = parser.parse_args()
+if args.live_probe and (args.quantum != 257 or args.desktop_probe):
+    parser.error("live probe requires --quantum 257 and no desktop probe")
+if args.no_quantum_changes and not args.live_probe:
+    parser.error("--no-quantum-changes requires --live-probe")
 binary = str(pathlib.Path(args.binary).resolve())
 with tempfile.TemporaryDirectory(prefix="fl-live-pw-") as temporary:
     root = pathlib.Path(temporary)
@@ -116,8 +138,8 @@ context.properties = {
     default.clock.rate = 48000
     default.clock.allowed-rates = [ 48000 ]
     default.clock.quantum = QUANTUM
-    default.clock.min-quantum = QUANTUM
-    default.clock.max-quantum = QUANTUM
+    default.clock.min-quantum = MIN_QUANTUM
+    default.clock.max-quantum = MAX_QUANTUM
     default.clock.quantum-limit = 16384
     clock.power-of-two-quantum = false
 }
@@ -139,19 +161,24 @@ context.objects = [
       args = { factory.name = support.node.driver node.name = Test-Driver
                node.group = pipewire.test priority.driver = 20000 } }
 ]
-'''.replace("QUANTUM", str(args.quantum)))
+'''.replace("MIN_QUANTUM", "128" if args.live_probe else str(args.quantum))
+   .replace("MAX_QUANTUM", "1024" if args.live_probe else str(args.quantum))
+   .replace("QUANTUM", str(args.quantum)))
     server = player = capture = recovery = None
     with (root / "server.log").open("wb") as server_log:
         try:
             server = subprocess.Popen(["pipewire", "-c", str(configuration)], env=env,
                                       stdout=server_log, stderr=server_log)
             until(lambda: (root / remote).exists() if server.poll() is None else False)
-            player = subprocess.Popen([binary, "--remote", remote, "--group", "pipewire.test", "--duration-ms", "3000"],
-                                      env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            command = [args.live_probe, remote] if args.live_probe else [binary, "--remote", remote, "--group", "pipewire.test", "--duration-ms", "3000"]
+            if args.no_quantum_changes:
+                command.append("--fixed")
+            player = subprocess.Popen(command, env=env, stdin=subprocess.PIPE,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             ready(player)
             capture = subprocess.Popen(["pw-cat", "--remote", remote, "--record", "--raw", "--format", "f32",
                 "--rate", "48000", "--channels", "1", "--channel-map", "MONO", "--target", "0",
-                "--sample-count", "24000", "--properties",
+                "--sample-count", "72000" if args.live_probe else "24000", "--properties",
                 "{ node.name = fixture-capture node.group = pipewire.test node.always-process = true }", "-"],
                 env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
@@ -185,6 +212,20 @@ context.objects = [
             input_port = until(lambda: port("--input", "fixture-capture:"))
             subprocess.run(["pw-link", "--remote", remote, output_port, input_port], env=env,
                            check=True, capture_output=True, timeout=2)
+            transitions = []
+            prefix = b""
+            if args.live_probe:
+                transitions.append(ready(player))
+                # Wait for real recorded source samples before changing the
+                # driver. A connected port alone does not prove capture started.
+                prefix = capture_prefix(capture, 4096 * 4)
+                assert sum(value != 0 for value in struct.unpack("<4096f", prefix)) >= 1024
+                for quantum in (() if args.no_quantum_changes else (1024, 128)):
+                    subprocess.run(["pw-metadata", "--remote", remote, "--name", "settings",
+                                    "0", "clock.force-quantum", str(quantum)],
+                                   env=env, check=True, capture_output=True, text=True, timeout=2)
+                    transitions.append(ready(player))
+                assert [v["quantum"] for v in transitions] == ([257] if args.no_quantum_changes else [257, 1024, 128]), transitions
             if args.quantum > 8192:
                 remaining, errors = player.communicate(timeout=4)
                 stats = json.loads(remaining.strip())
@@ -199,21 +240,47 @@ context.objects = [
                                       requested_quantum=args.quantum, playback=stats)))
                 sys.exit(0)  # finally reaps the owned capture/player/server
             data, errors = capture.communicate(timeout=5)
+            data = prefix + data
             # PipeWire 1.6.9 pw-cat's finite capture limit quits without setting
             # `drained`, while main returns success only for that flag. Preserve
             # the observed code and require exact payload length/no diagnostic.
             # https://github.com/PipeWire/pipewire/blob/1.6.9/src/tools/pw-cat.c
             assert capture.returncode in (0, 1) and not errors, (capture.returncode, len(data), errors.decode())
             capture_code = capture.returncode
-            assert len(data) == 24000 * 4, (len(data), errors.decode())
-            values = struct.unpack("<24000f", data)
-            expected = (0.0625, 0.125, 0.1875, 0.25, -0.0625, -0.125, -0.1875, -0.25)
+            sample_count = 72000 if args.live_probe else 24000
+            assert len(data) == sample_count * 4, (len(data), errors.decode())
+            values = struct.unpack(f"<{sample_count}f", data)
+            expected = ([(i - 32760) / 131072 for i in range(65521)] if args.live_probe else
+                        (0.0625, 0.125, 0.1875, 0.25, -0.0625, -0.125, -0.1875, -0.25))
             first = next(i for i, value in enumerate(values) if value != 0)
             # Ignore only a possible graph-start silent prefix; the captured
             # non-silent span must be the engine waveform with no missing samples.
             offset = expected.index(values[first])
             assert len(values) - first >= 20000, "insufficient engine audio captured"
-            assert all(value == expected[(i + offset) % 8] for i, value in enumerate(values[first:])), "capture differs from authored engine output"
+            mismatches = [(i + first, value, expected[(i + offset) % len(expected)])
+                          for i, value in enumerate(values[first:]) if value != expected[(i + offset) % len(expected)]]
+            if args.live_probe:
+                # Require the final transition to occur well within the capture,
+                # not merely after its finite sample budget has been exhausted.
+                assert transitions[-1]["frames"] < sample_count - 4800, transitions
+                player.stdin.write("g"); player.stdin.flush()
+                output, errors = player.communicate(timeout=4)
+                assert player.returncode == 0 and not errors, (output, errors)
+                stats = json.loads(output.strip())
+                assert stats["passed"] and not stats["running"], stats
+                # Frame codes locate the captured span independently of a
+                # requested server setting or the engine's own expected buffer.
+                if not args.no_quantum_changes:
+                    assert offset <= transitions[1]["frames"] < transitions[2]["frames"] < offset + sample_count - first, (offset, transitions)
+                print(json.dumps(dict(passed=not mismatches, scope="frame-coded private software capture; no hardware",
+                                      quantum_changes=not args.no_quantum_changes,
+                                      transitions=transitions, captured_frames=sample_count, silent_prefix=first,
+                                      first_source_frame=offset, playback=stats, capture_sha256=hashlib.sha256(data).hexdigest(),
+                                      mismatched_frames=len(mismatches), first_mismatches=mismatches[:8],
+                                      unexpected_zero_frames=sum(value == 0 for _, value, _ in mismatches))), flush=True)
+                assert not mismatches, "frame-coded capture continuity unqualified; see measured JSON above"
+                sys.exit(0)
+            assert not mismatches, ("capture differs from authored engine output", len(mismatches), mismatches[:8])
             remaining, errors = player.communicate(timeout=4)
             assert player.returncode == 0, (remaining, errors)
             stats = json.loads(remaining.strip())

@@ -1,0 +1,160 @@
+{
+  "verified_at": "2026-10-30T17:20:11.556453+00:00",
+  "base": "ed0bfa65e453dff5b2b5db4b2aa07c645e15b74e",
+  "host": "kvant",
+  "issue": "https://git.subcult.tv/subculture-collective/fl-live/issues/23",
+  "live_continuity_qualified": false,
+  "ordinary_checks": {
+    "desktop": {
+      "passed": 9,
+      "total": 9
+    },
+    "pipewire-sanitize": {
+      "passed": 8,
+      "total": 8
+    },
+    "release_and_engine_only_configuration": "passed"
+  },
+  "fixed_frame_coded_control": {
+    "passed": true,
+    "scope": "frame-coded private software capture; no hardware",
+    "quantum_changes": false,
+    "transitions": [
+      {
+        "ready": true,
+        "quantum": 257,
+        "frames": 257,
+        "callbacks": 1
+      }
+    ],
+    "captured_frames": 72000,
+    "silent_prefix": 514,
+    "first_source_frame": 514,
+    "playback": {
+      "passed": true,
+      "frames": 72988,
+      "callbacks": 284,
+      "min_render_frames": 257,
+      "max_render_frames": 257,
+      "running": false
+    },
+    "capture_sha256": "96c4b651c3810b8afbc00cb21e4890887e38a873c5edc580f7ff97041b505b0c",
+    "mismatched_frames": 0,
+    "first_mismatches": [],
+    "unexpected_zero_frames": 0
+  },
+  "live_diagnostic": {
+    "command": "ctest --preset desktop -R ^pipewire-live-quantums$ --output-on-failure",
+    "exit_code": 8,
+    "observations": [
+      {
+        "passed": false,
+        "scope": "frame-coded private software capture; no hardware",
+        "quantum_changes": true,
+        "transitions": [
+          {
+            "ready": true,
+            "quantum": 257,
+            "frames": 257,
+            "callbacks": 1
+          },
+          {
+            "ready": true,
+            "quantum": 1024,
+            "frames": 5393,
+            "callbacks": 18
+          },
+          {
+            "ready": true,
+            "quantum": 128,
+            "frames": 5521,
+            "callbacks": 19
+          }
+        ],
+        "captured_frames": 72000,
+        "silent_prefix": 514,
+        "first_source_frame": 514,
+        "playback": {
+          "passed": true,
+          "frames": 73361,
+          "callbacks": 549,
+          "min_render_frames": 128,
+          "max_render_frames": 1024,
+          "running": false
+        },
+        "capture_sha256": "da99b29c8e3bdb4869629d26c16283b070321a7e38f3904360504fb9dfb4f43d",
+        "mismatched_frames": 67888,
+        "first_mismatches": [
+          [
+            4112,
+            0.0,
+            -0.21856689453125
+          ],
+          [
+            4113,
+            0.0,
+            -0.21855926513671875
+          ],
+          [
+            4114,
+            0.0,
+            -0.2185516357421875
+          ],
+          [
+            4115,
+            0.0,
+            -0.21854400634765625
+          ],
+          [
+            4116,
+            0.0,
+            -0.218536376953125
+          ],
+          [
+            4117,
+            0.0,
+            -0.21852874755859375
+          ],
+          [
+            4118,
+            0.0,
+            -0.2185211181640625
+          ],
+          [
+            4119,
+            0.0,
+            -0.21851348876953125
+          ]
+        ],
+        "unexpected_zero_frames": 1153
+      }
+    ],
+    "output": "Test project /home/onnwee/.t3/worktrees/fl-live/t3-b523bfe0/build/desktop\n    Start 5: pipewire-live-quantums\n1/1 Test #5: pipewire-live-quantums ...........***Failed    1.58 sec\n{\"passed\": false, \"scope\": \"frame-coded private software capture; no hardware\", \"quantum_changes\": true, \"transitions\": [{\"ready\": true, \"quantum\": 257, \"frames\": 257, \"callbacks\": 1}, {\"ready\": true, \"quantum\": 1024, \"frames\": 5393, \"callbacks\": 18}, {\"ready\": true, \"quantum\": 128, \"frames\": 5521, \"callbacks\": 19}], \"captured_frames\": 72000, \"silent_prefix\": 514, \"first_source_frame\": 514, \"playback\": {\"passed\": true, \"frames\": 73361, \"callbacks\": 549, \"min_render_frames\": 128, \"max_render_frames\": 1024, \"running\": false}, \"capture_sha256\": \"da99b29c8e3bdb4869629d26c16283b070321a7e38f3904360504fb9dfb4f43d\", \"mismatched_frames\": 67888, \"first_mismatches\": [[4112, 0.0, -0.21856689453125], [4113, 0.0, -0.21855926513671875], [4114, 0.0, -0.2185516357421875], [4115, 0.0, -0.21854400634765625], [4116, 0.0, -0.218536376953125], [4117, 0.0, -0.21852874755859375], [4118, 0.0, -0.2185211181640625], [4119, 0.0, -0.21851348876953125]], \"unexpected_zero_frames\": 1153}\n\nTraceback (most recent call last):\n  File \"/home/onnwee/.t3/worktrees/fl-live/t3-b523bfe0/tests/pipewire_integration.py\", line 281, in <module>\n    assert not mismatches, \"frame-coded capture continuity unqualified; see measured JSON above\"\n           ^^^^^^^^^^^^^^\nAssertionError: frame-coded capture continuity unqualified; see measured JSON above\n\n\n0% tests passed, 1 tests failed out of 1\n\nTotal Test time (real) =   1.58 sec\n\nThe following tests FAILED:\n\t  5 - pipewire-live-quantums (Failed)\n",
+    "stderr": "Errors while running CTest\n"
+  },
+  "interpretation": [
+    "Fixed 257-frame control passes using the same frame-coded source and capture path",
+    "Live 257 -> 1024 -> 128 callback sizes are observed, but captured continuity fails after startup priming",
+    "Unexpected zero frames and subsequent source offsets are retained; mismatch count is not a count of lost frames",
+    "Backend cleanup succeeds without proving capture continuity",
+    "The responsible engine/backend/adapter/driver/capture layer remains undetermined"
+  ],
+  "fixture_findings": [
+    "An earlier unprimed capture started after both transitions; the source-frame coverage assertion rejected that run",
+    "Fixture now waits for 4096 captured frames including at least 1024 nonzero source samples before the first change"
+  ],
+  "limits": [
+    "Private software server only; no desktop service/device was changed",
+    "No native UI, physical playback, latency or graph xrun qualification",
+    "No project save/reopen across live transitions qualification",
+    "Live diagnostic is opt-in and exits nonzero; existing gates stay enabled and strict",
+    "No product-path fix is claimed; issue #23 remains open",
+    "Hosted checks pending"
+  ],
+  "sha256": {
+    "CMakeLists.txt": "408583e05918ced0e8f3d996eb1c82238fca89fa860e8e985c58740a217cab8e",
+    "tests/live_quantum_probe.cpp": "101022bdbaa0a5d087e2685f0dcb9957be92f8b2d12857b5a2db0cca816b073c",
+    "tests/pipewire_integration.py": "75ebc252069d0638c75ec2fb3241f7872129081a41b84d301a85869f3a851514",
+    "docs/pipewire-backend.md": "314c57eb03bcb10f2be6958e72305c8b5514e222f15af1e6c5caef1bc9135143"
+  }
+}
