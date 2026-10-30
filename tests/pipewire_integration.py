@@ -1,6 +1,7 @@
 """Owned private PipeWire graph; no ALSA, desktop remote or service changes."""
 import json
 import argparse
+import concurrent.futures
 import errno
 import hashlib
 import math
@@ -99,11 +100,19 @@ parser.add_argument("desktop_probe", nargs="?")
 parser.add_argument("--quantum", type=int, default=128, choices=[128, 257, 1024, 16384])
 parser.add_argument("--live-probe")
 parser.add_argument("--no-quantum-changes", action="store_true")
+parser.add_argument("--reference-producer", action="store_true")
+parser.add_argument("--pause-capture-during-changes", action="store_true")
 args = parser.parse_args()
 if args.live_probe and (args.quantum != 257 or args.desktop_probe):
     parser.error("live probe requires --quantum 257 and no desktop probe")
 if args.no_quantum_changes and not args.live_probe:
     parser.error("--no-quantum-changes requires --live-probe")
+if args.reference_producer and not args.live_probe:
+    parser.error("--reference-producer requires --live-probe")
+if args.pause_capture_during_changes and not args.live_probe:
+    parser.error("--pause-capture-during-changes requires --live-probe")
+if args.reference_producer and args.pause_capture_during_changes:
+    parser.error("reference producer requires continuous capture draining")
 binary = str(pathlib.Path(args.binary).resolve())
 with tempfile.TemporaryDirectory(prefix="fl-live-pw-") as temporary:
     root = pathlib.Path(temporary)
@@ -164,7 +173,8 @@ context.objects = [
 '''.replace("MIN_QUANTUM", "128" if args.live_probe else str(args.quantum))
    .replace("MAX_QUANTUM", "1024" if args.live_probe else str(args.quantum))
    .replace("QUANTUM", str(args.quantum)))
-    server = player = capture = recovery = None
+    server = player = capture = recovery = reference = None
+    capture_reader = None
     with (root / "server.log").open("wb") as server_log:
         try:
             server = subprocess.Popen(["pipewire", "-c", str(configuration)], env=env,
@@ -176,6 +186,19 @@ context.objects = [
             player = subprocess.Popen(command, env=env, stdin=subprocess.PIPE,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             ready(player)
+            if args.reference_producer:
+                # Independently authored raw PCM is supplied to PipeWire's own
+                # playback client; no fl-live engine/backend output is linked
+                # into the capture path. The unlinked probe observes driver
+                # quantum changes only, not the reference client's callbacks.
+                source = root / "reference.f32"
+                source.write_bytes(b"".join(struct.pack("<f", (i % 65521 - 32760) / 131072)
+                                            for i in range(480000)))
+                reference = subprocess.Popen(["pw-cat", "--remote", remote, "--playback", "--raw",
+                    "--format", "f32", "--rate", "48000", "--channels", "1", "--channel-map", "MONO",
+                    "--latency", "257", "--target", "0", "--properties",
+                    "{ node.name = fixture-reference node.group = pipewire.test node.always-process = true }",
+                    str(source)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             capture = subprocess.Popen(["pw-cat", "--remote", remote, "--record", "--raw", "--format", "f32",
                 "--rate", "48000", "--channels", "1", "--channel-map", "MONO", "--target", "0",
                 "--sample-count", "72000" if args.live_probe else "24000", "--properties",
@@ -200,6 +223,8 @@ context.objects = [
                 return True
 
             until(lambda: configure_node("fl-live-output", "Output"))
+            if args.reference_producer:
+                until(lambda: configure_node("fixture-reference", "Output"))
             until(lambda: configure_node("fixture-capture", "Input"))
 
             def port(direction, prefix):
@@ -208,24 +233,36 @@ context.objects = [
                 assert command.returncode == 0, command.stderr
                 return next((line.strip() for line in command.stdout.splitlines() if line.startswith(prefix)), None)
 
-            output_port = until(lambda: port("--output", "fl-live-output:"))
+            output_port = until(lambda: port("--output", "fixture-reference:" if args.reference_producer else "fl-live-output:"))
             input_port = until(lambda: port("--input", "fixture-capture:"))
             subprocess.run(["pw-link", "--remote", remote, output_port, input_port], env=env,
                            check=True, capture_output=True, timeout=2)
             transitions = []
             prefix = b""
+            capture_result = None
             if args.live_probe:
                 transitions.append(ready(player))
                 # Wait for real recorded source samples before changing the
                 # driver. A connected port alone does not prove capture started.
                 prefix = capture_prefix(capture, 4096 * 4)
                 assert sum(value != 0 for value in struct.unpack("<4096f", prefix)) >= 1024
+                if not args.pause_capture_during_changes:
+                    # pw-cat writes capture to a bounded stdout pipe. Keep its
+                    # reader running while metadata subprocesses execute; a
+                    # stalled reader can interrupt the measured audio graph.
+                    capture_reader = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                    capture_result = capture_reader.submit(capture.communicate, timeout=5)
                 for quantum in (() if args.no_quantum_changes else (1024, 128)):
                     subprocess.run(["pw-metadata", "--remote", remote, "--name", "settings",
                                     "0", "clock.force-quantum", str(quantum)],
                                    env=env, check=True, capture_output=True, text=True, timeout=2)
                     transitions.append(ready(player))
                 assert [v["quantum"] for v in transitions] == ([257] if args.no_quantum_changes else [257, 1024, 128]), transitions
+                if args.reference_producer and not args.no_quantum_changes:
+                    # Observer counters are not reference-source frame indices.
+                    # With continuous draining, require capture to remain active
+                    # after the last change instead of equating those clocks.
+                    assert capture_result is not None and not capture_result.done(), "reference capture ended before transitions"
             if args.quantum > 8192:
                 remaining, errors = player.communicate(timeout=4)
                 stats = json.loads(remaining.strip())
@@ -239,7 +276,7 @@ context.objects = [
                 print(json.dumps(dict(passed=True, scope="private oversized quantum rejection; no hardware",
                                       requested_quantum=args.quantum, playback=stats)))
                 sys.exit(0)  # finally reaps the owned capture/player/server
-            data, errors = capture.communicate(timeout=5)
+            data, errors = capture_result.result(timeout=6) if capture_result else capture.communicate(timeout=5)
             data = prefix + data
             # PipeWire 1.6.9 pw-cat's finite capture limit quits without setting
             # `drained`, while main returns success only for that flag. Preserve
@@ -268,11 +305,20 @@ context.objects = [
                 assert player.returncode == 0 and not errors, (output, errors)
                 stats = json.loads(output.strip())
                 assert stats["passed"] and not stats["running"], stats
+                if reference is not None:
+                    assert reference.poll() is None, "reference source ended before capture"
+                    stop(reference)
+                    _, reference_errors = reference.communicate(timeout=2)
+                    assert not reference_errors, reference_errors.decode()
                 # Frame codes locate the captured span independently of a
                 # requested server setting or the engine's own expected buffer.
-                if not args.no_quantum_changes:
+                if not args.no_quantum_changes and not args.reference_producer:
                     assert offset <= transitions[1]["frames"] < transitions[2]["frames"] < offset + sample_count - first, (offset, transitions)
                 print(json.dumps(dict(passed=not mismatches, scope="frame-coded private software capture; no hardware",
+                                      producer="pw-cat" if args.reference_producer else "fl-live",
+                                      capture_drained_during_changes=not args.pause_capture_during_changes,
+                                      quantum_observer="unlinked fl-live probe" if args.reference_producer else "producer backend",
+                                      linked_output=output_port, linked_input=input_port,
                                       quantum_changes=not args.no_quantum_changes,
                                       transitions=transitions, captured_frames=sample_count, silent_prefix=first,
                                       first_source_frame=offset, playback=stats, capture_sha256=hashlib.sha256(data).hexdigest(),
@@ -380,7 +426,10 @@ context.objects = [
             raise
         finally:
             stop(capture)
+            if capture_reader is not None:
+                capture_reader.shutdown(wait=True)
             stop(recovery)
+            stop(reference)
             stop(player)
             stop(server)
     absent = subprocess.run([binary, "--remote", remote, "--duration-ms", "100"], env=env,

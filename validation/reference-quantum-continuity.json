@@ -1,0 +1,293 @@
+{
+  "verified_at": "2026-10-30T17:33:58.417179+00:00",
+  "base": "d2ea56fb943dea7fbc7c81ab8fba730e2e7e1f89",
+  "host": "kvant",
+  "issue": "https://git.subcult.tv/subculture-collective/fl-live/issues/23",
+  "live_continuity_qualified": false,
+  "ordinary_gates": {
+    "desktop": {
+      "passed": 10,
+      "total": 10
+    },
+    "pipewire-sanitize": {
+      "passed": 9,
+      "total": 9
+    }
+  },
+  "fixed_controls": [
+    {
+      "passed": true,
+      "scope": "frame-coded private software capture; no hardware",
+      "producer": "fl-live",
+      "capture_drained_during_changes": true,
+      "quantum_observer": "producer backend",
+      "linked_output": "fl-live-output:output_MONO",
+      "linked_input": "fixture-capture:input_MONO",
+      "quantum_changes": false,
+      "transitions": [
+        {
+          "ready": true,
+          "quantum": 257,
+          "frames": 257,
+          "callbacks": 1
+        }
+      ],
+      "captured_frames": 72000,
+      "silent_prefix": 514,
+      "first_source_frame": 514,
+      "playback": {
+        "passed": true,
+        "frames": 72988,
+        "callbacks": 284,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "running": false
+      },
+      "capture_sha256": "96c4b651c3810b8afbc00cb21e4890887e38a873c5edc580f7ff97041b505b0c",
+      "mismatched_frames": 0,
+      "first_mismatches": [],
+      "unexpected_zero_frames": 0
+    },
+    {
+      "passed": true,
+      "scope": "frame-coded private software capture; no hardware",
+      "producer": "pw-cat",
+      "capture_drained_during_changes": true,
+      "quantum_observer": "unlinked fl-live probe",
+      "linked_output": "fixture-reference:output_MONO",
+      "linked_input": "fixture-capture:input_MONO",
+      "quantum_changes": false,
+      "transitions": [
+        {
+          "ready": true,
+          "quantum": 257,
+          "frames": 257,
+          "callbacks": 1
+        }
+      ],
+      "captured_frames": 72000,
+      "silent_prefix": 514,
+      "first_source_frame": 257,
+      "playback": {
+        "passed": true,
+        "frames": 72988,
+        "callbacks": 284,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "running": false
+      },
+      "capture_sha256": "c997d777de17b88e7375f8bad3bac7a1f2807c11baab4a526305588c58b9fb4a",
+      "mismatched_frames": 0,
+      "first_mismatches": [],
+      "unexpected_zero_frames": 0
+    }
+  ],
+  "live_diagnostics": [
+    {
+      "test": "pipewire-live-quantums",
+      "exit_code": 8,
+      "observations": [
+        {
+          "passed": false,
+          "scope": "frame-coded private software capture; no hardware",
+          "producer": "fl-live",
+          "capture_drained_during_changes": true,
+          "quantum_observer": "producer backend",
+          "linked_output": "fl-live-output:output_MONO",
+          "linked_input": "fixture-capture:input_MONO",
+          "quantum_changes": true,
+          "transitions": [
+            {
+              "ready": true,
+              "quantum": 257,
+              "frames": 257,
+              "callbacks": 1
+            },
+            {
+              "ready": true,
+              "quantum": 1024,
+              "frames": 5393,
+              "callbacks": 18
+            },
+            {
+              "ready": true,
+              "quantum": 128,
+              "frames": 5521,
+              "callbacks": 19
+            }
+          ],
+          "captured_frames": 72000,
+          "silent_prefix": 514,
+          "first_source_frame": 514,
+          "playback": {
+            "passed": true,
+            "frames": 73105,
+            "callbacks": 547,
+            "min_render_frames": 128,
+            "max_render_frames": 1024,
+            "running": false
+          },
+          "capture_sha256": "da99b29c8e3bdb4869629d26c16283b070321a7e38f3904360504fb9dfb4f43d",
+          "mismatched_frames": 67888,
+          "first_mismatches": [
+            [
+              4112,
+              0.0,
+              -0.21856689453125
+            ],
+            [
+              4113,
+              0.0,
+              -0.21855926513671875
+            ],
+            [
+              4114,
+              0.0,
+              -0.2185516357421875
+            ],
+            [
+              4115,
+              0.0,
+              -0.21854400634765625
+            ],
+            [
+              4116,
+              0.0,
+              -0.218536376953125
+            ],
+            [
+              4117,
+              0.0,
+              -0.21852874755859375
+            ],
+            [
+              4118,
+              0.0,
+              -0.2185211181640625
+            ],
+            [
+              4119,
+              0.0,
+              -0.21851348876953125
+            ]
+          ],
+          "unexpected_zero_frames": 1153
+        }
+      ],
+      "stderr": "Errors while running CTest\n"
+    },
+    {
+      "test": "pipewire-reference-live-quantums",
+      "exit_code": 8,
+      "observations": [
+        {
+          "passed": false,
+          "scope": "frame-coded private software capture; no hardware",
+          "producer": "pw-cat",
+          "capture_drained_during_changes": true,
+          "quantum_observer": "unlinked fl-live probe",
+          "linked_output": "fixture-reference:output_MONO",
+          "linked_input": "fixture-capture:input_MONO",
+          "quantum_changes": true,
+          "transitions": [
+            {
+              "ready": true,
+              "quantum": 257,
+              "frames": 257,
+              "callbacks": 1
+            },
+            {
+              "ready": true,
+              "quantum": 1024,
+              "frames": 5907,
+              "callbacks": 20
+            },
+            {
+              "ready": true,
+              "quantum": 128,
+              "frames": 6035,
+              "callbacks": 21
+            }
+          ],
+          "captured_frames": 72000,
+          "silent_prefix": 257,
+          "first_source_frame": 514,
+          "playback": {
+            "passed": true,
+            "frames": 74131,
+            "callbacks": 553,
+            "min_render_frames": 128,
+            "max_render_frames": 1024,
+            "running": false
+          },
+          "capture_sha256": "89944ab14f3cda23eeda3b82bd50c31aba0f3baef9c3589726530b74bb0287fb",
+          "mismatched_frames": 67888,
+          "first_mismatches": [
+            [
+              4112,
+              0.0,
+              -0.21660614013671875
+            ],
+            [
+              4113,
+              0.0,
+              -0.2165985107421875
+            ],
+            [
+              4114,
+              0.0,
+              -0.21659088134765625
+            ],
+            [
+              4115,
+              0.0,
+              -0.216583251953125
+            ],
+            [
+              4116,
+              0.0,
+              -0.21657562255859375
+            ],
+            [
+              4117,
+              0.0,
+              -0.2165679931640625
+            ],
+            [
+              4118,
+              0.0,
+              -0.21656036376953125
+            ],
+            [
+              4119,
+              0.0,
+              -0.216552734375
+            ]
+          ],
+          "unexpected_zero_frames": 1153
+        }
+      ],
+      "stderr": "Errors while running CTest\n"
+    }
+  ],
+  "interpretation": [
+    "Both fixed-257 controls pass exact captured sample comparison",
+    "Both live-change cases fail exact continuity with no fl-live output linked into the reference capture path",
+    "Keeping capture stdout draining during metadata commands does not eliminate the symptom",
+    "Reference callback-size acknowledgements come from an unlinked observer on the same private driver, not the reference client",
+    "The reference source clock is not inferred from observer frame counts",
+    "Shared graph, adapter and capture behavior remain to be isolated; this does not identify a PipeWire bug or exclude independent fl-live faults"
+  ],
+  "limits": [
+    "Private software graph only; no device, desktop service or global setting was changed",
+    "No product repair, live continuity, physical playback/latency, native UI or graph xrun qualification claimed",
+    "Mismatch counts include persistent offsets and are not counts of lost/silent frames",
+    "Existing live diagnostic remains opt-in and fails; no sample criterion or ordinary gate was weakened",
+    "Hosted CI pending"
+  ],
+  "sha256": {
+    "CMakeLists.txt": "8d1262b1b8d45cbce614b95cf34297b8ae0d5a7713065cd480f9f8287ca2b981",
+    "tests/pipewire_integration.py": "848f4e8c8849bfe6be4d7a624b4822f27893177e175f1788d6d06da52ecfd4bc",
+    "docs/pipewire-backend.md": "1e8d1e0cdf79f4afa54c2c70603cd03c0d58c8bd7fbb14a9d21dd99b1627730f"
+  }
+}

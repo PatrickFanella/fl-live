@@ -61,11 +61,20 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_integration.py $<TARGET_FILE:fl-live-play>
             --quantum 257 --live-probe $<TARGET_FILE:live-quantum-probe> --no-quantum-changes)
         set_tests_properties(pipewire-frame-coded-control PROPERTIES TIMEOUT 30)
+        add_test(NAME pipewire-reference-control COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_integration.py $<TARGET_FILE:fl-live-play>
+            --quantum 257 --live-probe $<TARGET_FILE:live-quantum-probe>
+            --reference-producer --no-quantum-changes)
+        set_tests_properties(pipewire-reference-control PROPERTIES TIMEOUT 30)
         if(FL_LIVE_LIVE_QUANTUM_DIAGNOSTIC)
             add_test(NAME pipewire-live-quantums COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_integration.py $<TARGET_FILE:fl-live-play>
                 --quantum 257 --live-probe $<TARGET_FILE:live-quantum-probe>)
             set_tests_properties(pipewire-live-quantums PROPERTIES TIMEOUT 30)
+            add_test(NAME pipewire-reference-live-quantums COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_integration.py $<TARGET_FILE:fl-live-play>
+                --quantum 257 --live-probe $<TARGET_FILE:live-quantum-probe> --reference-producer)
+            set_tests_properties(pipewire-reference-live-quantums PROPERTIES TIMEOUT 30)
         endif()
         foreach(quantum IN ITEMS 257 1024 16384)
             add_test(NAME pipewire-quantum-${quantum} COMMAND ${Python3_EXECUTABLE}
