@@ -1,6 +1,7 @@
 #pragma once
 #include "fl_live/pipewire_backend.hpp"
 #include "project.hpp"
+#include "authored_project.hpp"
 #include <QVariantList>
 #include <QObject>
 #include <QTimer>
@@ -14,6 +15,11 @@ class Session final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList activeClips READ activeClips NOTIFY changed)
     Q_PROPERTY(QVariantList clipStates READ clipStates NOTIFY changed)
+    Q_PROPERTY(QVariantList trackNames READ trackNames NOTIFY changed)
+    Q_PROPERTY(QVariantList clipNames READ clipNames NOTIFY changed)
+    Q_PROPERTY(QVariantList trackIds READ trackIds NOTIFY changed)
+    Q_PROPERTY(QVariantList clipIds READ clipIds NOTIFY changed)
+    Q_PROPERTY(QVariantList activeClipIds READ activeClipIds NOTIFY changed)
     Q_PROPERTY(int stepCount READ stepCount NOTIFY changed)
     Q_PROPERTY(int selectedStep READ selectedStep NOTIFY changed)
     Q_PROPERTY(QVariantList stepEnabled READ stepEnabled NOTIFY changed)
@@ -40,6 +46,15 @@ public:
     ~Session() override;
     QVariantList activeClips() const;
     QVariantList clipStates() const;
+    QVariantList trackNames() const;
+    QVariantList clipNames() const;
+    QVariantList trackIds() const;
+    QVariantList clipIds() const;
+    QVariantList activeClipIds() const;
+    Q_INVOKABLE bool renameTrack(const QString& id, const QString& name);
+    Q_INVOKABLE bool renameClip(const QString& id, const QString& name);
+    Q_INVOKABLE bool launchClip(const QString& id);
+    Q_INVOKABLE bool stopTrackId(const QString& id);
     int stepCount() const { return settings_.step_count; }
     int selectedStep() const { return selected_step_; }
     QVariantList stepEnabled() const;
@@ -53,7 +68,7 @@ public:
     int tempo() const { return settings_.tempo; }
     QVariantList levels() const;
     QVariantList pitches() const;
-    bool dirty() const { return settings_ != saved_settings_; }
+    bool dirty() const { return settings_ != saved_settings_ || *identities_ != *saved_identities_; }
     bool canUndo() const { return canEdit() && history_cursor_ > 0; }
     bool canRedo() const { return canEdit() && history_cursor_ + 1 < history_size_; }
     QString undoText() const;
@@ -87,31 +102,38 @@ signals:
     void projectPathChanged();
 private:
     struct Prepared {
-        const fl_live::SessionPlan plan;
+        const fl_live::DocumentRenderPlan mapped;
         fl_live::RenderController controller;
         std::unique_ptr<fl_live::PipeWireBackend> backend;
-        explicit Prepared(const ProjectSettings& settings)
-            : plan(prepareProject(settings)), controller(plan) {}
+        Prepared(const ProjectSettings& settings, const fl_live::DocumentSnapshot& identities)
+            : mapped(identities, templateSources(settings, identities), 48000,
+                static_cast<std::uint32_t>(settings.tempo)*1000U, {}, templateGains(settings, identities)), controller(mapped.plan()) {}
     };
     ProjectSettings settings_;
+    using Identities = std::shared_ptr<const fl_live::DocumentSnapshot>;
+    Identities identities_ = std::make_shared<const fl_live::DocumentSnapshot>(defaultTemplateIdentities());
     const fl_live::PipeWireConfig config_;
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
-    enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length };
+    enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name };
     struct HistoryEntry {
         ProjectSettings settings;
+        Identities identities;
         EditKind kind = EditKind::none;
         int index = -1;
     };
     static constexpr std::size_t history_capacity = 128;
-    static_assert(std::is_trivially_copyable_v<HistoryEntry>);
+    static_assert(std::is_nothrow_copy_assignable_v<HistoryEntry>);
     std::array<HistoryEntry, history_capacity + 1> history_{};
     std::size_t history_cursor_ = 0, history_size_ = 1;
     ProjectSettings saved_settings_;
+    Identities saved_identities_;
     static QString editName(const HistoryEntry& entry);
     void edit(const ProjectSettings& next, EditKind kind, int index = -1);
+    void pushHistory(EditKind kind, int index);
+    bool rename(const QString& id, const QString& name, bool track);
     int selected_step_ = 0;
-    bool replace(const ProjectSettings& settings);
+    bool replace(const ProjectSettings& settings, Identities identities = {});
     bool editable();
     QTimer timer_;
     fl_live::RenderStatus status_{};

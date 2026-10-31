@@ -1,0 +1,306 @@
+{
+  "verified_at": "2026-10-31T00:28:12.402446+00:00",
+  "base": "36e13cfc26a88cf9a16bd8b020579706b0cff48a",
+  "host": "kvant",
+  "issues": [
+    26,
+    27,
+    56,
+    64
+  ],
+  "scope": "Authored two-track desktop identity adoption, undoable naming and v3 persistence",
+  "gates": {
+    "desktop": {
+      "passed": 14,
+      "total": 14,
+      "command": "cmake --build --preset desktop -j 4; ctest --preset desktop --output-junit desktop-identities-tests.xml"
+    },
+    "release": {
+      "passed": 5,
+      "total": 5,
+      "command": "cmake --build --preset release -j 4; ctest --preset release --output-junit desktop-identities-tests.xml"
+    },
+    "engine-only": {
+      "passed": 4,
+      "total": 4,
+      "command": "cmake --build --preset engine-only -j 4; ctest --preset engine-only --output-junit desktop-identities-tests.xml"
+    },
+    "pipewire-sanitize": {
+      "passed": 11,
+      "total": 11,
+      "command": "cmake --build --preset pipewire-sanitize -j 4; ctest --preset pipewire-sanitize --output-junit desktop-identities-tests.xml"
+    },
+    "document-io-sanitize": {
+      "passed": 6,
+      "total": 6,
+      "command": "cmake --build --preset document-io-sanitize -j 4; ctest --preset document-io-sanitize --output-junit desktop-identities-tests.xml"
+    }
+  },
+  "other_checks": [
+    "ShellCheck ci/verify.sh passed",
+    "git diff --check passed"
+  ],
+  "verified_behaviors": [
+    "Desktop playback uses immutable DocumentRenderPlan with complete ID-keyed gains; QML launch/stop resolves decimal string IDs",
+    "Core v1/v2 migration and v3 disk round trip preserve source settings, names and full-width identities",
+    "Prepared template audio exactly equals the old source plan across different blocks, preserving level/velocity arithmetic",
+    "Actual offscreen mouse/key input renames tracks/clips, preserves step selection, restores focus and supports document Undo/Redo",
+    "Modal text Undo stays inside the field; reopening an unchanged name resets its local undo boundary",
+    "Invalid/cancel/no-op renames preserve committed state/history; pending/running renames are refused",
+    "Actual offscreen v3 Save/Open and launch/stop work with identities above 2^53",
+    "Private PipeWire QML workflow renames before independently captured A4 playback and acknowledged stopped silence",
+    "Private server loss/reconnect retains names, IDs, v3 saved content and history without automatic playback"
+  ],
+  "private_graph_observations": [
+    {
+      "passed": true,
+      "scope": "frame-coded private software capture; no hardware",
+      "producer": "fl-live",
+      "capture_drained_during_changes": true,
+      "quantum_observer": "producer backend",
+      "linked_output": "fl-live-output:output_MONO",
+      "linked_input": "fixture-capture:input_MONO",
+      "quantum_changes": false,
+      "transitions": [
+        {
+          "ready": true,
+          "quantum": 257,
+          "frames": 257,
+          "callbacks": 1
+        }
+      ],
+      "captured_frames": 72000,
+      "silent_prefix": 514,
+      "first_source_frame": 257,
+      "playback": {
+        "passed": true,
+        "frames": 72731,
+        "callbacks": 283,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "running": false
+      },
+      "capture_sha256": "c997d777de17b88e7375f8bad3bac7a1f2807c11baab4a526305588c58b9fb4a",
+      "mismatched_frames": 0,
+      "first_mismatches": [],
+      "unexpected_zero_frames": 0
+    },
+    {
+      "passed": true,
+      "scope": "frame-coded private software capture; no hardware",
+      "producer": "pw-cat",
+      "capture_drained_during_changes": true,
+      "quantum_observer": "unlinked fl-live probe",
+      "linked_output": "fixture-reference:output_MONO",
+      "linked_input": "fixture-capture:input_MONO",
+      "quantum_changes": false,
+      "transitions": [
+        {
+          "ready": true,
+          "quantum": 257,
+          "frames": 257,
+          "callbacks": 1
+        }
+      ],
+      "captured_frames": 72000,
+      "silent_prefix": 514,
+      "first_source_frame": 514,
+      "playback": {
+        "passed": true,
+        "frames": 73245,
+        "callbacks": 285,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "running": false
+      },
+      "capture_sha256": "96c4b651c3810b8afbc00cb21e4890887e38a873c5edc580f7ff97041b505b0c",
+      "mismatched_frames": 0,
+      "first_mismatches": [],
+      "unexpected_zero_frames": 0
+    },
+    {
+      "passed": true,
+      "scope": "private software graph; no hardware/audio-device qualification",
+      "requested_quantum": 257,
+      "captured_frames": 24000,
+      "capture_returncode": 1,
+      "silent_prefix": 514,
+      "playback": {
+        "callbacks": 560,
+        "frames": 143920,
+        "bad_buffers": 0,
+        "max_process_ns": 35139,
+        "processing_over_budget": 0,
+        "error": 0,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "position": 143663,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "server_loss": {
+        "callbacks": 7,
+        "frames": 1799,
+        "bad_buffers": 0,
+        "max_process_ns": 16690,
+        "processing_over_budget": 0,
+        "error": -32,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "position": 1799,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "project_rebuilds": null,
+      "desktop_workflow": null,
+      "desktop_recovery": null
+    },
+    {
+      "passed": true,
+      "scope": "private software graph; no hardware/audio-device qualification",
+      "requested_quantum": 1024,
+      "captured_frames": 24000,
+      "capture_returncode": 1,
+      "silent_prefix": 2048,
+      "playback": {
+        "callbacks": 142,
+        "frames": 145408,
+        "bad_buffers": 0,
+        "max_process_ns": 58620,
+        "processing_over_budget": 0,
+        "error": 0,
+        "min_render_frames": 1024,
+        "max_render_frames": 1024,
+        "position": 144384,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "server_loss": {
+        "callbacks": 2,
+        "frames": 2048,
+        "bad_buffers": 0,
+        "max_process_ns": 45140,
+        "processing_over_budget": 0,
+        "error": -32,
+        "min_render_frames": 1024,
+        "max_render_frames": 1024,
+        "position": 2048,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "project_rebuilds": null,
+      "desktop_workflow": null,
+      "desktop_recovery": null
+    },
+    {
+      "passed": true,
+      "scope": "private oversized quantum rejection; no hardware",
+      "requested_quantum": 16384,
+      "playback": {
+        "callbacks": 2,
+        "frames": 8192,
+        "bad_buffers": 2,
+        "max_process_ns": 7570,
+        "processing_over_budget": 0,
+        "error": -90,
+        "min_render_frames": 0,
+        "max_render_frames": 0,
+        "position": 0,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      }
+    },
+    {
+      "passed": true,
+      "scope": "private software graph; no hardware/audio-device qualification",
+      "requested_quantum": 128,
+      "captured_frames": 24000,
+      "capture_returncode": 1,
+      "silent_prefix": 256,
+      "playback": {
+        "callbacks": 1124,
+        "frames": 143872,
+        "bad_buffers": 0,
+        "max_process_ns": 643118,
+        "processing_over_budget": 0,
+        "error": 0,
+        "min_render_frames": 128,
+        "max_render_frames": 128,
+        "position": 143744,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "server_loss": {
+        "callbacks": 31,
+        "frames": 3968,
+        "bad_buffers": 0,
+        "max_process_ns": 29900,
+        "processing_over_budget": 0,
+        "error": -32,
+        "min_render_frames": 128,
+        "max_render_frames": 128,
+        "position": 3968,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "project_rebuilds": "PASS: five stopped project rebuilds including Undo/Redo on the private PipeWire server",
+      "desktop_workflow": {
+        "frames": 144000,
+        "peak": 0.020000001415610313,
+        "pitch": {
+          "positive_crossings": 220,
+          "stable_periods": 219,
+          "discontinuous_periods": 0,
+          "median_period_frames": 109
+        },
+        "stopped_silence_frames": 12000
+      },
+      "desktop_recovery": "PASS: server loss, failed retry, save, explicit stopped reconnect and retained history"
+    }
+  ],
+  "artifacts": {
+    "build/desktop/desktop-identity-renaming.png": "6492ed4267db84db212a8b49f1662995bc3652153dd13c04eb71a932b58d2f9f"
+  },
+  "limits": [
+    "Authored shape remains one audio and one MIDI track, one clip each and one scene containing both",
+    "No add/duplicate/delete controls, arbitrary source/media editing or general Session schema",
+    "Native Wayland input, physical output, live edits, acknowledged plan retirement and release qualification remain open",
+    "Qt Core codecs/preparation are sanitized; Qt Quick Session/history/input tests remain unsanitized offscreen checks",
+    "File saves use atomic QSaveFile without direct fallback; crash/disk-full/power-loss qualification remains open",
+    "Hosted CI pending"
+  ],
+  "sha256": {
+    "CMakeLists.txt": "2809a01621cd36602905f2a4d056bbe9b324c7b1af5fd9f6a0cdcde05d4757b7",
+    "README.md": "b99ce61e212669791225d5bf67decef9dfbae81553fdba73fa95b74d45071858",
+    "apps/desktop/Main.qml": "d8cff4f8724611e1da65cccef6371b80bbcb5c0bb67418de39b4efe4c661eeee",
+    "apps/desktop/project.cpp": "234e279a324f1e2c74373e821d3d1b89be069c2ddf7bba2d36c72b6845b67559",
+    "apps/desktop/project.hpp": "732e4b8575072f51a58776caba4da232b7618d01e2bc303d2c0ce57dbe6ffc91",
+    "apps/desktop/authored_project.cpp": "a319addb9e8118044c20c1e7af535649b92a167bacc30d1a201000fe276876f5",
+    "apps/desktop/authored_project.hpp": "b042866a1c950d75bc8af248139486f551cbade4ee0b7461b2f2df2ea5e40c4c",
+    "apps/desktop/session.cpp": "ef6ec761fa914d3f020dc308c1295e408a26d01378f591c44feaec70534c08a7",
+    "apps/desktop/session.hpp": "d6ee92b441d2772a9a72ab35b804f174362d5f4003351ece0405dd53bdca2166",
+    "ci/verify.sh": "d685689b905d5f1122866536152d5ccb29f7d3f749557e0f180082933e7cda7a",
+    "include/fl_live/document_render.hpp": "83cf556b7594044262f823bdef103f8c1556f239a0a7d23434288b12ace1ccee",
+    "src/document_render.cpp": "46d698bb5d3b5eec12d9b700713393c07eeb5f95d057c6fcf7d5729e2a864bc0",
+    "tests/authored_project_tests.cpp": "5fd46d78e9fdc3f90f6aaf8317f67e143eebbc06954b39438682a991e7e1edcf",
+    "tests/document_render_tests.cpp": "ede58ad825909ef94b215d4f07dc38789f2942a7576d7cbebfe42882f8a29c03",
+    "tests/desktop_tests.cpp": "41e9b155d67c22ed9eb0791b02a51a44c15d5dd12d36a03c986f6ec7068b2c56",
+    "tests/desktop_backend_probe.cpp": "ff3e0ad0f2154962fd679479fc0eb47d072779695cead652484ccd77e9bbd0f9",
+    "docs/desktop-identities.md": "7303ad024a46a85dee73afe0aa3854d733ad4e0e2d174738cb9581d90743491f",
+    "docs/projects.md": "96c451a7f8efb1121205d268e87e186a579354a36ff08e785b65dc6f35944f9d",
+    "docs/edit-history.md": "4c16678e2318f53c593b6e44bc5db750d9270abd5665b73bc44942dec5f8c639",
+    "docs/document-render.md": "70db0b3ab4c28043659092179f1866990a71196e0425c84cc2998b7951c721ea",
+    "docs/desktop-session.md": "1902bd50afaca99d028db0d6b27c2db56019a73d0360c58450fbc511a0f88c3f",
+    "docs/ci.md": "f41dede55e1f5201316494baa3793b3d1c409b8cecef89c48316778219e4b8a8",
+    "docs/STATUS.md": "a9a634b6a9721d9e250aeeab9fd72f62f54486f1cf1412f36f2c06065034fae5",
+    "docs/session-document.md": "6179952bfc73c21e6b98cd8610011e655e95cc4f8a21270a24ccc9a00e4f45ce",
+    "docs/session-metadata.md": "15e500ebc17531d7055b570d28fcbd2dabc4c343d9cf8b1270b1333c0473d6d6"
+  }
+}

@@ -1,6 +1,6 @@
 # Session document identity model
 
-`fl_live_document` provides a Qt-free, backend-free metadata model for issue #26. One control or worker owner edits `SessionDocument`. It owns track, clip and scene names, track kinds, clip ownership and scene-slot references. Media samples, notes, mixer values and playback scheduling are later integration work. The desktop still uses its template project format; this model is not yet its live document.
+`fl_live_document` provides a Qt-free, backend-free metadata model for issue #26. One control or worker owner edits `SessionDocument`. It owns track, clip and scene names, track kinds, clip ownership and scene-slot references. Media samples, notes, mixer values and playback scheduling are later integration work. The desktop now uses this model for authored-template identities; general track/media management remains separate work.
 
 `TrackId`, `ClipId` and `SceneId` are distinct C++ types wrapping unsigned 64-bit values. Zero is invalid. One document-local cursor allocates values across all three entity kinds, and validation rejects duplicate values even across kinds. Names and vector positions do not determine identity. Different documents may have the same numeric IDs; cross-document import needs an explicit remapping policy.
 

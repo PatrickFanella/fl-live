@@ -62,6 +62,10 @@ ProjectSettings readProject(const QString& path) {
     const auto bytes = file.read(limit + 1);
     if (file.error() != QFileDevice::NoError || bytes.size() > limit)
         throw std::runtime_error("Project read failed or exceeded the size limit");
+    return decodeProjectSettings(bytes);
+}
+ProjectSettings decodeProjectSettings(const QByteArray& bytes) {
+    if (bytes.size() > 65536) throw std::invalid_argument("Project exceeds the 64 KiB settings limit");
     QJsonParseError error;
     const auto document = QJsonDocument::fromJson(bytes, &error);
     if (error.error != QJsonParseError::NoError || !document.isObject())
@@ -100,16 +104,19 @@ ProjectSettings readProject(const QString& path) {
     validate(s);
     return s;
 }
-void writeProject(const QString& path, const ProjectSettings& s) {
+QByteArray encodeProjectSettings(const ProjectSettings& s) {
     validate(s);
     QJsonArray levels, steps;
     for (int n : s.levels) levels.append(n);
     for (const auto& step : s.steps)
         steps.append(QJsonObject{{"enabled", step.enabled}, {"pitch", step.pitch},
             {"velocity", step.velocity}, {"gate", step.gate}});
-    const auto bytes = QJsonDocument(QJsonObject{{"format", "fl-live-project"}, {"version", 2},
+    return QJsonDocument(QJsonObject{{"format", "fl-live-project"}, {"version", 2},
         {"template", "pulse-step-sequencer-v1"}, {"tempo", s.tempo}, {"levels", levels},
         {"pattern", QJsonObject{{"length", s.step_count}, {"steps", steps}}}}).toJson();
+}
+void writeProject(const QString& path, const ProjectSettings& s) {
+    const auto bytes = encodeProjectSettings(s);
     QSaveFile file(path);
     file.setDirectWriteFallback(false);
     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit())

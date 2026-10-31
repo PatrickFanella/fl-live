@@ -5,10 +5,20 @@
 #include <QFileInfo>
 #include <stdexcept>
 
+namespace {
+std::uint64_t parseIdentity(const QString& text) {
+    bool valid=false;const auto id=text.toULongLong(&valid);
+    if(!valid || !id || QString::number(id)!=text)throw std::invalid_argument("Invalid document identity");
+    return id;
+}
+QString identityText(std::uint64_t id){return QString::number(static_cast<qulonglong>(id));}
+}
+
 Session::Session(fl_live::PipeWireConfig config, QObject* parent)
-    : QObject(parent), config_(std::move(config)), prepared_(std::make_unique<Prepared>(settings_)),
+    : QObject(parent), config_(std::move(config)), prepared_(std::make_unique<Prepared>(settings_, *identities_)),
       project_path_(QDir::home().filePath("fl-live-project.json")), preview_(config_.remote.empty()) {
-    history_[0].settings = settings_;
+    history_[0] = {settings_, identities_, EditKind::none, -1};
+    saved_identities_ = identities_;
     saved_settings_ = settings_;
     if (!preview_) {
         try { prepared_->backend = std::make_unique<fl_live::PipeWireBackend>(prepared_->controller, config_); }
@@ -37,7 +47,7 @@ bool Session::reconnectAudio() {
     try {
         // Fresh stopped runtime prevents old launches or notes resuming. Musical
         // settings, saved-content tracking, selection and history stay intact.
-        auto candidate = std::make_unique<Prepared>(settings_);
+        auto candidate = std::make_unique<Prepared>(settings_, *identities_);
         candidate->backend = std::make_unique<fl_live::PipeWireBackend>(candidate->controller, config_);
         prepared_.swap(candidate);
         failed_ = false;
@@ -54,6 +64,64 @@ bool Session::reconnectAudio() {
 }
 QVariantList Session::activeClips() const {
     return {status_.tracks[0].active_clip, status_.tracks[1].active_clip};
+}
+QVariantList Session::trackNames() const {
+    QVariantList result;for(const auto& track:identities_->tracks)result.append(QString::fromUtf8(track.name));return result;
+}
+QVariantList Session::trackIds() const {
+    QVariantList result;for(const auto& track:identities_->tracks)result.append(identityText(track.id.value));return result;
+}
+QVariantList Session::clipIds() const {
+    QVariantList result;for(std::size_t i=0;i<2;++i)result.append(identityText(prepared_->mapped.clipId(i,0)->value));return result;
+}
+QVariantList Session::clipNames() const {
+    QVariantList result;
+    for(std::size_t i=0;i<2;++i) {
+        const auto id=*prepared_->mapped.clipId(i,0);
+        const auto found=std::find_if(identities_->clips.begin(),identities_->clips.end(),[id](const auto& clip){return clip.id==id;});
+        result.append(QString::fromUtf8(found->name));
+    }
+    return result;
+}
+QVariantList Session::activeClipIds() const {
+    QVariantList result;for(std::size_t i=0;i<2;++i) {
+        const auto id=prepared_->mapped.clipId(i,status_.tracks[i].active_clip);
+        result.append(id ? identityText(id->value) : QString{});
+    }return result;
+}
+bool Session::renameTrack(const QString& id,const QString& name){return rename(id,name,true);}
+bool Session::renameClip(const QString& id,const QString& name){return rename(id,name,false);}
+bool Session::rename(const QString& id,const QString& name,bool track) {
+    if(!editable())return false;
+    try {
+        const auto value=parseIdentity(id);const auto bytes=name.toUtf8();
+        if(QString::fromUtf8(bytes)!=name)throw std::invalid_argument("Name requires valid Unicode");
+        fl_live::SessionDocument candidate(*identities_);
+        if(track)candidate.renameTrack(fl_live::TrackId{value},bytes.toStdString());
+        else candidate.renameClip(fl_live::ClipId{value},bytes.toStdString());
+        if(candidate.snapshot()==*identities_)return true;
+        auto identities=std::make_shared<const fl_live::DocumentSnapshot>(candidate.snapshot());
+        if(!replace(settings_,identities))return false;
+        const auto index=track ? *prepared_->mapped.trackIndex(fl_live::TrackId{value}) : prepared_->mapped.launch(fl_live::ClipId{value},0)->track;
+        pushHistory(track ? EditKind::track_name : EditKind::clip_name,static_cast<int>(index));
+        emit changed();return true;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+bool Session::launchClip(const QString& id) {
+    if(failed_)return false;
+    try {
+        const auto command=prepared_->mapped.launch(fl_live::ClipId{parseIdentity(id)},0);
+        if(!command)throw std::invalid_argument("Unknown clip");
+        const auto before=serial_;send(fl_live::ControlKind::launch_next_bar,command->track,command->clip);return serial_!=before;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+bool Session::stopTrackId(const QString& id) {
+    if(failed_)return false;
+    try {
+        const auto command=prepared_->mapped.stop(fl_live::TrackId{parseIdentity(id)},0);
+        if(!command)throw std::invalid_argument("Unknown track");
+        const auto before=serial_;send(fl_live::ControlKind::stop_next_bar,command->track);return serial_!=before;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }
 QVariantList Session::clipStates() const {
     QVariantList result;
@@ -127,6 +195,8 @@ QString Session::editName(const HistoryEntry& entry) {
     case EditKind::gate: return QString("step %1 gate").arg(entry.index + 1);
     case EditKind::enabled: return QString("step %1 note/rest").arg(entry.index + 1);
     case EditKind::length: return "pattern length";
+    case EditKind::track_name: return QString("track %1 name").arg(entry.index + 1);
+    case EditKind::clip_name: return QString("clip %1 name").arg(entry.index + 1);
     default: return {};
     }
 }
@@ -138,21 +208,23 @@ QString Session::redoText() const {
 }
 void Session::edit(const ProjectSettings& next, EditKind kind, int index) {
     if (next == settings_ || !replace(next)) return;
-    // Fixed-capacity plain snapshots: after preparation commits, history cannot
-    // fail through an allocation or leave the cursor ahead of the document.
+    pushHistory(kind, index);
+    selected_step_ = std::min(selected_step_, settings_.step_count - 1);
+    emit changed();
+}
+void Session::pushHistory(EditKind kind, int index) {
+    // Scalar settings and immutable shared metadata copy without allocation.
     if (history_cursor_ == history_capacity) {
         for (std::size_t n = 1; n <= history_capacity; ++n) history_[n - 1] = history_[n];
         --history_cursor_;
     }
-    history_[++history_cursor_] = {settings_, kind, index};
+    history_[++history_cursor_] = {settings_, identities_, kind, index};
     history_size_ = history_cursor_ + 1; // discard the old redo branch
-    selected_step_ = std::min(selected_step_, settings_.step_count - 1);
-    emit changed();
 }
 void Session::undo() {
     if (!history_cursor_) return;
     const auto name = editName(history_[history_cursor_]);
-    if (!replace(history_[history_cursor_ - 1].settings)) return;
+    if (!replace(history_[history_cursor_ - 1].settings, history_[history_cursor_ - 1].identities)) return;
     --history_cursor_;
     selected_step_ = std::min(selected_step_, settings_.step_count - 1);
     message_ = "Undid " + name + "; session returned to the start.";
@@ -161,7 +233,7 @@ void Session::undo() {
 void Session::redo() {
     if (history_cursor_ + 1 >= history_size_) return;
     const auto name = editName(history_[history_cursor_ + 1]);
-    if (!replace(history_[history_cursor_ + 1].settings)) return;
+    if (!replace(history_[history_cursor_ + 1].settings, history_[history_cursor_ + 1].identities)) return;
     ++history_cursor_;
     selected_step_ = std::min(selected_step_, settings_.step_count - 1);
     message_ = "Redid " + name + "; session returned to the start.";
@@ -176,11 +248,13 @@ bool Session::editable() {
     }
     return true;
 }
-bool Session::replace(const ProjectSettings& settings) {
+bool Session::replace(const ProjectSettings& settings, Identities identities) {
+    if (!identities) identities = identities_;
     if (!editable()) return false;
     try {
         // Allocate and validate a candidate before interrupting the existing backend.
-        auto candidate = std::make_unique<Prepared>(settings);
+        auto candidate = std::make_unique<Prepared>(settings, *identities);
+        auto preparedMessage = QStringLiteral("Session prepared at the start. Launch clips, then press Play.");
         prepared_->backend.reset();
         try {
             if (!preview_) candidate->backend = std::make_unique<fl_live::PipeWireBackend>(candidate->controller, config_);
@@ -190,10 +264,11 @@ bool Session::replace(const ProjectSettings& settings) {
         }
         prepared_.swap(candidate); // old plan is destroyed only on the GUI thread
         settings_ = settings;
+        identities_ = std::move(identities);
         serial_ = 0;
         track_serials_.fill(0);
         status_ = prepared_->controller.status();
-        message_ = "Session prepared at the start. Launch clips, then press Play.";
+        message_.swap(preparedMessage);
         return true;
     } catch (const std::exception& error) {
         message_ = QString::fromUtf8(error.what());
@@ -222,9 +297,10 @@ bool Session::saveProject(const QString& path) {
         const auto target = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
         if (QFileInfo::exists(target) && target != owned_path_)
             throw std::invalid_argument("File already exists. Open that project first or choose a new path.");
-        writeProject(target, settings_);
+        writeAuthoredProject(target, {settings_, *identities_});
         project_path_ = owned_path_ = target;
         saved_settings_ = settings_;
+        saved_identities_ = identities_;
         message_ = "Project saved";
         emit projectPathChanged();
         emit changed();
@@ -237,12 +313,14 @@ bool Session::loadProject(const QString& path) {
     try {
         if (!QFileInfo(path).isFile()) throw std::invalid_argument("Choose a regular project file");
         const auto target = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
-        const auto next = readProject(target);
-        if (!replace(next)) return false;
+        const auto next = readAuthoredProject(target);
+        auto identities = std::make_shared<const fl_live::DocumentSnapshot>(next.identities);
+        if (!replace(next.settings, identities)) return false;
         project_path_ = owned_path_ = target;
         saved_settings_ = settings_;
+        saved_identities_ = identities_;
         selected_step_ = 0;
-        history_[0] = {settings_, EditKind::none, -1};
+        history_[0] = {settings_, identities_, EditKind::none, -1};
         history_cursor_ = 0;
         history_size_ = 1;
         message_ = "Project opened. Launch clips, then press Play.";
@@ -279,11 +357,11 @@ void Session::rewind() {
 }
 void Session::launch(int track, int clip) {
     if (track < 0 || track >= 2 || clip != 0) { message_ = "Unknown clip"; emit changed(); return; }
-    send(fl_live::ControlKind::launch_next_bar, static_cast<std::size_t>(track), 0);
+    launchClip(clipIds()[track].toString());
 }
 void Session::stopTrack(int track) {
     if (track < 0 || track >= 2) return;
-    send(fl_live::ControlKind::stop_next_bar, static_cast<std::size_t>(track));
+    stopTrackId(trackIds()[track].toString());
 }
 void Session::panic() {
     if (failed_) return;

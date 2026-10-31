@@ -10,6 +10,8 @@
 #include <QTemporaryDir>
 #include <iostream>
 
+static ProjectSettings readAuthoredSettings(const QString& path) { return readAuthoredProject(path).settings; }
+
 // Invoked only by the owned private-server fixture. Exercises stopped graph
 // replacement; optional workflow mode drives QML signals and captures software
 // output in the parent fixture. This is not native input or hardware QA.
@@ -21,6 +23,9 @@ int main(int argc, char** argv) {
         config.remote = argv[1]; config.node_group = "pipewire.test";
         Session session(config);
         if (argc == 3 && std::string_view(argv[2]) == "--recovery") {
+            const auto trackId=session.trackIds()[0],clipId=session.clipIds()[0];
+            if(!session.renameTrack(trackId.toString(),"Retained audio") ||
+               !session.renameClip(clipId.toString(),"Retained pulse"))return 1;
             session.setTempo(137);
             session.setPitch(0, 48);
             session.play();
@@ -35,8 +40,9 @@ int main(int argc, char** argv) {
             if (session.running() || session.pending() || session.position() != position) return 1;
             QTemporaryDir directory;
             const auto path = directory.filePath("recovered.json");
-            if (!session.saveProject(path) || readProject(path).tempo != 137 ||
-                readProject(path).steps[0].pitch != 48 || session.dirty()) return 1;
+            if (!session.saveProject(path) || readAuthoredSettings(path).tempo != 137 ||
+                readAuthoredSettings(path).steps[0].pitch != 48 || session.dirty()) return 1;
+            if(readAuthoredProject(path).identities.tracks[0].name!="Retained audio")return 1;
             if (session.reconnectAudio() || session.audioAvailable()) return 1;
             std::cout << "{\"ready\":true}" << std::endl;
             if (std::cin.get() != 'g' || !session.reconnectAudio()) return 1;
@@ -45,6 +51,8 @@ int main(int argc, char** argv) {
                 session.activeClips()[1].toInt() != -1 || !session.canUndo()) return 1;
             QTest::qWait(100);
             if (session.running() || session.pending()) return 1;
+            if(session.trackIds()[0]!=trackId || session.clipIds()[0]!=clipId ||
+               session.trackNames()[0].toString()!="Retained audio" || session.clipNames()[0].toString()!="Retained pulse")return 1;
             session.undo();
             if (session.pitches()[0].toInt() != 60 || !session.canRedo() || !session.dirty()) return 1;
             session.redo();
@@ -78,6 +86,14 @@ int main(int argc, char** argv) {
             invoke("selectedVelocity", "valueModified", 50);
             invoke("selectedGate", "valueModified", 100);
             invoke("level1", "valueModified", 40);
+            const auto trackId=session.trackIds()[0],clipId=session.clipIds()[1];
+            invoke("renameTrack0","clicked");QTest::qWait(10);
+            auto* rename=window->findChild<QObject*>("renameValue");if(!rename)return 1;
+            rename->setProperty("text","Audio renamed");invoke("applyRename","clicked");QTest::qWait(10);
+            invoke("renameClip1","clicked");QTest::qWait(10);
+            rename->setProperty("text","A4 renamed");invoke("applyRename","clicked");QTest::qWait(10);
+            if(session.trackIds()[0]!=trackId || session.clipIds()[1]!=clipId ||
+               session.trackNames()[0].toString()!="Audio renamed" || session.clipNames()[1].toString()!="A4 renamed")return 1;
             if (session.tempo()!=300 || session.stepCount()!=1 || session.pitches()[0].toInt()!=69 ||
                 session.velocities()[0].toInt()!=50 || session.gates()[0].toInt()!=100 ||
                 session.levels()[1].toInt()!=40) return 1;

@@ -36,7 +36,7 @@ Snapshots are published after a block. A command at the next unrendered frame st
 
 Tests check sample boundaries, audio/MIDI one-shot completion, clip replacement, same-frame launch/stop ordering, rejection and panic cleanup. A concurrent reader checks coherent activity/transport over 10,000 launch/stop cycles. Qt checks cover requested/queued/active states, quantized track stop and button highlights using real QML controls. `build/desktop/desktop-active-clip.png` records the rendered active state and is retained with CI artifacts.
 
-The MIDI editor now offers 1–16 quarter-note steps with enabled/rest, pitch, velocity and gate controls. Its panel scrolls on smaller windows. Selecting a step is independent of playback and does not edit the document. The highlighted editor step is a selection, not a per-note playback cursor. Version 1 projects migrate on read; saves use version 2. See [project format](projects.md).
+The MIDI editor now offers 1–16 quarter-note steps with enabled/rest, pitch, velocity and gate controls. Its panel scrolls on smaller windows. Selecting a step is independent of playback and does not edit the document. The highlighted editor step is a selection, not a per-note playback cursor. Version 1 projects migrate on read; desktop saves use the version 3 authored wrapper with embedded v2 settings and stable identity metadata. See [project format](projects.md).
 
 Undo/Redo now use the same stopped prepared-session replacement path. Save preserves history; successful Open resets it. See [editing history](edit-history.md) for the 128-edit bound, saved-content tracking and keyboard/text-input behavior.
 
@@ -49,3 +49,5 @@ The capture must contain a 440 Hz tone with peak 0.02 in the 1.5–2.0 second wi
 This is an offscreen software integration check. It does not establish native pointer/keyboard behavior, Wayland rendering, physical audibility, hardware latency, or xrun performance. The existing offscreen input tests and backend lifecycle checks remain separate evidence.
 
 Play and Launch may be handled in the same render block at frame zero, which is a valid bar boundary. A silent prefix is therefore permitted but not required.
+
+The desktop now uses the stable-ID prepared plan and supports stopped Rename dialogs for tracks and clips. Names participate in Undo/Redo and saved-content tracking and survive v3 Save/Open. Legacy v1/v2 sources import with initial IDs. See [desktop identity integration](desktop-identities.md) for the authored shape, focus/input tests and remaining general-management work.
