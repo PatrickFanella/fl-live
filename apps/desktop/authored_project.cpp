@@ -27,9 +27,8 @@ fl_live::DocumentSnapshot defaultTemplateIdentities() {
 }
 void validateTemplateIdentities(const fl_live::DocumentSnapshot& identities) {
     fl_live::SessionDocument::validate(identities);
-    if(identities.tracks.size()!=2 || identities.clips.size()!=2 || identities.scenes.size()!=1 ||
-       identities.tracks[0].kind!=fl_live::TrackKind::audio || identities.tracks[1].kind!=fl_live::TrackKind::midi ||
-       identities.scenes[0].entries.size()>2)
+    if(identities.tracks.size()!=2 || identities.clips.size()!=2 || identities.scenes.empty() ||
+       identities.tracks[0].kind!=fl_live::TrackKind::audio || identities.tracks[1].kind!=fl_live::TrackKind::midi)
         throw std::invalid_argument("Unsupported authored template structure");
     for(const auto& track:identities.tracks)
         if(std::count_if(identities.clips.begin(),identities.clips.end(),[&](const auto& clip){return clip.track==track.id;})!=1)
@@ -53,7 +52,9 @@ QByteArray encodeAuthoredProject(const AuthoredProject& project) {
     const auto settings=QJsonDocument::fromJson(encodeProjectSettings(project.settings)).object();
     const auto identities=QJsonDocument::fromJson(fl_live::encodeDocumentMetadata(project.identities)).object();
     QJsonArray features{"template-identities-v1"};
-    if(project.identities.scenes[0].entries.size()!=2)features.append("template-scene-slots-v1");
+    if(std::any_of(project.identities.scenes.begin(),project.identities.scenes.end(),[](const auto& scene){return scene.entries.size()!=2;}))
+        features.append("template-scene-slots-v1");
+    if(project.identities.scenes.size()!=1)features.append("template-scenes-v1");
     const auto bytes=QJsonDocument(QJsonObject{{"format","fl-live-project"},{"version",3},
         {"required_features",features}, {"settings",settings},{"session",identities}}).toJson();
     if(bytes.size()>limit)throw std::invalid_argument("Authored project exceeds size limit");
@@ -68,15 +69,21 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
     if(root["version"].isDouble() && (root["version"].toDouble()==1 || root["version"].toDouble()==2))
         return {decodeProjectSettings(bytes),defaultTemplateIdentities()};
     const auto features=root["required_features"].toArray();
-    const bool sceneSlots=features==QJsonArray{"template-identities-v1","template-scene-slots-v1"};
+    const bool sceneSlots=features.contains("template-scene-slots-v1");
+    const bool multipleScenes=features.contains("template-scenes-v1");
+    QJsonArray expected{"template-identities-v1"};
+    if(sceneSlots)expected.append("template-scene-slots-v1");
+    if(multipleScenes)expected.append("template-scenes-v1");
     if(root.size()!=5 || !root["version"].isDouble() || root["version"].toDouble()!=3 ||
        !root["settings"].isObject() || !root["session"].isObject() || !root["required_features"].isArray() ||
-       (!sceneSlots && features!=QJsonArray{"template-identities-v1"}))
+       features!=expected)
         throw std::invalid_argument("Unsupported authored project fields/version/features");
     AuthoredProject project{decodeProjectSettings(QJsonDocument(root["settings"].toObject()).toJson(QJsonDocument::Compact)),
         fl_live::decodeDocumentMetadata(QJsonDocument(root["session"].toObject()).toJson(QJsonDocument::Compact))};
     validateTemplateIdentities(project.identities);
-    if(!sceneSlots && project.identities.scenes[0].entries.size()!=2)
+    if(!multipleScenes && project.identities.scenes.size()!=1)
+        throw std::invalid_argument("Multiple scenes require template-scenes-v1");
+    if(!sceneSlots && std::any_of(project.identities.scenes.begin(),project.identities.scenes.end(),[](const auto& scene){return scene.entries.size()!=2;}))
         throw std::invalid_argument("Unfilled scene slots require template-scene-slots-v1");
     return project;
 }

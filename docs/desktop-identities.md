@@ -10,7 +10,7 @@ While stopped with no pending control acknowledgements, choose Rename beside a t
 
 Each committed rename is one document-history entry. Undo/Redo restore names and IDs alongside tempo/levels/pattern settings. Renaming to the existing name adds no history entry. The dialog starts a fresh text-undo boundary on every opening, including when the previous text equals the current name. Standard document shortcuts are disabled while it is open so text Undo cannot change the project beneath it.
 
-The grid remains the declared authored template: one audio track, one MIDI track, one clip per track and one scene with independently included/excluded clips. Scene launch/stop now offers explicit Immediate/One bar timing; see [scene controls](scene-controls.md). Add, duplicate, delete and arbitrary media remain work under issue #27 and its dependent units. Metadata documents with other valid shapes are rejected by this template's file/preparation adapter rather than partially opened.
+The grid remains the declared authored template: one audio track, one MIDI track, one clip per track and 1–256 scenes with independently included/excluded clips. Scene launch/stop now offers explicit Immediate/One bar timing; see [scene controls](scene-controls.md). Scene creation/deletion and selection now use the same document and persistence path. Track/clip management, scene duplication and arbitrary media remain work under issue #27 and its dependent units. Metadata documents with other valid shapes are rejected by this template's file/preparation adapter rather than partially opened.
 
 ## Version 3 authored project files
 
@@ -20,7 +20,7 @@ Desktop Save now writes `fl-live-project` version 3 with exactly these fields:
 |---|---|
 | `format` | `fl-live-project` |
 | `version` | Numeric integer 3 |
-| `required_features` | `["template-identities-v1"]`, plus `"template-scene-slots-v1"` when the scene has empty slots |
+| `required_features` | `["template-identities-v1"]`, plus `"template-scene-slots-v1"` when a scene has empty slots; multiple scenes also require `"template-scenes-v1"` |
 | `settings` | The complete source-settings object, canonically written in existing v2 form |
 | `session` | The complete version-1 Session metadata object, including IDs and allocation cursor |
 

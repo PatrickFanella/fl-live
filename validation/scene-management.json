@@ -1,0 +1,289 @@
+{
+  "verified_at": "2026-10-31T18:04:47.232824+00:00",
+  "base": "b72779fc109e126918ccad134dd26f27fe18a4f8",
+  "issues": [
+    26,
+    27,
+    56,
+    64
+  ],
+  "scope": "Authored multi-scene creation, selection and deletion with selection-aware history, cursor high-water mark and capability-gated persistence",
+  "gates": {
+    "desktop": {
+      "passed": 15,
+      "total": 15,
+      "commands": [
+        "cmake --build --preset desktop",
+        "ctest --preset desktop --output-junit scene-management-tests.xml"
+      ],
+      "junit_sha256": "3e42e80b8b6fc0455f9112bff142d17f8f1c24639de714b515e56cfaeae72fef"
+    },
+    "document-io-sanitize": {
+      "passed": 7,
+      "total": 7,
+      "commands": [
+        "cmake --build --preset document-io-sanitize",
+        "ctest --preset document-io-sanitize --output-junit scene-management-tests.xml"
+      ],
+      "junit_sha256": "e3b726c8ce77e1cb1e8225be8aa8a0f858ce34c94daf750836ab324a765fb70b"
+    }
+  },
+  "other_checks": [
+    "ShellCheck ci/verify.sh passed",
+    "git diff --check passed"
+  ],
+  "verified_behaviors": [
+    "New scenes are empty, selected and use fresh IDs; deletion retains clips and chooses an adjacent scene; last scene cannot be deleted",
+    "Undo/Redo restore scene selection context; redo forks and Save/Open after undo do not recycle IDs",
+    "Allocator cursor is persisted independently of musical dirty state; Open starts a new namespace and selects the first scene",
+    "Scene membership is independent across arrangements; view selection does not edit or launch scenes",
+    "Unknown IDs, scene limit and pending/running edits reject without corrupting the document/history",
+    "Multiple scenes require template-scenes-v1; partial scenes additionally require template-scene-slots-v1; missing declarations reject",
+    "Actual QML mouse/key scene creation, membership, rename, selector, deletion, Undo/Redo, Save/Open and MIDI-only playback",
+    "Document-only notifications keep render polling from resetting scene selection; rename model refresh precedes selection notification",
+    "Private QML/PipeWire workflow creates a second scene and captures MIDI-only A4 at expected gain; server-loss recovery retains multiple scenes and slot/source history"
+  ],
+  "private_graph_observations": [
+    {
+      "passed": true,
+      "scope": "frame-coded private software capture; no hardware",
+      "producer": "fl-live",
+      "capture_drained_during_changes": true,
+      "quantum_observer": "producer backend",
+      "linked_output": "fl-live-output:output_MONO",
+      "linked_input": "fixture-capture:input_MONO",
+      "quantum_changes": false,
+      "transitions": [
+        {
+          "ready": true,
+          "quantum": 257,
+          "frames": 257,
+          "callbacks": 1
+        }
+      ],
+      "captured_frames": 72000,
+      "silent_prefix": 514,
+      "first_source_frame": 514,
+      "playback": {
+        "passed": true,
+        "frames": 72988,
+        "callbacks": 284,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "running": false
+      },
+      "capture_sha256": "96c4b651c3810b8afbc00cb21e4890887e38a873c5edc580f7ff97041b505b0c",
+      "mismatched_frames": 0,
+      "first_mismatches": [],
+      "unexpected_zero_frames": 0
+    },
+    {
+      "passed": true,
+      "scope": "frame-coded private software capture; no hardware",
+      "producer": "pw-cat",
+      "capture_drained_during_changes": true,
+      "quantum_observer": "unlinked fl-live probe",
+      "linked_output": "fixture-reference:output_MONO",
+      "linked_input": "fixture-capture:input_MONO",
+      "quantum_changes": false,
+      "transitions": [
+        {
+          "ready": true,
+          "quantum": 257,
+          "frames": 257,
+          "callbacks": 1
+        }
+      ],
+      "captured_frames": 72000,
+      "silent_prefix": 257,
+      "first_source_frame": 257,
+      "playback": {
+        "passed": true,
+        "frames": 73245,
+        "callbacks": 285,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "running": false
+      },
+      "capture_sha256": "20005330ca8e19f89d22cade75dfaa64d73d2265f53c63f65b340776a0d97a95",
+      "mismatched_frames": 0,
+      "first_mismatches": [],
+      "unexpected_zero_frames": 0
+    },
+    {
+      "passed": true,
+      "scope": "private software graph; no hardware/audio-device qualification",
+      "requested_quantum": 257,
+      "captured_frames": 24000,
+      "capture_returncode": 1,
+      "silent_prefix": 257,
+      "playback": {
+        "callbacks": 562,
+        "frames": 144434,
+        "bad_buffers": 0,
+        "max_process_ns": 31300,
+        "processing_over_budget": 0,
+        "error": 0,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "position": 144177,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "server_loss": {
+        "callbacks": 6,
+        "frames": 1542,
+        "bad_buffers": 0,
+        "max_process_ns": 11240,
+        "processing_over_budget": 0,
+        "error": -32,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "position": 1542,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "project_rebuilds": null,
+      "desktop_workflow": null,
+      "desktop_recovery": null
+    },
+    {
+      "passed": true,
+      "scope": "private software graph; no hardware/audio-device qualification",
+      "requested_quantum": 1024,
+      "captured_frames": 24000,
+      "capture_returncode": 1,
+      "silent_prefix": 1024,
+      "playback": {
+        "callbacks": 141,
+        "frames": 144384,
+        "bad_buffers": 0,
+        "max_process_ns": 45180,
+        "processing_over_budget": 0,
+        "error": 0,
+        "min_render_frames": 1024,
+        "max_render_frames": 1024,
+        "position": 143360,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "server_loss": {
+        "callbacks": 2,
+        "frames": 2048,
+        "bad_buffers": 0,
+        "max_process_ns": 43960,
+        "processing_over_budget": 0,
+        "error": -32,
+        "min_render_frames": 1024,
+        "max_render_frames": 1024,
+        "position": 2048,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "project_rebuilds": null,
+      "desktop_workflow": null,
+      "desktop_recovery": null
+    },
+    {
+      "passed": true,
+      "scope": "private oversized quantum rejection; no hardware",
+      "requested_quantum": 16384,
+      "playback": {
+        "callbacks": 2,
+        "frames": 8192,
+        "bad_buffers": 2,
+        "max_process_ns": 6130,
+        "processing_over_budget": 0,
+        "error": -90,
+        "min_render_frames": 0,
+        "max_render_frames": 0,
+        "position": 0,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      }
+    },
+    {
+      "passed": true,
+      "scope": "private software graph; no hardware/audio-device qualification",
+      "requested_quantum": 128,
+      "captured_frames": 24000,
+      "capture_returncode": 1,
+      "silent_prefix": 256,
+      "playback": {
+        "callbacks": 1125,
+        "frames": 144000,
+        "bad_buffers": 0,
+        "max_process_ns": 24730,
+        "processing_over_budget": 0,
+        "error": 0,
+        "min_render_frames": 128,
+        "max_render_frames": 128,
+        "position": 143872,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "server_loss": {
+        "callbacks": 35,
+        "frames": 4480,
+        "bad_buffers": 0,
+        "max_process_ns": 42470,
+        "processing_over_budget": 0,
+        "error": -32,
+        "min_render_frames": 128,
+        "max_render_frames": 128,
+        "position": 4480,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "project_rebuilds": "PASS: five stopped project rebuilds including Undo/Redo on the private PipeWire server",
+      "desktop_workflow": {
+        "frames": 144000,
+        "peak": 0.020000001415610313,
+        "pitch": {
+          "positive_crossings": 220,
+          "stable_periods": 219,
+          "discontinuous_periods": 0,
+          "median_period_frames": 109
+        },
+        "stopped_silence_frames": 12000,
+        "scene_active_tracks": 1,
+        "excluded_audio_track_stopped": true,
+        "scene_stop_keeps_transport": true
+      },
+      "desktop_recovery": "PASS: server loss, failed retry, save, explicit stopped reconnect and retained history"
+    }
+  ],
+  "screenshot": {
+    "path": "build/desktop/desktop-scene-management.png",
+    "sha256": "bc704b8762c10bf8c91a366ef121938954204cd561b4ae6bc090a1c38273b875",
+    "inspected": true
+  },
+  "qualification_limits": [
+    "Two shared authored clips; general track/clip management, scene duplication and media authoring remain open",
+    "No native Wayland, physical output, live-quantum continuity, latency, live graph retirement or release qualification",
+    "Local affected cohorts only; all five cohorts are configured for hosted CI"
+  ],
+  "source_files_sha256": {
+    "README.md": "8c777746e1e0a26bac6afd9a89313559d47aacc4978223687cd149353acdcf27",
+    "apps/desktop/Main.qml": "8e12acfff73555742d95011e83c881f062c38c7767f779dc16d594bc1f2eef56",
+    "apps/desktop/authored_project.cpp": "6d4cc96ca8c7eba271798c635e27fd5696d95d1d14259f3befaf2d0f302ba0a3",
+    "apps/desktop/session.cpp": "765e2526fedf1b51196552883cb295d46552048b72dc1376c39f6046ab599f04",
+    "apps/desktop/session.hpp": "cd0e8e6fa13be54776b72f6645e48891129364ec816fdc24d6d074d3b8d1f923",
+    "ci/verify.sh": "181058e2fee26e880c20010a2f224bd0f6c91549523df0c0f37df7f07e600c6c",
+    "docs/STATUS.md": "e35ab83024a3157c1272a9a789c023a71a34a560042ba3f8d6323173ac09ed6a",
+    "docs/ci.md": "49c44aa9d74aeade752ce71ae777820040ca648e268a6e87ff866a96e04afa5f",
+    "docs/desktop-identities.md": "06548db89d38ff4c7d43b7010bf6df2f460c24b6379dfa8863034d8339ec238c",
+    "docs/edit-history.md": "2969540816afa50e8ad09d5a5c3c0737d27d68f3b812c7cbf3efb7df9e7e67fd",
+    "docs/scene-controls.md": "eac7b978f9f2feb3a690069c7584775b0c8559a736a916cf5d5a40bee6680e50",
+    "tests/authored_project_tests.cpp": "581c87ab7bd8a4e5cf0ff16d005141e97309e0b629681fa1d878bef17aa0a77d",
+    "tests/desktop_backend_probe.cpp": "44f91641242ac40f24022c63d075300ee73502dd45503ad877113474ab7df28c",
+    "tests/desktop_tests.cpp": "0585fbf287b519d84dd45db92ceef8e3b2fa2a40f285860315bab58f87c1cc0a"
+  }
+}
