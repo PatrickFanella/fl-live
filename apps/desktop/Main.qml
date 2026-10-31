@@ -123,6 +123,9 @@ ApplicationWindow {
                 }
             }
             Button { objectName: "createScene"; text: "New scene"; enabled: session.canEdit && session.sceneIds.length < 256; onClicked: session.createScene() }
+            Button { objectName: "copyScene"; text: "Copy arrangement"; enabled: session.canEdit && session.sceneIds.length < 256; onClicked: session.copyScene(session.sceneId); ToolTip.visible: hovered; ToolTip.text: "Copies slot choices into a new scene. Clip sources remain shared." }
+            Button { objectName: "sceneUp"; text: "Move up"; enabled: session.canEdit && session.selectedSceneIndex > 0; onClicked: session.moveScene(session.sceneId, -1) }
+            Button { objectName: "sceneDown"; text: "Move down"; enabled: session.canEdit && session.selectedSceneIndex+1 < session.sceneIds.length; onClicked: session.moveScene(session.sceneId, 1) }
             Button { objectName: "deleteScene"; text: "Delete scene"; enabled: session.canEdit && session.sceneIds.length > 1; onClicked: session.deleteScene(session.sceneId) }
         }
         RowLayout {

@@ -115,16 +115,45 @@ bool Session::selectScene(const QString& id) {
         restoreSceneSelection(target);emit changed();return true;
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }
-bool Session::createScene() {
+bool Session::createScene() { return addScene(std::nullopt); }
+bool Session::copyScene(const QString& id) {
+    try { return addScene(fl_live::SceneId{parseIdentity(id)}); }
+    catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+bool Session::addScene(std::optional<fl_live::SceneId> source) {
     if(!editable())return false;
     try {
         const auto previous=selected_scene_;
+        const auto found=std::find_if(identities_->scenes.begin(),identities_->scenes.end(),[source](const auto& scene){return source && scene.id==*source;});
+        if(source && found==identities_->scenes.end())throw std::invalid_argument("Unknown scene");
         auto snapshot=*identities_;snapshot.next_id=next_identity_;
         fl_live::SessionDocument candidate(std::move(snapshot));
-        const auto id=candidate.createScene("New scene");
+        const auto id=candidate.createScene(source ? "Scene copy" : "New scene");
+        // Copy an arrangement of shared source clips. The general document's
+        // duplicateScene operation instead duplicates clip identities too.
+        if(source)for(const auto& entry:found->entries)candidate.setSlot(id,entry.track,entry.clip);
         auto identities=std::make_shared<const fl_live::DocumentSnapshot>(candidate.snapshot());
         if(!replace(settings_,identities))return false;
-        restoreSceneSelection(id);pushHistory(EditKind::scene_create,-1);
+        restoreSceneSelection(id);pushHistory(source ? EditKind::scene_copy : EditKind::scene_create,-1);
+        history_[history_cursor_].undo_selection=previous;emit changed();return true;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+bool Session::moveScene(const QString& id,int direction) {
+    if(!editable())return false;
+    try {
+        if(direction!=-1 && direction!=1)throw std::invalid_argument("Scene movement must be up or down");
+        const fl_live::SceneId target{parseIdentity(id)};
+        auto snapshot=*identities_;
+        const auto found=std::find_if(snapshot.scenes.begin(),snapshot.scenes.end(),[target](const auto& scene){return scene.id==target;});
+        if(found==snapshot.scenes.end())throw std::invalid_argument("Unknown scene");
+        const auto index=static_cast<std::size_t>(found-snapshot.scenes.begin());
+        if((direction<0 && index==0) || (direction>0 && index+1==snapshot.scenes.size()))
+            throw std::invalid_argument("Scene is already at that end of the list");
+        const auto previous=selected_scene_;
+        std::iter_swap(found,found+direction);
+        auto identities=std::make_shared<const fl_live::DocumentSnapshot>(std::move(snapshot));
+        if(!replace(settings_,identities))return false;
+        restoreSceneSelection(target);pushHistory(EditKind::scene_order,-1);
         history_[history_cursor_].undo_selection=previous;emit changed();return true;
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }
@@ -318,6 +347,8 @@ QString Session::editName(const HistoryEntry& entry) {
     case EditKind::scene_slot: return QString("track %1 scene slot").arg(entry.index+1);
     case EditKind::scene_create: return "new scene";
     case EditKind::scene_delete: return "scene deletion";
+    case EditKind::scene_copy: return "scene copy";
+    case EditKind::scene_order: return "scene order";
     default: return {};
     }
 }

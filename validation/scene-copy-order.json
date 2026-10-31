@@ -1,0 +1,276 @@
+{
+  "verified_at": "2026-10-31T18:25:18.680338+00:00",
+  "base": "d8ad549b5422da7fce97dc97d15884a444970984",
+  "issues": [
+    26,
+    27,
+    64
+  ],
+  "scope": "Stopped authored arrangement copying with shared clips and persistent scene reordering",
+  "gates": {
+    "desktop": {
+      "passed": 15,
+      "total": 15,
+      "commands": [
+        "cmake --build --preset desktop",
+        "ctest --preset desktop --output-junit scene-copy-order-tests.xml"
+      ],
+      "junit_sha256": "797854b35470492b475fd4f9dc6d34188b199b07b773e61f4bb4dd25210c5995"
+    }
+  },
+  "other_checks": [
+    "ShellCheck ci/verify.sh passed",
+    "git diff --check passed"
+  ],
+  "verified_behaviors": [
+    "Copy gets a fresh scene ID and independent slot choices while retaining clip/source identities",
+    "Copy Undo/Redo restores selection; redo forks and Save/Open do not recycle retired IDs",
+    "Up/down preserve IDs and slot choices, keep the moved scene selected and persist order through Save/Open",
+    "Boundary moves, invalid directions/IDs, scene cap and pending/running edits preserve state/history",
+    "Actual offscreen pointer Copy/Move and keyboard Move up, history controls, deletion, Save/Open and selected-scene playback",
+    "Private production-QML workflow copies and moves its MIDI-only arrangement before independent A4 capture; server loss retains an arrangement copy and history"
+  ],
+  "private_graph_observations": [
+    {
+      "passed": true,
+      "scope": "frame-coded private software capture; no hardware",
+      "producer": "fl-live",
+      "capture_drained_during_changes": true,
+      "quantum_observer": "producer backend",
+      "linked_output": "fl-live-output:output_MONO",
+      "linked_input": "fixture-capture:input_MONO",
+      "quantum_changes": false,
+      "transitions": [
+        {
+          "ready": true,
+          "quantum": 257,
+          "frames": 257,
+          "callbacks": 1
+        }
+      ],
+      "captured_frames": 72000,
+      "silent_prefix": 514,
+      "first_source_frame": 514,
+      "playback": {
+        "passed": true,
+        "frames": 72988,
+        "callbacks": 284,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "running": false
+      },
+      "capture_sha256": "96c4b651c3810b8afbc00cb21e4890887e38a873c5edc580f7ff97041b505b0c",
+      "mismatched_frames": 0,
+      "first_mismatches": [],
+      "unexpected_zero_frames": 0
+    },
+    {
+      "passed": true,
+      "scope": "frame-coded private software capture; no hardware",
+      "producer": "pw-cat",
+      "capture_drained_during_changes": true,
+      "quantum_observer": "unlinked fl-live probe",
+      "linked_output": "fixture-reference:output_MONO",
+      "linked_input": "fixture-capture:input_MONO",
+      "quantum_changes": false,
+      "transitions": [
+        {
+          "ready": true,
+          "quantum": 257,
+          "frames": 257,
+          "callbacks": 1
+        }
+      ],
+      "captured_frames": 72000,
+      "silent_prefix": 514,
+      "first_source_frame": 257,
+      "playback": {
+        "passed": true,
+        "frames": 72988,
+        "callbacks": 284,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "running": false
+      },
+      "capture_sha256": "c997d777de17b88e7375f8bad3bac7a1f2807c11baab4a526305588c58b9fb4a",
+      "mismatched_frames": 0,
+      "first_mismatches": [],
+      "unexpected_zero_frames": 0
+    },
+    {
+      "passed": true,
+      "scope": "private software graph; no hardware/audio-device qualification",
+      "requested_quantum": 257,
+      "captured_frames": 24000,
+      "capture_returncode": 1,
+      "silent_prefix": 514,
+      "playback": {
+        "callbacks": 561,
+        "frames": 144177,
+        "bad_buffers": 0,
+        "max_process_ns": 26810,
+        "processing_over_budget": 0,
+        "error": 0,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "position": 143920,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "server_loss": {
+        "callbacks": 6,
+        "frames": 1542,
+        "bad_buffers": 0,
+        "max_process_ns": 12720,
+        "processing_over_budget": 0,
+        "error": -32,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "position": 1542,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "project_rebuilds": null,
+      "desktop_workflow": null,
+      "desktop_recovery": null
+    },
+    {
+      "passed": true,
+      "scope": "private software graph; no hardware/audio-device qualification",
+      "requested_quantum": 1024,
+      "captured_frames": 24000,
+      "capture_returncode": 1,
+      "silent_prefix": 1024,
+      "playback": {
+        "callbacks": 141,
+        "frames": 144384,
+        "bad_buffers": 0,
+        "max_process_ns": 55200,
+        "processing_over_budget": 0,
+        "error": 0,
+        "min_render_frames": 1024,
+        "max_render_frames": 1024,
+        "position": 143360,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "server_loss": {
+        "callbacks": 2,
+        "frames": 2048,
+        "bad_buffers": 0,
+        "max_process_ns": 32910,
+        "processing_over_budget": 0,
+        "error": -32,
+        "min_render_frames": 1024,
+        "max_render_frames": 1024,
+        "position": 2048,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "project_rebuilds": null,
+      "desktop_workflow": null,
+      "desktop_recovery": null
+    },
+    {
+      "passed": true,
+      "scope": "private oversized quantum rejection; no hardware",
+      "requested_quantum": 16384,
+      "playback": {
+        "callbacks": 2,
+        "frames": 8192,
+        "bad_buffers": 2,
+        "max_process_ns": 5710,
+        "processing_over_budget": 0,
+        "error": -90,
+        "min_render_frames": 0,
+        "max_render_frames": 0,
+        "position": 0,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      }
+    },
+    {
+      "passed": true,
+      "scope": "private software graph; no hardware/audio-device qualification",
+      "requested_quantum": 128,
+      "captured_frames": 24000,
+      "capture_returncode": 1,
+      "silent_prefix": 256,
+      "playback": {
+        "callbacks": 1125,
+        "frames": 144000,
+        "bad_buffers": 0,
+        "max_process_ns": 21650,
+        "processing_over_budget": 0,
+        "error": 0,
+        "min_render_frames": 128,
+        "max_render_frames": 128,
+        "position": 143872,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "server_loss": {
+        "callbacks": 35,
+        "frames": 4480,
+        "bad_buffers": 0,
+        "max_process_ns": 10130,
+        "processing_over_budget": 0,
+        "error": -32,
+        "min_render_frames": 128,
+        "max_render_frames": 128,
+        "position": 4480,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "project_rebuilds": "PASS: five stopped project rebuilds including Undo/Redo on the private PipeWire server",
+      "desktop_workflow": {
+        "frames": 144000,
+        "peak": 0.020000001415610313,
+        "pitch": {
+          "positive_crossings": 220,
+          "stable_periods": 219,
+          "discontinuous_periods": 0,
+          "median_period_frames": 109
+        },
+        "stopped_silence_frames": 12000,
+        "scene_active_tracks": 1,
+        "excluded_audio_track_stopped": true,
+        "scene_stop_keeps_transport": true,
+        "scene_arrangement_copy": true,
+        "scene_order_checked": true
+      },
+      "desktop_recovery": "PASS: server loss, failed retry, save, explicit stopped reconnect and retained history"
+    }
+  ],
+  "screenshot": {
+    "path": "build/desktop/desktop-scene-copy-order.png",
+    "sha256": "653a9779ae72019457061c923e41cd76d663aeb5736e99a2b53922b3cf09dd01",
+    "inspected": true
+  },
+  "qualification_limits": [
+    "Copies share the two authored source clips; general track/clip management and independent clip duplication remain open",
+    "Only affected desktop cohort rerun locally; hosted CI runs all five configurations",
+    "No native Wayland, physical output, latency, lossless live-quantum delivery or release qualification"
+  ],
+  "source_files_sha256": {
+    "README.md": "13949a0373d009e3dedf05961ba5d2ead432a1d2f200cb0debf8caaa70931dae",
+    "apps/desktop/Main.qml": "53b85a1e86238490c426195138aba775bf579ee407b545babd1115a4dfe88360",
+    "apps/desktop/session.cpp": "351740fd522fa7aa20353b657b850f66d21b012e1a501382296ed14457e86342",
+    "apps/desktop/session.hpp": "8dacd7cbfb7407f76afd85510c8081fc21d7b3b61850f3fc9ffe0866727cb240",
+    "ci/verify.sh": "20bf2d039b43817207bb6be1eb51267bda3cf55b66d3254a7f42c685bb214fd2",
+    "docs/STATUS.md": "a40c9b22f4378c726aec8e5d8fb07ce87ce7c824b81dd89cc9daec2225c4b070",
+    "docs/ci.md": "d69df9d0e45c364203b92e8bd909e5ab04e653e79eabf47ac40b086520158cda",
+    "docs/edit-history.md": "0c6c6748e813da0085d17f0aed79a98336f74247005fb6611023421c75131740",
+    "docs/scene-controls.md": "613f3e3565dc1a66fbd0870ce4b52fe73b22c923c94fa4bc9a5a4f8e914e0bda",
+    "tests/desktop_backend_probe.cpp": "f457a10eb8353583ac3dc4dd5aee2f064f8bd0fb19aacfef9658daab87ff860c",
+    "tests/desktop_tests.cpp": "a00ce200b019585ba7988a4af65759da5790ee29bc966fecd8a143ee3132aa45",
+    "tests/pipewire_integration.py": "cdeab2e8b01d50a3785206458baaa0cc2aee1134883d66fcaa09888a15b7dc12"
+  }
+}

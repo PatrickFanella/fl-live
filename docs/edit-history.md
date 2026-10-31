@@ -1,6 +1,6 @@
 # Editing history
 
-Undo and Redo cover track/clip/scene names, scene creation/deletion and slot inclusion, tempo, track levels, MIDI pattern length and each step's note/rest, pitch, velocity and gate. They require acknowledged stopped transport with no unhandled control messages. Like a normal edit, each successful history operation prepares the session at position zero and clears active clips and queued launches. Clip/scene launches, scene timing, transport, editor selection and file paths are outside document history.
+Undo and Redo cover track/clip/scene names, scene creation/copy/deletion, scene order and slot inclusion, tempo, track levels, MIDI pattern length and each step's note/rest, pitch, velocity and gate. They require acknowledged stopped transport with no unhandled control messages. Like a normal edit, each successful history operation prepares the session at position zero and clears active clips and queued launches. Clip/scene launches, scene timing, transport, editor selection and file paths are outside document history.
 
 The header buttons expose the next operation through tooltips. Standard Undo/Redo key bindings are enabled while the window is active, except when an editable text input owns text undo or the unsaved-close or rename dialog is open. On Linux the tested bindings are Ctrl+Z and Ctrl+Shift+Z. Clicking a history button explicitly operates on the musical document. Step selection remains independent of history; undoing to a shorter pattern clamps the current selection to its last valid step.
 

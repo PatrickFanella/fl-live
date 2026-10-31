@@ -25,7 +25,7 @@ int main(int argc, char** argv) {
         if (argc == 3 && std::string_view(argv[2]) == "--recovery") {
             const auto trackId=session.trackIds()[0],clipId=session.clipIds()[0];
             const auto sceneId=session.sceneId();
-            if(!session.createScene() || !session.selectScene(sceneId))return 1;
+            if(!session.copyScene(sceneId) || !session.selectScene(sceneId))return 1;
             if(!session.renameTrack(trackId.toString(),"Retained audio") ||
                !session.renameClip(clipId.toString(),"Retained pulse") ||
                !session.renameScene(sceneId,"Retained scene"))return 1;
@@ -97,6 +97,8 @@ int main(int argc, char** argv) {
             auto* midiInclusion=find(window->contentItem(),"sceneIncluded1");if(!midiInclusion)return 1;
             midiInclusion->setProperty("checked",true);invoke("sceneIncluded1","clicked");
             if(session.sceneIds().size()!=2 || session.selectedSceneIndex()!=1)return 1;
+            invoke("copyScene","clicked");invoke("sceneUp","clicked");
+            if(session.sceneIds().size()!=3 || session.selectedSceneIndex()!=1 || session.sceneIncluded()[0].toBool() || !session.sceneIncluded()[1].toBool())return 1;
             invoke("tempoSpin", "valueModified", 300);
             invoke("stepCount", "valueModified", 1);
             invoke("selectedPitch", "valueModified", 69);

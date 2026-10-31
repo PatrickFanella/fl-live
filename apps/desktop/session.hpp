@@ -7,6 +7,7 @@
 #include <QTimer>
 #include <QString>
 #include <memory>
+#include <optional>
 #include <type_traits>
 
 // QObject and the sole command producer live on the GUI thread. Preview renders
@@ -71,6 +72,8 @@ public:
     int selectedSceneIndex() const;
     Q_INVOKABLE bool selectScene(const QString& id);
     Q_INVOKABLE bool createScene();
+    Q_INVOKABLE bool copyScene(const QString& id);
+    Q_INVOKABLE bool moveScene(const QString& id, int direction);
     Q_INVOKABLE bool deleteScene(const QString& id);
     Q_INVOKABLE bool setSceneIncluded(const QString& trackId, bool included);
     Q_INVOKABLE bool renameScene(const QString& id, const QString& name);
@@ -141,7 +144,7 @@ private:
     const fl_live::PipeWireConfig config_;
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
-    enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete };
+    enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete, scene_copy, scene_order };
     struct HistoryEntry {
         ProjectSettings settings;
         Identities identities;
@@ -166,6 +169,7 @@ private:
     bool scene_stop_ = false;
     fl_live::SceneId requested_scene_{};
     const fl_live::DocumentScene& selectedScene() const;
+    bool addScene(std::optional<fl_live::SceneId> source);
     void restoreSceneSelection(fl_live::SceneId id, bool notify = true);
     int selected_step_ = 0;
     bool replace(const ProjectSettings& settings, Identities identities = {});
