@@ -21,6 +21,34 @@ static ProjectSettings readAuthoredSettings(const QString& path) { return readAu
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void sceneSlotHistoryAndPlayback() {
+        Session session;session.selectStep(2);const auto tracks=session.trackIds(),clips=session.clipIds();
+        const auto id=session.sceneId();QCOMPARE(session.sceneIncluded(),(QVariantList{true,true}));
+        QVERIFY(!session.setSceneIncluded("01",false));QVERIFY(!session.dirty());
+        QVERIFY(!session.setSceneIncluded("999",false));QVERIFY(!session.canUndo());
+        QVERIFY(session.setSceneIncluded(tracks[1].toString(),false));
+        QCOMPARE(session.selectedStep(),2);QCOMPARE(session.sceneIncluded(),(QVariantList{true,false}));
+        const auto undo=session.undoText();QVERIFY(session.setSceneIncluded(tracks[1].toString(),false));QCOMPARE(session.undoText(),undo);
+        QTemporaryDir directory;const auto path=directory.filePath("sparse.json");QVERIFY(session.saveProject(path));
+        session.undo();QCOMPARE(session.sceneIncluded(),(QVariantList{true,true}));QVERIFY(session.dirty());
+        session.redo();QCOMPARE(session.sceneIncluded(),(QVariantList{true,false}));QVERIFY(!session.dirty());
+        QVERIFY(session.launchClip(clips[1].toString()));session.play();
+        QVERIFY(!session.setSceneIncluded(tracks[0].toString(),false));session.tick();
+        QCOMPARE(session.sceneState(),QString("Partial"));
+        QVERIFY(session.launchScene(id,"immediate"));session.tick();
+        QCOMPARE(session.activeClipIds()[0],clips[0]);QCOMPARE(session.activeClipIds()[1].toString(),QString{});
+        QCOMPARE(session.sceneState(),QString("Active"));
+        session.stop();session.tick();QVERIFY(session.loadProject(path));
+        QCOMPARE(session.sceneIncluded(),(QVariantList{true,false}));QVERIFY(!session.canUndo());
+        QVERIFY(session.setSceneIncluded(tracks[0].toString(),false));
+        QVERIFY(session.launchScene(id,"immediate"));session.play();session.tick();
+        QCOMPARE(session.sceneState(),QString("Stopped"));QVERIFY(session.running());
+        QCOMPARE(session.activeClipIds(),(QVariantList{QString{},QString{}}));
+        session.stop();session.tick();QVERIFY(session.setSceneIncluded(tracks[1].toString(),true));
+        QVERIFY(session.launchScene(id,"one-bar"));session.play();session.tick();
+        QCOMPARE(session.activeClipIds()[1],clips[1]);QCOMPARE(session.activeClipIds()[0].toString(),QString{});
+        QCOMPARE(session.sceneState(),QString("Active"));session.panic();session.tick();
+    }
     void sceneRequestsAndHistory() {
         Session session;const auto id=session.sceneId();const auto clips=session.clipIds();
         QCOMPARE(session.sceneState(),QString("Stopped"));
@@ -138,9 +166,15 @@ private slots:
         const auto saved=readAuthoredProject(path);QCOMPARE(saved.identities.tracks[0].name,std::string("Drums"));
         QCOMPARE(saved.identities.tracks[0].id.value,9007199254740993ULL);
         QCOMPARE(saved.identities.scenes[0].name,std::string("Verse"));QCOMPARE(session.sceneId(),QString("9007199254740997"));
+        click("sceneIncluded1");QCOMPARE(session.sceneIncluded(),(QVariantList{true,false}));
+        auto* include=find(window->contentItem(),"sceneIncluded1");QVERIFY(include);include->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_Space);QCOMPARE(session.sceneIncluded(),(QVariantList{true,true}));
+        QTest::keyClick(window,Qt::Key_Z,Qt::ControlModifier);QTRY_COMPARE(session.sceneIncluded(),(QVariantList{true,false}));
+        click("saveProjectButton");click("openProjectButton");QCOMPARE(session.sceneIncluded(),(QVariantList{true,false}));
         click("sceneTiming");QTest::keyClick(window,Qt::Key_Home);QTest::keyClick(window,Qt::Key_Return);
         auto* timing=find(window->contentItem(),"sceneTiming");QVERIFY(timing);QTRY_COMPARE(timing->property("currentIndex").toInt(),0);
-        click("launchScene");click("playButton");session.tick();QCOMPARE(session.activeClipIds()[1],clipId);
+        click("clip1");click("playButton");session.tick();QCOMPARE(session.activeClipIds()[1],clipId);
+        click("launchScene");session.tick();QCOMPARE(session.activeClipIds()[1].toString(),QString{});
         QCOMPARE(session.sceneState(),QString("Active"));
         auto* sceneStop=find(window->contentItem(),"stopScene");QVERIFY(sceneStop);sceneStop->forceActiveFocus();
         QTest::keyClick(window,Qt::Key_Space);session.tick();QCOMPARE(session.sceneState(),QString("Stopped"));QVERIFY(session.running());
@@ -148,6 +182,7 @@ private slots:
         QTRY_COMPARE(timing->property("currentIndex").toInt(),1);click("launchScene");session.tick();
         QCOMPARE(session.sceneState(),QString("Stopped · actions queued"));
         QVERIFY(window->grabWindow().save("desktop-scene-controls.png"));
+        QVERIFY(window->grabWindow().save("desktop-scene-slots.png"));
         click("stopButton");session.tick();QVERIFY(!session.running());
         QVERIFY(window->grabWindow().save("desktop-identity-renaming.png"));
     }

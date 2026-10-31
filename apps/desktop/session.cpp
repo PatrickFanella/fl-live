@@ -92,16 +92,38 @@ QVariantList Session::activeClipIds() const {
 }
 QString Session::sceneId() const { return identityText(identities_->scenes[0].id.value); }
 QString Session::sceneName() const { return QString::fromUtf8(identities_->scenes[0].name); }
+QVariantList Session::sceneIncluded() const {
+    QVariantList result;
+    for(const auto& track:identities_->tracks)result.append(std::any_of(identities_->scenes[0].entries.begin(),
+        identities_->scenes[0].entries.end(),[&](const auto& entry){return entry.track==track.id;}));
+    return result;
+}
+bool Session::setSceneIncluded(const QString& trackId,bool included) {
+    if(!editable())return false;
+    try {
+        const fl_live::TrackId id{parseIdentity(trackId)};
+        const auto index=prepared_->mapped.trackIndex(id);
+        if(!index)throw std::invalid_argument("Unknown scene track");
+        fl_live::SessionDocument candidate(*identities_);
+        if(included)candidate.setSlot(identities_->scenes[0].id,id,*prepared_->mapped.clipId(*index,0));
+        else candidate.clearSlot(identities_->scenes[0].id,id);
+        if(candidate.snapshot()==*identities_)return true;
+        auto identities=std::make_shared<const fl_live::DocumentSnapshot>(candidate.snapshot());
+        if(!replace(settings_,identities))return false;
+        pushHistory(EditKind::scene_slot,static_cast<int>(*index));emit changed();return true;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
 QString Session::sceneState() const {
     if(scene_serial_>status_.handled_serial)return scene_stop_ ? "Stop requested" : "Launch requested";
     bool active=true,stopped=true,queued=false;
     const auto batch=*prepared_->mapped.scene(identities_->scenes[0].id,false);
     for(std::size_t i=0;i<batch.count;++i) {
         const auto& command=batch.commands[i];const auto& state=status_.tracks[command.track];
-        active=active && state.active_clip==static_cast<int>(command.clip);
+        const auto expected=command.kind==fl_live::CommandKind::launch ? static_cast<int>(command.clip) : -1;
+        active=active && state.active_clip==expected;
         stopped=stopped && state.active_clip<0;queued=queued || state.pending!=fl_live::PendingAction::none;
     }
-    const auto current=active ? QStringLiteral("Active") : stopped ? QStringLiteral("Stopped") : QStringLiteral("Partial");
+    const auto current=stopped ? QStringLiteral("Stopped") : active ? QStringLiteral("Active") : QStringLiteral("Partial");
     return queued ? current+QStringLiteral(" · actions queued") : current;
 }
 bool Session::launchScene(const QString& id,const QString& policy){return sceneAction(id,policy,false);}
@@ -237,6 +259,7 @@ QString Session::editName(const HistoryEntry& entry) {
     case EditKind::track_name: return QString("track %1 name").arg(entry.index + 1);
     case EditKind::clip_name: return QString("clip %1 name").arg(entry.index + 1);
     case EditKind::scene_name: return "scene name";
+    case EditKind::scene_slot: return QString("track %1 scene slot").arg(entry.index+1);
     default: return {};
     }
 }
