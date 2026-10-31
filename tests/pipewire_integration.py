@@ -373,8 +373,9 @@ context.objects = [
                 assert all(v == 0 for v in samples[132000:]), "audio after acknowledged stop"
                 output, errors = player.communicate(timeout=5)
                 assert player.returncode == 0, (output, errors)
-                assert "QML edits, play, MIDI launch and acknowledged stop" in output
-                desktop_workflow = dict(frames=144000, peak=peak, pitch=pitch, stopped_silence_frames=12000)
+                assert "QML edits, atomic scene launch, scene stop while transport runs and acknowledged transport stop" in output
+                desktop_workflow = dict(frames=144000, peak=peak, pitch=pitch, stopped_silence_frames=12000,
+                                        scene_active_tracks=2, scene_stop_keeps_transport=True)
 
             # A second actual client must report the loss of this owned server
             # and exit; this does not touch any pre-existing server or stream.

@@ -6,11 +6,11 @@ Track/clip IDs cross QML as canonical decimal strings. Launch and track-stop con
 
 ## Rename workflow
 
-While stopped with no pending control acknowledgements, choose Rename beside a track title or clip. The modal selects its current name; Enter or Apply commits, and Cancel/Escape leaves the document unchanged. Invalid names leave the dialog open with an error. Closing restores focus to the invoking control and preserves the selected MIDI step. Display labels render names as plain text.
+While stopped with no pending control acknowledgements, choose Rename beside a track title, clip or scene. The modal selects its current name; Enter or Apply commits, and Cancel/Escape leaves the document unchanged. Invalid names leave the dialog open with an error. Closing restores focus to the invoking control and preserves the selected MIDI step. Display labels render names as plain text.
 
 Each committed rename is one document-history entry. Undo/Redo restore names and IDs alongside tempo/levels/pattern settings. Renaming to the existing name adds no history entry. The dialog starts a fresh text-undo boundary on every opening, including when the previous text equals the current name. Standard document shortcuts are disabled while it is open so text Undo cannot change the project beneath it.
 
-The grid remains the declared authored template: one audio track, one MIDI track, one clip per track and one scene containing both clips. Add, duplicate, delete, arbitrary media and scene-launch controls remain work under issue #27 and its dependent units. Metadata documents with other valid shapes are rejected by this template's file/preparation adapter rather than partially opened.
+The grid remains the declared authored template: one audio track, one MIDI track, one clip per track and one scene containing both clips. Scene launch/stop now offers explicit Immediate/One bar timing; see [scene controls](scene-controls.md). Add, duplicate, delete and arbitrary media remain work under issue #27 and its dependent units. Metadata documents with other valid shapes are rejected by this template's file/preparation adapter rather than partially opened.
 
 ## Version 3 authored project files
 

@@ -52,6 +52,7 @@ bool Session::reconnectAudio() {
         prepared_.swap(candidate);
         failed_ = false;
         serial_ = 0;
+        scene_serial_ = 0;
         track_serials_.fill(0);
         status_ = prepared_->controller.status();
         message_ = "Audio reconnected and stopped. Launch clips, then press Play.";
@@ -89,21 +90,59 @@ QVariantList Session::activeClipIds() const {
         result.append(id ? identityText(id->value) : QString{});
     }return result;
 }
-bool Session::renameTrack(const QString& id,const QString& name){return rename(id,name,true);}
-bool Session::renameClip(const QString& id,const QString& name){return rename(id,name,false);}
-bool Session::rename(const QString& id,const QString& name,bool track) {
+QString Session::sceneId() const { return identityText(identities_->scenes[0].id.value); }
+QString Session::sceneName() const { return QString::fromUtf8(identities_->scenes[0].name); }
+QString Session::sceneState() const {
+    if(scene_serial_>status_.handled_serial)return scene_stop_ ? "Stop requested" : "Launch requested";
+    bool active=true,stopped=true,queued=false;
+    const auto batch=*prepared_->mapped.scene(identities_->scenes[0].id,false);
+    for(std::size_t i=0;i<batch.count;++i) {
+        const auto& command=batch.commands[i];const auto& state=status_.tracks[command.track];
+        active=active && state.active_clip==static_cast<int>(command.clip);
+        stopped=stopped && state.active_clip<0;queued=queued || state.pending!=fl_live::PendingAction::none;
+    }
+    const auto current=active ? QStringLiteral("Active") : stopped ? QStringLiteral("Stopped") : QStringLiteral("Partial");
+    return queued ? current+QStringLiteral(" · actions queued") : current;
+}
+bool Session::launchScene(const QString& id,const QString& policy){return sceneAction(id,policy,false);}
+bool Session::stopScene(const QString& id,const QString& policy){return sceneAction(id,policy,true);}
+bool Session::sceneAction(const QString& id,const QString& policy,bool stop) {
+    if(failed_)return false;
+    try {
+        if(policy!="immediate" && policy!="one-bar")throw std::invalid_argument("Unknown scene timing policy");
+        const auto batch=prepared_->mapped.scene(fl_live::SceneId{parseIdentity(id)},stop);
+        if(!batch)throw std::invalid_argument("Unknown scene");
+        const auto next=serial_+1;
+        if(!prepared_->controller.submit({fl_live::ControlKind::scene,{},next,*batch,
+            policy=="immediate" ? fl_live::LaunchPolicy::immediate : fl_live::LaunchPolicy::next_bar})) {
+            message_="Control queue full. Try again, or use Silence now.";emit changed();return false;
+        }
+        serial_=scene_serial_=next;scene_stop_=stop;
+        for(std::size_t i=0;i<batch->count;++i) {
+            const auto& command=batch->commands[i];track_serials_[command.track]=next;
+            track_requests_[command.track]=command.kind==fl_live::CommandKind::launch
+                ? fl_live::ControlKind::launch_next_bar : fl_live::ControlKind::stop_next_bar;
+        }
+        message_="Awaiting scene render acknowledgement";emit changed();return true;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+bool Session::renameTrack(const QString& id,const QString& name){return rename(id,name,NameKind::track);}
+bool Session::renameClip(const QString& id,const QString& name){return rename(id,name,NameKind::clip);}
+bool Session::renameScene(const QString& id,const QString& name){return rename(id,name,NameKind::scene);}
+bool Session::rename(const QString& id,const QString& name,NameKind kind) {
     if(!editable())return false;
     try {
         const auto value=parseIdentity(id);const auto bytes=name.toUtf8();
         if(QString::fromUtf8(bytes)!=name)throw std::invalid_argument("Name requires valid Unicode");
         fl_live::SessionDocument candidate(*identities_);
-        if(track)candidate.renameTrack(fl_live::TrackId{value},bytes.toStdString());
-        else candidate.renameClip(fl_live::ClipId{value},bytes.toStdString());
+        if(kind==NameKind::track)candidate.renameTrack(fl_live::TrackId{value},bytes.toStdString());
+        else if(kind==NameKind::clip)candidate.renameClip(fl_live::ClipId{value},bytes.toStdString());
+        else candidate.renameScene(fl_live::SceneId{value},bytes.toStdString());
         if(candidate.snapshot()==*identities_)return true;
         auto identities=std::make_shared<const fl_live::DocumentSnapshot>(candidate.snapshot());
         if(!replace(settings_,identities))return false;
-        const auto index=track ? *prepared_->mapped.trackIndex(fl_live::TrackId{value}) : prepared_->mapped.launch(fl_live::ClipId{value},0)->track;
-        pushHistory(track ? EditKind::track_name : EditKind::clip_name,static_cast<int>(index));
+        const auto index=kind==NameKind::scene ? 0 : kind==NameKind::track ? *prepared_->mapped.trackIndex(fl_live::TrackId{value}) : prepared_->mapped.launch(fl_live::ClipId{value},0)->track;
+        pushHistory(kind==NameKind::scene ? EditKind::scene_name : kind==NameKind::track ? EditKind::track_name : EditKind::clip_name,static_cast<int>(index));
         emit changed();return true;
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }
@@ -197,6 +236,7 @@ QString Session::editName(const HistoryEntry& entry) {
     case EditKind::length: return "pattern length";
     case EditKind::track_name: return QString("track %1 name").arg(entry.index + 1);
     case EditKind::clip_name: return QString("clip %1 name").arg(entry.index + 1);
+    case EditKind::scene_name: return "scene name";
     default: return {};
     }
 }
@@ -266,6 +306,7 @@ bool Session::replace(const ProjectSettings& settings, Identities identities) {
         settings_ = settings;
         identities_ = std::move(identities);
         serial_ = 0;
+        scene_serial_ = 0;
         track_serials_.fill(0);
         status_ = prepared_->controller.status();
         message_.swap(preparedMessage);

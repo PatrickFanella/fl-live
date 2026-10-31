@@ -4,7 +4,7 @@ import QtQuick.Layouts
 
 ApplicationWindow {
     id: window
-    width: 1040; height: 820
+    width: 1040; height: 880
     minimumWidth: 900; minimumHeight: 620
     visible: true
     property bool discardOnClose: false
@@ -37,19 +37,20 @@ ApplicationWindow {
         objectName: "renameDialog"
         anchors.centerIn: parent
         modal: true
-        title: track ? "Rename track" : "Rename clip"
+        title: scene ? "Rename scene" : track ? "Rename track" : "Rename clip"
         property bool track: true
+        property bool scene: false
         property string entityId
         property string errorText: ""
         property var returnFocus
-        function edit(isTrack, identity, name, control) {
-            track = isTrack; entityId = identity
+        function edit(isTrack, identity, name, control, isScene = false) {
+            track = isTrack; scene = isScene; entityId = identity
             // Force a fresh text-undo boundary even when reopening the same name.
             renameValue.text = ""; renameValue.text = name
             returnFocus = control; errorText = ""; open()
         }
         function commit() {
-            const ok = track ? session.renameTrack(entityId, renameValue.text) : session.renameClip(entityId, renameValue.text)
+            const ok = scene ? session.renameScene(entityId, renameValue.text) : track ? session.renameTrack(entityId, renameValue.text) : session.renameClip(entityId, renameValue.text)
             if (ok) close(); else errorText = session.message
         }
         onOpened: { renameValue.forceActiveFocus(); renameValue.selectAll() }
@@ -70,7 +71,7 @@ ApplicationWindow {
     palette.text: "#e8edf5"
     palette.highlight: "#68d9a4"
     ColumnLayout {
-        anchors.fill: parent; anchors.margins: 24; spacing: 18
+        anchors.fill: parent; anchors.margins: 24; spacing: 12
         RowLayout {
             Layout.fillWidth: true
             Label { text: "fl-live"; font.pixelSize: 26; font.bold: true }
@@ -103,6 +104,17 @@ ApplicationWindow {
             Label { text: "Bars" }
             SpinBox { id: exportBars; objectName: "exportBars"; from: 1; to: 16; value: 4; enabled: session.canEdit; Accessible.name: "Export length in bars" }
             Button { objectName: "exportWavButton"; text: "Export both tracks"; enabled: session.canEdit; onClicked: session.exportWav(exportFile.text, exportBars.value) }
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            Label { text: "SCENE"; color: "#9daabd" }
+            Label { objectName: "sceneName"; text: session.sceneName; textFormat: Text.PlainText; elide: Text.ElideRight; Layout.fillWidth: true; font.bold: true }
+            ToolButton { id: sceneRename; objectName: "renameScene"; text: "Rename"; enabled: session.canEdit; Accessible.name: "Rename scene"; onClicked: renameDialog.edit(false, session.sceneId, session.sceneName, sceneRename, true) }
+            Label { text: "Timing" }
+            ComboBox { id: sceneTiming; objectName: "sceneTiming"; model: ["Immediate", "One bar"]; currentIndex: 1; Accessible.name: "Scene launch and stop timing" }
+            Button { objectName: "launchScene"; text: "Launch scene"; enabled: session.audioAvailable; onClicked: session.launchScene(session.sceneId, sceneTiming.currentIndex === 0 ? "immediate" : "one-bar") }
+            Button { objectName: "stopScene"; text: "Stop scene"; enabled: session.audioAvailable; onClicked: session.stopScene(session.sceneId, sceneTiming.currentIndex === 0 ? "immediate" : "one-bar") }
+            Label { objectName: "sceneState"; text: session.sceneState; Layout.preferredWidth: 180; wrapMode: Text.WordWrap; color: "#68d9a4" }
         }
         Rectangle {
             color: "#242c37"; radius: 8
@@ -207,7 +219,7 @@ ApplicationWindow {
         }
         Label {
             Layout.fillWidth: true; wrapMode: Text.WordWrap
-            text: "Pulse + Steps · Edit while stopped. Changes return to the start and clear queued launches. Launch clips, then press Play. 4/4 · 1-bar launch grid."
+            text: "Edit while stopped. Changes return to the start. Launch a scene, then press Play. Scene timing applies to launch and stop; clips use one bar. Immediate actions keep future queued actions. 4/4."
             color: "#9daabd"
         }
         Label { objectName: "statusMessage"; Layout.fillWidth: true; text: session.message; wrapMode: Text.WordWrap }

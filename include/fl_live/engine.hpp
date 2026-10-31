@@ -81,6 +81,9 @@ public:
     void stop() noexcept; // freezes playhead, clears queue and all voices
     void rewind() noexcept; // stopped only; otherwise no operation
     [[nodiscard]] ScheduleResult schedule(Command command) noexcept;
+    // All commands share one sample. Admission is all-or-nothing, including
+    // capacity and validation. Insert before later events, after existing ties.
+    [[nodiscard]] ScheduleResult scheduleTogether(std::span<const Command> commands) noexcept;
     void process(std::span<float> mono_output) noexcept;
     [[nodiscard]] Frame position() const noexcept { return position_; }
     [[nodiscard]] bool running() const noexcept { return running_; }
@@ -104,5 +107,9 @@ private:
     bool running_ = false;
     void apply(const Command& command) noexcept;
     [[nodiscard]] float render_track(std::size_t index) noexcept;
+};
+struct CommandBatch {
+    std::array<Command, Engine::track_capacity> commands{};
+    std::size_t count = 0;
 };
 } // namespace fl_live

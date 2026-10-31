@@ -1,6 +1,6 @@
 # Delivery status
 
-Updated 2026-10-30. The near-term goal is a useful Linux MVP, with a close Live/Max replacement as the long-term destination. Exhaustive reverse engineering is not an implementation gate.
+Updated 2026-10-31. The near-term goal is a useful Linux MVP, with a close Live/Max replacement as the long-term destination. Exhaustive reverse engineering is not an implementation gate.
 
 | Area | Current evidence | Remaining |
 |---|---|---|
@@ -11,7 +11,7 @@ Updated 2026-10-30. The near-term goal is a useful Linux MVP, with a close Live/
 | Qt/QML application | Authored two-track clip grid, transport, silent preview and explicit PipeWire mode; offscreen mouse/control checks | Broader editing/mixer, native Wayland and accessibility qualification |
 | Project editing/state | Versioned template JSON with v1 migration, atomic save/reload, stopped 1–16-step MIDI editing, bounded Undo/Redo and saved-content dirty tracking; sample round trip, private backend rebuild checks and QML-to-audio capture | General clip/track editing, imported media, autosave/recovery |
 | General Session document | [Qt-free metadata model](session-document.md): typed identities, transactional edits and reference cleanup; [versioned metadata files](session-metadata.md) with lossless IDs and validated replacement | General musical schema/media content, UI controls, history and render integration; issues #26/#56 retain integration work |
-| Document/render boundary | [Immutable preparation](document-render.md), stable-ID command/feedback mapping, supplied-content validation, four-track offline sample checks and stopped rebuild cleanup | General desktop management, persisted media/note content, scene scheduling, mixer and live retirement |
+| Document/render boundary | [Immutable preparation](document-render.md), stable-ID command/feedback mapping, supplied-content validation, four-track offline sample checks and stopped rebuild cleanup | General desktop management, persisted media/note content, mixer and live retirement |
 | Recording/plugins/graphs | Planned | Implementation and integrated qualification |
 
 The first D1 engine slice is implemented. D0/D1 as a whole remain partial. D2–D5 are not complete. A generated WAV is not a usable workstation.
@@ -20,4 +20,4 @@ The Qt UI now uses the same controller; transport state comes from rendering ack
 
 The product repository is hosted privately at https://git.subcult.tv/subculture-collective/fl-live while licensing is undecided. The validated engine foundation is the initial main-branch baseline. A Gitea Actions workflow now covers desktop/release/engine-only/PipeWire sanitizer builds; its hosted result is tracked on the PR. Release qualification remains pending. The reference research archive was not moved into this repository. Its preservation requirements still govern native Soyuz experiments, not this local engine build.
 
-The desktop now resolves its authored clips by stable IDs through prepared plans. Track/clip renaming is undoable and persists in the v3 authored wrapper; v1/v2 imports and source audio remain supported. Add/duplicate/delete controls and the general musical Session remain open. See [desktop identity integration](desktop-identities.md).
+The desktop now resolves its authored clips by stable IDs through prepared plans. Track/clip renaming is undoable and persists in the v3 authored wrapper; v1/v2 imports and source audio remain supported. The authored scene now has undoable naming, atomic launch/stop and Immediate/One bar timing; generic four-track scene scheduling is checked offline. Add/duplicate/delete controls and the general musical Session remain open. See [scene controls](scene-controls.md) and [desktop identity integration](desktop-identities.md).

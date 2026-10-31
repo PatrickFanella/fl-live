@@ -14,7 +14,7 @@ The engine continues to use compact track/clip indices. `launch(ClipId, frame)` 
 
 `trackId(index)` and `clipId(trackIndex, clipIndex)` map feedback from the matching plan back to document IDs. A negative inactive/pending sentinel or invalid index returns no identity. Track order and per-track clip order may change on the next preparation, while the IDs remain stable. Resolve again against the current plan rather than reusing raw indices or interpreting an old snapshot through a new plan.
 
-Preparation does not submit controls, commit a document or replace a live graph. A future UI must stage both the candidate document and its prepared plan before committing them. Old plans/assets remain alive until their render owner has stopped or acknowledged retirement. Metadata deletion alone does not stop a currently playing note. Scene-batch scheduling, live replacement and acknowledged retirement remain separate work.
+Preparation does not submit controls, commit a document or replace a live graph. A future UI must stage both the candidate document and its prepared plan before committing them. Old plans/assets remain alive until their render owner has stopped or acknowledged retirement. Metadata deletion alone does not stop a currently playing note. [Scene batches](scene-controls.md) now resolve through this same immutable plan. Live replacement and acknowledged retirement remain separate work.
 
 ## Verification boundary
 
@@ -24,4 +24,4 @@ Rejection cases cover missing/duplicate/orphan content, kind mismatch, non-finit
 
 The Qt Core file test saves/reopens metadata with full-width IDs, supplies the same external content to both preparations, and checks identical output across different block sizes plus an independent waveform oracle. The metadata file does not store that content, so this is ID-to-content resolution evidence, not general musical-project or asset-recovery qualification.
 
-This boundary advances issues #26/#27/#33/#56. The desktop now uses this adapter for the authored two-track template; see [identity and rename integration](desktop-identities.md). Management controls, general media/note persistence, scene launch, mixer controls, native input and physical audio remain open. See [the validation receipt](../validation/document-render-preparation.json).
+This boundary advances issues #26/#27/#33/#56. The desktop now uses this adapter for the authored two-track template; see [identity and rename integration](desktop-identities.md). General management controls, media/note persistence, mixer controls, native input and physical audio remain open. See [the validation receipt](../validation/document-render-preparation.json).

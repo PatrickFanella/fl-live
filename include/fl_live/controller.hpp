@@ -31,8 +31,15 @@ private:
     alignas(64) std::atomic<std::size_t> tail_{0};
 };
 
-enum class ControlKind { start, stop, rewind, schedule, launch_next_bar, stop_next_bar };
-struct Control { ControlKind kind; Command command{}; std::uint64_t serial = 0; };
+enum class ControlKind { start, stop, rewind, schedule, launch_next_bar, stop_next_bar, scene };
+enum class LaunchPolicy { immediate, next_bar };
+struct Control {
+    ControlKind kind;
+    Command command{};
+    std::uint64_t serial = 0;
+    CommandBatch batch{};
+    LaunchPolicy policy = LaunchPolicy::next_bar;
+};
 struct RenderStatus {
     Frame position;
     bool running;
@@ -77,6 +84,21 @@ public:
                         if (engine_.schedule(control.command) != ScheduleResult::accepted) ++rejected_;
                     } else ++rejected_;
                     break;
+                case ControlKind::scene: {
+                    // One queue message, one render-owned time, one admission.
+                    // No caller timestamps or UI playhead estimates are used.
+                    if (!control.batch.count || control.batch.count > control.batch.commands.size() ||
+                        (control.policy != LaunchPolicy::immediate && control.policy != LaunchPolicy::next_bar)) {
+                        ++rejected_; break;
+                    }
+                    const auto at = control.policy == LaunchPolicy::immediate
+                        ? std::optional<Frame>{engine_.position()} : grid_.try_next_bar(engine_.position());
+                    if (!at) { ++rejected_; break; }
+                    auto commands = std::span(control.batch.commands).first(control.batch.count);
+                    for (auto& command : commands) command.at = *at;
+                    if (engine_.scheduleTogether(commands) != ScheduleResult::accepted) ++rejected_;
+                    break;
+                }
                 default: ++rejected_; break;
                 }
                 handled_ = control.serial;
