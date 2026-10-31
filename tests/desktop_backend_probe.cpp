@@ -30,6 +30,7 @@ int main(int argc, char** argv) {
                !session.renameScene(sceneId,"Retained scene"))return 1;
             session.setTempo(137);
             session.setPitch(0, 48);
+            if(!session.setSceneIncluded(trackId.toString(),false))return 1;
             session.play();
             if(!session.launchScene(sceneId,"immediate"))return 1;
             std::cout << "{\"ready\":true}" << std::endl;
@@ -46,6 +47,7 @@ int main(int argc, char** argv) {
                 readAuthoredSettings(path).steps[0].pitch != 48 || session.dirty()) return 1;
             if(readAuthoredProject(path).identities.tracks[0].name!="Retained audio")return 1;
             if(readAuthoredProject(path).identities.scenes[0].name!="Retained scene" || session.sceneState()!="Stopped")return 1;
+            if(readAuthoredProject(path).identities.scenes[0].entries.size()!=1)return 1;
             if (session.reconnectAudio() || session.audioAvailable()) return 1;
             std::cout << "{\"ready\":true}" << std::endl;
             if (std::cin.get() != 'g' || !session.reconnectAudio()) return 1;
@@ -57,10 +59,15 @@ int main(int argc, char** argv) {
             if(session.trackIds()[0]!=trackId || session.clipIds()[0]!=clipId ||
                session.trackNames()[0].toString()!="Retained audio" || session.clipNames()[0].toString()!="Retained pulse")return 1;
             if(session.sceneId()!=sceneId || session.sceneName()!="Retained scene" || session.sceneState()!="Stopped")return 1;
+            if(session.sceneIncluded()[0].toBool() || !session.sceneIncluded()[1].toBool())return 1;
             session.undo();
-            if (session.pitches()[0].toInt() != 60 || !session.canRedo() || !session.dirty()) return 1;
+            if(!session.sceneIncluded()[0].toBool() || !session.canRedo() || !session.dirty())return 1;
+            session.undo();
+            if(session.pitches()[0].toInt()!=60 || !session.canRedo())return 1;
             session.redo();
-            if (session.pitches()[0].toInt() != 48 || session.dirty()) return 1;
+            if(session.pitches()[0].toInt()!=48 || !session.sceneIncluded()[0].toBool())return 1;
+            session.redo();
+            if (session.pitches()[0].toInt() != 48 || session.sceneIncluded()[0].toBool() || session.dirty()) return 1;
             std::cout << "PASS: server loss, failed retry, save, explicit stopped reconnect and retained history" << std::endl;
             return 0;
         }
@@ -91,6 +98,9 @@ int main(int argc, char** argv) {
             invoke("selectedGate", "valueModified", 100);
             invoke("level1", "valueModified", 40);
             invoke("level0", "valueModified", 0); // Isolate MIDI in the independent capture.
+            auto* inclusion=find(window->contentItem(),"sceneIncluded0");if(!inclusion)return 1;
+            inclusion->setProperty("checked",false);invoke("sceneIncluded0","clicked");
+            if(session.sceneIncluded()[0].toBool() || !session.sceneIncluded()[1].toBool())return 1;
             const auto trackId=session.trackIds()[0],clipId=session.clipIds()[1];
             invoke("renameTrack0","clicked");QTest::qWait(10);
             auto* rename=window->findChild<QObject*>("renameValue");if(!rename)return 1;
@@ -111,7 +121,7 @@ int main(int argc, char** argv) {
             invoke("launchScene", "clicked");
             QElapsedTimer deadline; deadline.start();
             while (deadline.elapsed() < 2500) QTest::qWait(10);
-            if (!session.running() || session.activeClips()[0].toInt()!=0 || session.activeClips()[1].toInt()!=0 || session.sceneState()!="Active" || session.canEdit()) return 1;
+            if (!session.running() || session.activeClips()[0].toInt()!=-1 || session.activeClips()[1].toInt()!=0 || session.sceneState()!="Active" || session.canEdit()) return 1;
             invoke("stopScene", "clicked");deadline.restart();
             while(session.sceneState()!="Stopped" && deadline.elapsed()<2000)QTest::qWait(10);
             if(session.sceneState()!="Stopped" || !session.running() || session.activeClips()[1].toInt()!=-1)return 1;

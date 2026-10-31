@@ -23,6 +23,7 @@ class Session final : public QObject {
     Q_PROPERTY(QString sceneId READ sceneId NOTIFY changed)
     Q_PROPERTY(QString sceneName READ sceneName NOTIFY changed)
     Q_PROPERTY(QString sceneState READ sceneState NOTIFY changed)
+    Q_PROPERTY(QVariantList sceneIncluded READ sceneIncluded NOTIFY changed)
     Q_PROPERTY(int stepCount READ stepCount NOTIFY changed)
     Q_PROPERTY(int selectedStep READ selectedStep NOTIFY changed)
     Q_PROPERTY(QVariantList stepEnabled READ stepEnabled NOTIFY changed)
@@ -61,6 +62,8 @@ public:
     QString sceneId() const;
     QString sceneName() const;
     QString sceneState() const;
+    QVariantList sceneIncluded() const;
+    Q_INVOKABLE bool setSceneIncluded(const QString& trackId, bool included);
     Q_INVOKABLE bool renameScene(const QString& id, const QString& name);
     Q_INVOKABLE bool launchScene(const QString& id, const QString& policy);
     Q_INVOKABLE bool stopScene(const QString& id, const QString& policy);
@@ -124,7 +127,7 @@ private:
     const fl_live::PipeWireConfig config_;
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
-    enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name };
+    enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot };
     struct HistoryEntry {
         ProjectSettings settings;
         Identities identities;

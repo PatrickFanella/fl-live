@@ -149,7 +149,11 @@ ApplicationWindow {
                           }
                           ToolButton { id: clipRename; objectName: "renameClip" + index; text: "Rename"; enabled: session.canEdit; Accessible.name: "Rename clip " + (index + 1); onClicked: renameDialog.edit(false, session.clipIds[index], session.clipNames[index], clipRename) }
                         }
-                        Label { objectName: "clipState" + index; text: session.clipStates[index]; color: session.activeClips[index] >= 0 ? "#68d9a4" : "#b7c5d8" }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label { objectName: "clipState" + index; text: session.clipStates[index]; Layout.fillWidth: true; color: session.activeClips[index] >= 0 ? "#68d9a4" : "#b7c5d8" }
+                            CheckBox { objectName: "sceneIncluded" + index; text: "Include in scene"; checked: session.sceneIncluded[index]; enabled: session.canEdit; onClicked: session.setSceneIncluded(session.trackIds[index], checked); Accessible.name: "Include track " + (index+1) + " in scene"; ToolTip.visible: hovered; ToolTip.text: "An excluded track stops when this scene launches." }
+                        }
                         Button { text: "Stop track on next bar"; Layout.fillWidth: true; onClicked: session.stopTrackId(session.trackIds[index]) }
                         Loader {
                             active: index === 1; visible: active

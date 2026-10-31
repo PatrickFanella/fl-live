@@ -49,6 +49,19 @@ int main(){try{
     auto invalid=project;invalid.settings.tempo=-1;rejects([&]{writeAuthoredProject(path,invalid);});
     CHECK(file.open(QIODevice::ReadOnly));CHECK(file.readAll()==saved);file.close();
     const auto root=QJsonDocument::fromJson(bytes).object();
+    // Incomplete scenes advertise a required capability. Old v3 readers reject
+    // that feature rather than silently restoring an excluded clip.
+    for(std::size_t retained=0;retained<2;++retained) {
+        auto sparse=project;sparse.identities.scenes[0].entries.resize(retained);
+        const auto encoded=encodeAuthoredProject(sparse);
+        auto sparseRoot=QJsonDocument::fromJson(encoded).object();
+        CHECK(sparseRoot["required_features"].toArray()==(QJsonArray{"template-identities-v1","template-scene-slots-v1"}));
+        CHECK(decodeAuthoredProject(encoded).identities==sparse.identities);
+        writeAuthoredProject(path,sparse);CHECK(readAuthoredProject(path).identities==sparse.identities);
+        sparseRoot["required_features"]=QJsonArray{"template-identities-v1"};
+        rejects([&]{decodeAuthoredProject(QJsonDocument(sparseRoot).toJson());});
+    }
+    CHECK(root["required_features"].toArray()==QJsonArray{"template-identities-v1"});
     const auto bad=[&](auto edit){auto value=root;edit(value);rejects([&]{decodeAuthoredProject(QJsonDocument(value).toJson());});};
     bad([](auto& r){r["version"]=4;});bad([](auto& r){r["version"]=true;});
     bad([](auto& r){r["required_features"]=QJsonArray{"future"};});

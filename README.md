@@ -83,3 +83,5 @@ The desktop can export its current two-track template mix while stopped: enter a
 The authored desktop now supports track/clip/scene Rename dialogs, document Undo/Redo and version 3 saves with stable identities. Playback resolves string IDs through prepared plans; v1/v2 projects import with initial identities. This remains the two-track Pulse + Steps template. See [desktop identity integration](docs/desktop-identities.md) for the format and qualification boundaries.
 
 Scene launch/stop uses one atomic group with an explicit Immediate or One bar policy. Feedback distinguishes requested controls from queued actions and active clips; scene stop keeps transport running. See [scene controls](docs/scene-controls.md).
+
+While stopped, use **Include in scene** beside each clip to choose scene membership. These choices support Undo/Redo and Save/Open. Launching a scene stops excluded tracks; individual clip launch remains available.
