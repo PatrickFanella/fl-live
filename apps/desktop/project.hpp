@@ -1,6 +1,7 @@
 #pragma once
 #include "fl_live/engine.hpp"
 #include <QString>
+#include <QByteArray>
 #include <array>
 
 struct MidiStep {
@@ -25,6 +26,8 @@ struct ProjectSettings {
 fl_live::SessionPlan prepareProject(const ProjectSettings& settings);
 ProjectSettings readProject(const QString& path);
 void writeProject(const QString& path, const ProjectSettings& settings);
+QByteArray encodeProjectSettings(const ProjectSettings& settings);
+ProjectSettings decodeProjectSettings(const QByteArray& bytes);
 
 // Both template clips start at frame zero; hard end, no effect tails.
 void exportProjectWav(const QString& path, const ProjectSettings& settings, int bars);

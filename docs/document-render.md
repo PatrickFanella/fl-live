@@ -6,7 +6,7 @@ Each `DocumentClipSource` supplies one stable clip ID and an engine `AudioClip` 
 
 Preparation validates the document, rate/tempo, source identity/count, track kind and content budgets before copying media. It then applies the engine's sample/note/voice validation outside rendering. The initial engine ceiling is 64 clips per track and 1,024 notes per clip; these are exposed engine constants with unchanged behavior. Metadata can store up to 256 clips per track, so a valid metadata document is not necessarily renderable by this engine slice. Such input fails explicitly at preparation.
 
-The default copied-content budget is 16,777,216 mono float frames and 65,536 MIDI notes across the plan. Callers may lower either budget, including to zero, but cannot raise it above those ceilings. Subtraction checks prevent counter overflow. The budget limits the new plan's copied content, not total process memory: callers can also own source arrays, candidates and retiring plans. Track gain is unity; per-track mixing is later work.
+The default copied-content budget is 16,777,216 mono float frames and 65,536 MIDI notes across the plan. Callers may lower either budget, including to zero, but cannot raise it above those ceilings. Subtraction checks prevent counter overflow. The budget limits the new plan's copied content, not total process memory: callers can also own source arrays, candidates and retiring plans. An omitted gain list uses unity. An optional complete ID-keyed gain list supports finite values in [0,4]; duplicates, missing tracks and count mismatches are rejected. Gains are immutable prepared values, not live automation.
 
 ## Stable IDs and render indices
 
@@ -24,4 +24,4 @@ Rejection cases cover missing/duplicate/orphan content, kind mismatch, non-finit
 
 The Qt Core file test saves/reopens metadata with full-width IDs, supplies the same external content to both preparations, and checks identical output across different block sizes plus an independent waveform oracle. The metadata file does not store that content, so this is ID-to-content resolution evidence, not general musical-project or asset-recovery qualification.
 
-This boundary advances issues #26/#27/#33/#56. The desktop still uses its authored template and has not adopted this adapter. Management controls, general media/note persistence, scene launch, mixer controls, native input and physical audio remain open. See [the validation receipt](../validation/document-render-preparation.json).
+This boundary advances issues #26/#27/#33/#56. The desktop now uses this adapter for the authored two-track template; see [identity and rename integration](desktop-identities.md). Management controls, general media/note persistence, scene launch, mixer controls, native input and physical audio remain open. See [the validation receipt](../validation/document-render-preparation.json).

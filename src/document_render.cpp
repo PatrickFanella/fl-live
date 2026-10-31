@@ -1,17 +1,23 @@
 #include "fl_live/document_render.hpp"
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <unordered_map>
 
 namespace fl_live {
 namespace {
 SessionPlan prepare(const DocumentSnapshot& document, std::span<const DocumentClipSource> sources,
-    std::uint32_t rate, std::uint32_t tempo, PreparationBudget budget) {
+    std::uint32_t rate, std::uint32_t tempo, PreparationBudget budget, std::span<const DocumentTrackGain> gains) {
     SessionDocument::validate(document);
     (void)TempoGrid(rate, tempo);
     if (sources.size() != document.clips.size()) throw std::invalid_argument("Every document clip requires exactly one source");
     if (budget.audio_frames > PreparationBudget::audio_frame_limit || budget.midi_notes > PreparationBudget::midi_note_limit)
         throw std::invalid_argument("Preparation budget exceeds supported limit");
+    std::unordered_map<std::uint64_t, float> levels;
+    if (!gains.empty() && gains.size() != document.tracks.size()) throw std::invalid_argument("Every track requires one gain binding");
+    for (const auto& gain : gains)
+        if (!std::isfinite(gain.gain) || gain.gain < 0 || gain.gain > 4 || !levels.emplace(gain.id.value, gain.gain).second)
+            throw std::invalid_argument("Invalid or duplicate track gain");
     std::unordered_map<std::uint64_t, const Clip*> content;
     std::size_t audio_frames = 0, midi_notes = 0;
     for (const auto& source : sources) {
@@ -29,6 +35,7 @@ SessionPlan prepare(const DocumentSnapshot& document, std::span<const DocumentCl
     }
     // Check all ownership/kind/count references before copying any media.
     for (const auto& track : document.tracks) {
+        if (!gains.empty() && !levels.contains(track.id.value)) throw std::invalid_argument("Missing track gain binding");
         std::size_t count = 0;
         for (const auto& clip : document.clips) if (clip.track == track.id) {
             if (++count > Engine::clips_per_track_capacity) throw std::invalid_argument("Track exceeds render clip capacity");
@@ -42,6 +49,7 @@ SessionPlan prepare(const DocumentSnapshot& document, std::span<const DocumentCl
     plan.tracks.reserve(document.tracks.size());
     for (const auto& track : document.tracks) {
         Track prepared;
+        if (!gains.empty()) prepared.gain = levels.at(track.id.value);
         for (const auto& clip : document.clips) if (clip.track == track.id)
             prepared.clips.push_back(*content.at(clip.id.value));
         plan.tracks.push_back(std::move(prepared));
@@ -52,8 +60,8 @@ SessionPlan prepare(const DocumentSnapshot& document, std::span<const DocumentCl
 }
 }
 DocumentRenderPlan::DocumentRenderPlan(DocumentSnapshot document, std::span<const DocumentClipSource> sources,
-    std::uint32_t sample_rate, std::uint32_t bpm_milli, PreparationBudget budget)
-    : document_(std::move(document)), plan_(prepare(document_, sources, sample_rate, bpm_milli, budget)) {}
+    std::uint32_t sample_rate, std::uint32_t bpm_milli, PreparationBudget budget, std::span<const DocumentTrackGain> gains)
+    : document_(std::move(document)), plan_(prepare(document_, sources, sample_rate, bpm_milli, budget, gains)) {}
 
 std::optional<std::size_t> DocumentRenderPlan::trackIndex(TrackId id) const noexcept {
     for (std::size_t i = 0; i < document_.tracks.size(); ++i) if (document_.tracks[i].id == id) return i;

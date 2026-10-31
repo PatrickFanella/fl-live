@@ -127,6 +127,17 @@ void rejectionAndBudgets() {
     rejects([&]{DocumentRenderPlan invalid(before,f.sources,48000,120000,{5,2});});
     rejects([&]{DocumentRenderPlan invalid(before,f.sources,48000,120000,{6,1});});
     const DocumentRenderPlan exact(before,f.sources,48000,120000,{6,2});
+    std::vector<DocumentTrackGain> gains{{f.n,2},{f.b,1},{f.m,0},{f.a,0.5F}};
+    const DocumentRenderPlan mixed(before,f.sources,48000,120000,{},gains);
+    CHECK(mixed.plan().tracks[0].gain==0.5F && mixed.plan().tracks[1].gain==0);
+    auto badGains=gains;badGains[0].id=f.m;
+    rejects([&]{DocumentRenderPlan invalid(before,f.sources,48000,120000,{},badGains);});
+    badGains=gains;badGains[0].gain=std::numeric_limits<float>::quiet_NaN();
+    rejects([&]{DocumentRenderPlan invalid(before,f.sources,48000,120000,{},badGains);});
+    badGains=gains;badGains.pop_back();
+    rejects([&]{DocumentRenderPlan invalid(before,f.sources,48000,120000,{},badGains);});
+    badGains=gains;badGains[0].id=TrackId{1};
+    rejects([&]{DocumentRenderPlan invalid(before,f.sources,48000,120000,{},badGains);});
     rejects([&]{DocumentRenderPlan invalid(before,f.sources,48000,120000,{PreparationBudget::audio_frame_limit+1,2});});
     // Valid metadata may exceed the current renderer's separate clip bound.
     SessionDocument many; const auto track=many.createTrack("Audio",TrackKind::audio);

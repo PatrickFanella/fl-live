@@ -9,8 +9,8 @@ ApplicationWindow {
     visible: true
     property bool discardOnClose: false
     property bool textOwnsUndo: (activeFocusItem instanceof TextInput || activeFocusItem instanceof TextEdit) && !activeFocusItem.readOnly
-    Shortcut { sequences: [StandardKey.Undo]; enabled: session.canUndo && !window.textOwnsUndo && !closeDialog.visible; onActivated: session.undo() }
-    Shortcut { sequences: [StandardKey.Redo]; enabled: session.canRedo && !window.textOwnsUndo && !closeDialog.visible; onActivated: session.redo() }
+    Shortcut { sequences: [StandardKey.Undo]; enabled: session.canUndo && !window.textOwnsUndo && !closeDialog.visible && !renameDialog.visible; onActivated: session.undo() }
+    Shortcut { sequences: [StandardKey.Redo]; enabled: session.canRedo && !window.textOwnsUndo && !closeDialog.visible && !renameDialog.visible; onActivated: session.redo() }
     title: "fl-live · Session" + (session.dirty ? " · Unsaved changes" : "")
     onClosing: function(close) {
         if (session.dirty && !discardOnClose) {
@@ -32,6 +32,37 @@ ApplicationWindow {
         }
     }
     color: "#191d24"
+    Dialog {
+        id: renameDialog
+        objectName: "renameDialog"
+        anchors.centerIn: parent
+        modal: true
+        title: track ? "Rename track" : "Rename clip"
+        property bool track: true
+        property string entityId
+        property string errorText: ""
+        property var returnFocus
+        function edit(isTrack, identity, name, control) {
+            track = isTrack; entityId = identity
+            // Force a fresh text-undo boundary even when reopening the same name.
+            renameValue.text = ""; renameValue.text = name
+            returnFocus = control; errorText = ""; open()
+        }
+        function commit() {
+            const ok = track ? session.renameTrack(entityId, renameValue.text) : session.renameClip(entityId, renameValue.text)
+            if (ok) close(); else errorText = session.message
+        }
+        onOpened: { renameValue.forceActiveFocus(); renameValue.selectAll() }
+        onClosed: { if (returnFocus) returnFocus.forceActiveFocus() }
+        contentItem: ColumnLayout {
+            TextField { id: renameValue; objectName: "renameValue"; Layout.preferredWidth: 320; selectByMouse: true; Accessible.name: "New name"; onAccepted: renameDialog.commit() }
+            Label { Layout.preferredWidth: 320; text: renameDialog.errorText; textFormat: Text.PlainText; visible: text.length > 0; wrapMode: Text.WordWrap; color: "#e4bc75" }
+        }
+        footer: RowLayout {
+            Button { objectName: "applyRename"; text: "Apply"; enabled: session.canEdit; onClicked: renameDialog.commit() }
+            Button { objectName: "cancelRename"; text: "Cancel"; onClicked: renameDialog.close() }
+        }
+    }
     palette.windowText: "#e8edf5"
     palette.buttonText: "#e8edf5"
     palette.button: "#333e4d"
@@ -86,18 +117,28 @@ ApplicationWindow {
                         Layout.fillWidth: true; Layout.fillHeight: true; spacing: 14
                         Layout.preferredWidth: index === 0 ? 280 : 620
                         Layout.minimumWidth: index === 0 ? 220 : 500
-                        Label { text: modelData; font.bold: true; font.pixelSize: 18 }
-                        Button {
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label { objectName: "trackName" + index; text: session.trackNames[index]; textFormat: Text.PlainText; font.bold: true; font.pixelSize: 18; Layout.fillWidth: true; elide: Text.ElideRight }
+                            ToolButton { id: trackRename; objectName: "renameTrack" + index; text: "Rename"; enabled: session.canEdit; Accessible.name: "Rename track " + (index + 1); onClicked: renameDialog.edit(true, session.trackIds[index], session.trackNames[index], trackRename) }
+                        }
+                        RowLayout {
+                          Layout.fillWidth: true
+                          Button {
+                            id: clipButton
                             objectName: "clip" + index
                             Layout.fillWidth: true; Layout.preferredHeight: 72
                             highlighted: session.activeClips[index] === 0
-                            text: (session.activeClips[index] === 0 ? "●  " : "▶  ") + (index === 0 ? "Low pulse\nAudio loop · 1 beat" : "Step pattern\nMIDI loop · " + session.stepCount + " beats")
-                            onClicked: session.launch(index, 0)
-                            Accessible.name: index === 0 ? "Launch low pulse audio clip" : "Launch MIDI step pattern"
+                            text: (session.activeClips[index] === 0 ? "●  " : "▶  ") + session.clipNames[index] + (index === 0 ? "\nAudio loop · 1 beat" : "\nMIDI loop · " + session.stepCount + " beats")
+                            contentItem: Text { text: clipButton.text; textFormat: Text.PlainText; color: clipButton.palette.buttonText; font: clipButton.font; wrapMode: Text.Wrap; elide: Text.ElideRight; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                            onClicked: session.launchClip(session.clipIds[index])
+                            Accessible.name: "Launch " + session.clipNames[index]
                             Accessible.description: session.clipStates[index]
+                          }
+                          ToolButton { id: clipRename; objectName: "renameClip" + index; text: "Rename"; enabled: session.canEdit; Accessible.name: "Rename clip " + (index + 1); onClicked: renameDialog.edit(false, session.clipIds[index], session.clipNames[index], clipRename) }
                         }
                         Label { objectName: "clipState" + index; text: session.clipStates[index]; color: session.activeClips[index] >= 0 ? "#68d9a4" : "#b7c5d8" }
-                        Button { text: "Stop track on next bar"; Layout.fillWidth: true; onClicked: session.stopTrack(index) }
+                        Button { text: "Stop track on next bar"; Layout.fillWidth: true; onClicked: session.stopTrackId(session.trackIds[index]) }
                         Loader {
                             active: index === 1; visible: active
                             Layout.fillWidth: true; Layout.fillHeight: true

@@ -16,9 +16,102 @@
 #include <QJsonArray>
 #include "fl_live/document_io.hpp"
 
+static ProjectSettings readAuthoredSettings(const QString& path) { return readAuthoredProject(path).settings; }
+
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void identityRenamingAndHistory() {
+        Session session;session.selectStep(2);
+        const auto tracks=session.trackIds(),clips=session.clipIds();
+        QVERIFY(session.renameTrack(tracks[0].toString(),"Drums"));
+        QVERIFY(session.renameClip(clips[1].toString(),"Melody"));
+        QCOMPARE(session.trackIds(),tracks);QCOMPARE(session.clipIds(),clips);QCOMPARE(session.selectedStep(),2);
+        QCOMPARE(session.trackNames()[0].toString(),QString("Drums"));
+        QCOMPARE(session.clipNames()[1].toString(),QString("Melody"));
+        QTemporaryDir directory;const auto path=directory.filePath("renamed.json");
+        QVERIFY(session.saveProject(path));QVERIFY(!session.dirty());
+        const auto saved=readAuthoredProject(path);
+        QCOMPARE(saved.identities.tracks[0].name,std::string("Drums"));
+        session.undo();QCOMPARE(session.clipNames()[1].toString(),QString("Step pattern"));QVERIFY(session.dirty());
+        session.undo();QCOMPARE(session.trackNames()[0].toString(),QString("Pulse / Audio"));
+        session.redo();session.redo();QVERIFY(!session.dirty());
+        const auto undo=session.undoText();
+        QVERIFY(session.renameTrack(tracks[0].toString(),"Drums"));QCOMPARE(session.undoText(),undo);
+        QVERIFY(!session.renameTrack(tracks[0].toString(),""));
+        QVERIFY(!session.renameClip("03","Wrong ID"));
+        QCOMPARE(session.undoText(),undo);QVERIFY(!session.dirty());
+        QVERIFY(session.launchClip(clips[1].toString()));session.play();
+        QVERIFY(!session.renameClip(clips[1].toString(),"Pending"));
+        session.tick();QVERIFY(session.running());QCOMPARE(session.activeClipIds()[1],clips[1]);
+        QVERIFY(!session.renameTrack(tracks[0].toString(),"Running"));
+        session.panic();session.tick();QCOMPARE(session.activeClipIds()[1].toString(),QString{});
+        QVERIFY(session.loadProject(path));QCOMPARE(session.trackNames()[0].toString(),QString("Drums"));QVERIFY(!session.canUndo());
+        // Test the actual desktop string-ID path above JavaScript's exact range.
+        auto high=saved;constexpr std::uint64_t delta=9007199254740992ULL;
+        for(auto& t:high.identities.tracks)t.id.value+=delta;
+        for(auto& c:high.identities.clips){c.id.value+=delta;c.track.value+=delta;}
+        for(auto& s:high.identities.scenes){s.id.value+=delta;for(auto& e:s.entries){e.track.value+=delta;e.clip.value+=delta;}}
+        high.identities.next_id+=delta;
+        const auto highPath=directory.filePath("high.json");writeAuthoredProject(highPath,high);
+        QVERIFY(session.loadProject(highPath));
+        QCOMPARE(session.trackIds()[0].toString(),QString("9007199254740993"));
+        QVERIFY(session.renameTrack(session.trackIds()[0].toString(),"High ID"));
+        QVERIFY(session.launchClip(session.clipIds()[0].toString()));session.play();session.tick();
+        QCOMPARE(session.activeClipIds()[0],session.clipIds()[0]);session.panic();session.tick();
+    }
+    void qmlRenameInputAndFocus() {
+        QTemporaryDir directory;auto high=AuthoredProject{{},defaultTemplateIdentities()};
+        constexpr std::uint64_t delta=9007199254740992ULL;
+        for(auto& t:high.identities.tracks)t.id.value+=delta;
+        for(auto& c:high.identities.clips){c.id.value+=delta;c.track.value+=delta;}
+        for(auto& s:high.identities.scenes){s.id.value+=delta;for(auto& e:s.entries){e.track.value+=delta;e.clip.value+=delta;}}
+        high.identities.next_id+=delta;
+        const auto inputPath=directory.filePath("wide-ids.json");writeAuthoredProject(inputPath,high);
+        Session session;QVERIFY(session.loadProject(inputPath));session.selectStep(2);
+        const auto clipId=session.clipIds()[1];
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);
+        engine.load(QUrl("qrc:/ui/Main.qml"));QCOMPARE(engine.rootObjects().size(),1);
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> find=[&](QQuickItem* item,const QString& name)->QQuickItem*{
+            if(item->objectName()==name && item->isVisible())return item;
+            for(auto* child:item->childItems())if(auto* result=find(child,name))return result;return nullptr;
+        };
+        auto click=[&](const char* name){auto* item=find(window->contentItem(),QString::fromUtf8(name));QVERIFY(item);QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());};
+        auto type=[&](const char* text){for(auto c:QByteArray(text))QTest::keyClick(window,c);};
+        auto* dialog=window->findChild<QObject*>("renameDialog");QVERIFY(dialog);
+        click("renameTrack0");QTRY_VERIFY(dialog->property("visible").toBool());
+        auto* input=window->findChild<QObject*>("renameValue");QVERIFY(input);QTRY_VERIFY(input->property("activeFocus").toBool());
+        type("Drums");session.tick();
+        QCOMPARE(input->property("text").toString(),QString("Drums"));
+        QTest::keyClick(window,Qt::Key_Return);QTRY_COMPARE(session.trackNames()[0].toString(),QString("Drums"));
+        QTRY_VERIFY(!dialog->property("visible").toBool());QTRY_VERIFY(find(window->contentItem(),"renameTrack0")->hasActiveFocus());
+        QCOMPARE(session.selectedStep(),2);
+        QTest::keyClick(window,Qt::Key_Z,Qt::ControlModifier);QTRY_COMPARE(session.trackNames()[0].toString(),QString("Pulse / Audio"));
+        QTest::keyClick(window,Qt::Key_Z,Qt::ControlModifier|Qt::ShiftModifier);QTRY_COMPARE(session.trackNames()[0].toString(),QString("Drums"));
+        click("renameClip1");QTRY_VERIFY(dialog->property("visible").toBool());
+        QTRY_VERIFY(input->property("activeFocus").toBool());type("Melody");click("applyRename");QTRY_COMPARE(session.clipNames()[1].toString(),QString("Melody"));
+        QTRY_VERIFY(find(window->contentItem(),"renameClip1")->hasActiveFocus());
+        const auto undo=session.undoText();
+        click("renameClip1");QTRY_VERIFY(dialog->property("visible").toBool());
+        QTRY_VERIFY(input->property("activeFocus").toBool());
+        QTest::keyClick(window,Qt::Key_End);QTest::keyClick(window,Qt::Key_X);QTest::keyClick(window,Qt::Key_Z,Qt::ControlModifier);
+        QCOMPARE(session.clipNames()[1].toString(),QString("Melody"));
+        QTRY_COMPARE(input->property("text").toString(),QString("Melody"));QCOMPARE(session.undoText(),undo);
+        QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier);QTest::keyClick(window,Qt::Key_Backspace);QTest::keyClick(window,Qt::Key_Return);
+        QVERIFY(dialog->property("visible").toBool());QCOMPARE(session.clipNames()[1].toString(),QString("Melody"));
+        click("cancelRename");QTRY_VERIFY(!dialog->property("visible").toBool());
+        const auto path=directory.filePath("qml-renamed.json");
+        auto* projectFile=window->findChild<QObject*>("projectFile");QVERIFY(projectFile);projectFile->setProperty("text",path);
+        click("saveProjectButton");QVERIFY(!session.dirty());
+        click("openProjectButton");QCOMPARE(session.trackNames()[0].toString(),QString("Drums"));
+        QCOMPARE(session.clipNames()[1].toString(),QString("Melody"));QVERIFY(!session.canUndo());
+        const auto saved=readAuthoredProject(path);QCOMPARE(saved.identities.tracks[0].name,std::string("Drums"));
+        QCOMPARE(saved.identities.tracks[0].id.value,9007199254740993ULL);
+        click("clip1");click("playButton");session.tick();QCOMPARE(session.activeClipIds()[1],clipId);
+        click("stopButton");session.tick();QVERIFY(!session.running());
+        QVERIFY(window->grabWindow().save("desktop-identity-renaming.png"));
+    }
     void metadataIsNotMusicalProject() {
         QTemporaryDir directory; QVERIFY(directory.isValid());
         fl_live::SessionDocument metadata;
@@ -58,7 +151,7 @@ private slots:
         QTemporaryDir directory;
         const auto path = directory.filePath("unchanged.json");
         QVERIFY(session.saveProject(path));
-        QVERIFY(readProject(path) == ProjectSettings{});
+        QVERIFY(readAuthoredSettings(path) == ProjectSettings{});
     }
     void missingAudioServer() {
         QTemporaryDir directory;
@@ -89,7 +182,7 @@ private slots:
         QVERIFY(!session.pending());
         const auto path = directory.filePath("preserved.json");
         QVERIFY(session.saveProject(path));
-        QCOMPARE(readProject(path).tempo, 120);
+        QCOMPARE(readAuthoredSettings(path).tempo, 120);
         QVERIFY(!session.reconnectAudio());
         QVERIFY(!session.audioAvailable());
         QVERIFY(!session.running());
@@ -156,7 +249,7 @@ private slots:
         session.undo();QCOMPARE(session.pitches()[4].toInt(),48);QVERIFY(!session.dirty());
         session.setLevel(0,41);QVERIFY(session.dirty());session.setLevel(0,40);QVERIFY(!session.dirty());
         session.undo();QVERIFY(session.dirty());session.redo();QVERIFY(!session.dirty());
-        QCOMPARE(readProject(path).steps[4].gate,100);QCOMPARE(readProject(other).steps[4].gate,75);
+        QCOMPARE(readAuthoredSettings(path).steps[4].gate,100);QCOMPARE(readAuthoredSettings(other).steps[4].gate,75);
     }
     void historyFailureAndDocumentBoundary() {
         Session session;session.setTempo(120);session.setTempo(0);QVERIFY(!session.canUndo());
@@ -191,7 +284,7 @@ private slots:
         const auto path=directory.filePath("legacy.json");
         QFile file(path); QVERIFY(file.open(QIODevice::WriteOnly));
         file.write(R"({"format":"fl-live-project","version":1,"template":"pulse-steps-v1","tempo":120,"levels":[70,25],"pitches":[60,64,67,72]})");file.close();
-        const auto settings=readProject(path);
+        const auto settings=readAuthoredSettings(path);
         QCOMPARE(settings.step_count,4);
         auto plan=prepareProject(settings);
         const auto& midi=std::get<fl_live::MidiClip>(plan.tracks[1].clips[0]);
@@ -203,7 +296,7 @@ private slots:
         }
         QVERIFY(!settings.steps[4].enabled);
         const auto converted=directory.filePath("converted.json");writeProject(converted,settings);
-        QVERIFY(readProject(converted)==settings);
+        QVERIFY(readAuthoredSettings(converted)==settings);
         QFile convertedFile(converted);QVERIFY(convertedFile.open(QIODevice::ReadOnly));
         QCOMPARE(QJsonDocument::fromJson(convertedFile.readAll()).object()["version"].toInt(),2);
     }
@@ -251,7 +344,7 @@ private slots:
         session.play();session.setGate(15,1);QCOMPARE(session.gates()[15].toInt(),100);
         session.tick();session.setStepCount(1);QCOMPARE(session.stepCount(),16);session.stop();session.tick();
         QTemporaryDir directory;const auto good=directory.filePath("good.json");QVERIFY(session.saveProject(good));
-        QFile file(good);QVERIFY(file.open(QIODevice::ReadOnly));const auto document=QJsonDocument::fromJson(file.readAll()).object();file.close();
+        QFile file(good);QVERIFY(file.open(QIODevice::ReadOnly));const auto document=QJsonDocument::fromJson(file.readAll()).object()["settings"].toObject();file.close();
         const auto bad=directory.filePath("bad.json");
         auto reject=[&](QJsonObject object) {
             QFile badFile(bad);QVERIFY(badFile.open(QIODevice::WriteOnly|QIODevice::Truncate));badFile.write(QJsonDocument(object).toJson());badFile.close();
@@ -276,7 +369,7 @@ private slots:
         settings.step_count=12;settings.steps[9]={true,72,32,100};settings.steps[1].enabled=false; const std::array<int,4> pitches{48,55,59,62};
         for (std::size_t i=0;i<4;++i) settings.steps[i].pitch=pitches[i];
         writeProject(path, settings);
-        const auto decoded = readProject(path);
+        const auto decoded = readAuthoredSettings(path);
         QVERIFY(decoded == settings);
         auto render = [](const ProjectSettings& value) {
             const auto plan = prepareProject(value);
@@ -338,7 +431,7 @@ private slots:
         session.setLevel(0,101); QCOMPARE(session.levels()[0].toInt(),35); QVERIFY(!session.dirty());
         session.setPitch(0,-1); QCOMPARE(session.pitches()[0].toInt(),48);
         QVERIFY(!session.saveProject(directory.filePath("missing/child.json"))); QVERIFY(!session.dirty());
-        session.setTempo(160); QVERIFY(session.saveProject(path)); QCOMPARE(readProject(path).tempo,160);
+        session.setTempo(160); QVERIFY(session.saveProject(path)); QCOMPARE(readAuthoredSettings(path).tempo,160);
     }
     void clipFeedback() {
         Session session;
@@ -457,7 +550,7 @@ private slots:
         QVERIFY(dialog); QVERIFY(dialog->property("visible").toBool());
         QVERIFY(QMetaObject::invokeMethod(dialog,"close"));
         click("saveProjectButton"); QVERIFY(!session.dirty());
-        const auto saved=readProject(directory.filePath("qml.json"));QCOMPARE(saved.tempo,121);
+        const auto saved=readAuthoredSettings(directory.filePath("qml.json"));QCOMPARE(saved.tempo,121);
         QCOMPARE(saved.step_count,5);QCOMPARE(saved.steps[4].pitch,61);QCOMPARE(saved.steps[4].velocity,69);QCOMPARE(saved.steps[4].gate,74);
         click("openProjectButton"); QCOMPARE(session.tempo(),121);
         click("step4");QCOMPARE(session.selectedStep(),4);
