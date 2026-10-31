@@ -112,6 +112,26 @@ ScheduleResult Engine::schedule(Command command) noexcept {
     ++count_;
     return ScheduleResult::accepted;
 }
+ScheduleResult Engine::scheduleTogether(std::span<const Command> commands) noexcept {
+    if (commands.empty() || commands.size() > command_capacity) return ScheduleResult::invalid;
+    const auto at = commands.front().at;
+    for (const auto& command : commands) {
+        if (command.at != at || (command.kind != CommandKind::launch && command.kind != CommandKind::stop_track) ||
+            command.track >= plan_.tracks.size() ||
+            (command.kind == CommandKind::launch && command.clip >= plan_.tracks[command.track].clips.size()))
+            return ScheduleResult::invalid;
+    }
+    if (at < position_) return ScheduleResult::in_past;
+    if (commands.size() > command_capacity - count_) return ScheduleResult::full;
+    std::size_t insertion = 0;
+    while (insertion < count_ && commands_[(head_ + insertion) % command_capacity].at <= at) ++insertion;
+    for (auto n = count_; n > insertion; --n)
+        commands_[(head_ + n - 1 + commands.size()) % command_capacity] = commands_[(head_ + n - 1) % command_capacity];
+    for (std::size_t n = 0; n < commands.size(); ++n)
+        commands_[(head_ + insertion + n) % command_capacity] = commands[n];
+    count_ += commands.size();
+    return ScheduleResult::accepted;
+}
 void Engine::apply(const Command& command) noexcept {
     auto& state = runtime_[command.track];
     state = Runtime{};

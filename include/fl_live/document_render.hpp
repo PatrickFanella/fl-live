@@ -34,6 +34,9 @@ public:
     std::optional<ClipId> clipId(std::size_t track, int clip) const noexcept;
     std::optional<Command> launch(ClipId id, Frame at) const noexcept;
     std::optional<Command> stop(TrackId id, Frame at) const noexcept;
+    // Launch fills every track: an unfilled scene slot stops that track. Stop
+    // acts on every track. Resolve IDs against this exact immutable plan.
+    std::optional<CommandBatch> scene(SceneId id, bool stop, Frame at = 0) const noexcept;
 private:
     const DocumentSnapshot document_;
     const SessionPlan plan_;

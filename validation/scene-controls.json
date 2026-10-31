@@ -1,0 +1,345 @@
+{
+  "verified_at": "2026-10-31T16:46:21.997482+00:00",
+  "base": "ea267ddc092f33262b34d01d9ca30c5981c6a062",
+  "host": "kvant",
+  "issues": [
+    27,
+    28,
+    29,
+    33
+  ],
+  "scope": "Atomic scene launch/stop with explicit Immediate/One bar timing, authored desktop controls and persisted scene naming",
+  "toolchain": {
+    "Qt6Quick": "6.12.0",
+    "PipeWire": "1.6.9",
+    "sndfile": "1.2.2"
+  },
+  "gates": {
+    "desktop": {
+      "passed": 15,
+      "total": 15,
+      "commands": [
+        "cmake --preset desktop",
+        "cmake --build --preset desktop",
+        "ctest --preset desktop --output-junit scene-controls-tests.xml"
+      ],
+      "junit_sha256": "bcde0f2484873ee24bfbae5e43f6f11cf391d6791ff106254b7485e1afd5493f",
+      "last_test_log_sha256": "e205478db9aff1b09b7348abf79a007a8c0b7fb9add51679e69e7ccf6426714a"
+    },
+    "release": {
+      "passed": 6,
+      "total": 6,
+      "commands": [
+        "cmake --preset release",
+        "cmake --build --preset release",
+        "ctest --preset release --output-junit scene-controls-tests.xml"
+      ],
+      "junit_sha256": "fcc821f584a59b6ed798075b5290e10b533fcc955af756ba7923328af35a22ad",
+      "last_test_log_sha256": "3ee27b914f875594c11a525c0cdd4e0a4ab8275f892964a0bdffef2c6c48fc43"
+    },
+    "engine-only": {
+      "passed": 5,
+      "total": 5,
+      "commands": [
+        "cmake --preset engine-only",
+        "cmake --build --preset engine-only",
+        "ctest --preset engine-only --output-junit scene-controls-tests.xml"
+      ],
+      "junit_sha256": "21b742a2f690b64f5c7f3c0614d0bf15505bc07afa488f9b47902fd9b85588cc",
+      "last_test_log_sha256": "16540f9b787e35765d8405435939a6174d49c1a353484e018748796ae959041b"
+    },
+    "pipewire-sanitize": {
+      "passed": 12,
+      "total": 12,
+      "commands": [
+        "cmake --preset pipewire-sanitize",
+        "cmake --build --preset pipewire-sanitize",
+        "ctest --preset pipewire-sanitize --output-junit scene-controls-tests.xml"
+      ],
+      "junit_sha256": "da0551b4a86b0f0c8bf40cedf81372c21eff9bb6e01534c243418816d3e350f9",
+      "last_test_log_sha256": "7eccb4e847c898d9eca5d99befcac317774295491e9e99b551c3a4255ffed5f3"
+    },
+    "document-io-sanitize": {
+      "passed": 7,
+      "total": 7,
+      "commands": [
+        "cmake --preset document-io-sanitize",
+        "cmake --build --preset document-io-sanitize",
+        "ctest --preset document-io-sanitize --output-junit scene-controls-tests.xml"
+      ],
+      "junit_sha256": "e94e049d3b1f77341a818f2fc48bdd08e494d3e7024e8f86062f5105125e1592",
+      "last_test_log_sha256": "71888796f099794ae7a565f4597f39a0e6a12803e22c8666e17e1e275b76114d"
+    }
+  },
+  "other_checks": [
+    "ShellCheck ci/verify.sh passed",
+    "git diff --check passed"
+  ],
+  "verified_behaviors": [
+    "One fixed scene control resolves one render-owned sample; full validation/capacity admission leaves no partial schedule",
+    "Four-track independent audio/MIDI sample checks at 137.125 BPM for Immediate and One bar with blocks 1,64,257",
+    "First and second bar boundaries checked against independently calculated rational ceilings",
+    "Stable IDs above 2^53 and reordered metadata/entries resolve intended tracks and clips",
+    "Empty slots clear MIDI voices; immediate groups insert ahead of future events without cancelling them; same-frame groups preserve arrival order",
+    "Engine ring wrap, malformed final action, invalid policy/count, engine/control queue fullness, out-of-band panic and retry, and 64-track capacity",
+    "Instrumented scene submission/admission/processing under both policies reports no C++ allocations",
+    "Actual offscreen mouse/key input renames the scene, restores focus and step selection, Save/Opens full-width IDs, chooses timing and launches/stops the scene",
+    "Requested/queued/active scene feedback, name Undo/Redo and saved-state equality, unknown IDs/policies and full producer queue recovery",
+    "Private production-QML scene controls activate both tracks and capture isolated A4 at expected gain; scene stop retains running transport for 350 ms before transport stop",
+    "Private server loss/retry preserves scene name/ID/history and reconnects stopped without resuming playback",
+    "Offscreen scene capture inspected; existing step editor mouse/key workflow passes at the adjusted default layout"
+  ],
+  "private_graph_observations": [
+    {
+      "passed": true,
+      "scope": "frame-coded private software capture; no hardware",
+      "producer": "fl-live",
+      "capture_drained_during_changes": true,
+      "quantum_observer": "producer backend",
+      "linked_output": "fl-live-output:output_MONO",
+      "linked_input": "fixture-capture:input_MONO",
+      "quantum_changes": false,
+      "transitions": [
+        {
+          "ready": true,
+          "quantum": 257,
+          "frames": 257,
+          "callbacks": 1
+        }
+      ],
+      "captured_frames": 72000,
+      "silent_prefix": 514,
+      "first_source_frame": 771,
+      "playback": {
+        "passed": true,
+        "frames": 73245,
+        "callbacks": 285,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "running": false
+      },
+      "capture_sha256": "27c748f69e04766c6d96e438cfb1a1418ed63cd5c05f9ef46f28ccf0994e3f92",
+      "mismatched_frames": 0,
+      "first_mismatches": [],
+      "unexpected_zero_frames": 0
+    },
+    {
+      "passed": true,
+      "scope": "frame-coded private software capture; no hardware",
+      "producer": "pw-cat",
+      "capture_drained_during_changes": true,
+      "quantum_observer": "unlinked fl-live probe",
+      "linked_output": "fixture-reference:output_MONO",
+      "linked_input": "fixture-capture:input_MONO",
+      "quantum_changes": false,
+      "transitions": [
+        {
+          "ready": true,
+          "quantum": 257,
+          "frames": 257,
+          "callbacks": 1
+        }
+      ],
+      "captured_frames": 72000,
+      "silent_prefix": 514,
+      "first_source_frame": 514,
+      "playback": {
+        "passed": true,
+        "frames": 72988,
+        "callbacks": 284,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "running": false
+      },
+      "capture_sha256": "96c4b651c3810b8afbc00cb21e4890887e38a873c5edc580f7ff97041b505b0c",
+      "mismatched_frames": 0,
+      "first_mismatches": [],
+      "unexpected_zero_frames": 0
+    },
+    {
+      "passed": true,
+      "scope": "private software graph; no hardware/audio-device qualification",
+      "requested_quantum": 257,
+      "captured_frames": 24000,
+      "capture_returncode": 1,
+      "silent_prefix": 257,
+      "playback": {
+        "callbacks": 561,
+        "frames": 144177,
+        "bad_buffers": 0,
+        "max_process_ns": 626299,
+        "processing_over_budget": 0,
+        "error": 0,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "position": 143920,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "server_loss": {
+        "callbacks": 7,
+        "frames": 1799,
+        "bad_buffers": 0,
+        "max_process_ns": 29940,
+        "processing_over_budget": 0,
+        "error": -32,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "position": 1799,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "project_rebuilds": null,
+      "desktop_workflow": null,
+      "desktop_recovery": null
+    },
+    {
+      "passed": true,
+      "scope": "private software graph; no hardware/audio-device qualification",
+      "requested_quantum": 1024,
+      "captured_frames": 24000,
+      "capture_returncode": 1,
+      "silent_prefix": 1024,
+      "playback": {
+        "callbacks": 141,
+        "frames": 144384,
+        "bad_buffers": 0,
+        "max_process_ns": 67480,
+        "processing_over_budget": 0,
+        "error": 0,
+        "min_render_frames": 1024,
+        "max_render_frames": 1024,
+        "position": 143360,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "server_loss": {
+        "callbacks": 2,
+        "frames": 2048,
+        "bad_buffers": 0,
+        "max_process_ns": 40899,
+        "processing_over_budget": 0,
+        "error": -32,
+        "min_render_frames": 1024,
+        "max_render_frames": 1024,
+        "position": 2048,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "project_rebuilds": null,
+      "desktop_workflow": null,
+      "desktop_recovery": null
+    },
+    {
+      "passed": true,
+      "scope": "private oversized quantum rejection; no hardware",
+      "requested_quantum": 16384,
+      "playback": {
+        "callbacks": 2,
+        "frames": 8192,
+        "bad_buffers": 2,
+        "max_process_ns": 6140,
+        "processing_over_budget": 0,
+        "error": -90,
+        "min_render_frames": 0,
+        "max_render_frames": 0,
+        "position": 0,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      }
+    },
+    {
+      "passed": true,
+      "scope": "private software graph; no hardware/audio-device qualification",
+      "requested_quantum": 128,
+      "captured_frames": 24000,
+      "capture_returncode": 1,
+      "silent_prefix": 256,
+      "playback": {
+        "callbacks": 1125,
+        "frames": 144000,
+        "bad_buffers": 0,
+        "max_process_ns": 20300,
+        "processing_over_budget": 0,
+        "error": 0,
+        "min_render_frames": 128,
+        "max_render_frames": 128,
+        "position": 143872,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "server_loss": {
+        "callbacks": 29,
+        "frames": 3712,
+        "bad_buffers": 0,
+        "max_process_ns": 15200,
+        "processing_over_budget": 0,
+        "error": -32,
+        "min_render_frames": 128,
+        "max_render_frames": 128,
+        "position": 3712,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "project_rebuilds": "PASS: five stopped project rebuilds including Undo/Redo on the private PipeWire server",
+      "desktop_workflow": {
+        "frames": 144000,
+        "peak": 0.020000001415610313,
+        "pitch": {
+          "positive_crossings": 220,
+          "stable_periods": 219,
+          "discontinuous_periods": 0,
+          "median_period_frames": 109
+        },
+        "stopped_silence_frames": 12000,
+        "scene_active_tracks": 2,
+        "scene_stop_keeps_transport": true
+      },
+      "desktop_recovery": "PASS: server loss, failed retry, save, explicit stopped reconnect and retained history"
+    }
+  ],
+  "screenshot": {
+    "path": "build/desktop/desktop-scene-controls.png",
+    "sha256": "893ebe03ee80cd979b6abb3f38deb5402e33c7f6783c40a5a6cca580116b935a",
+    "scope": "Actual Qt offscreen window; software scene graph; inspected locally"
+  },
+  "qualification_limits": [
+    "Desktop remains the authored two-track/one-scene template; general create/duplicate/delete and arbitrary media remain open",
+    "No native Wayland, physical output, hardware timing, lossless live-quantum, xrun performance, live graph retirement or release qualification",
+    "One engine schedule holds 64 individual actions; full-group rejection is reported through aggregate render feedback",
+    "Immediate actions retain future queued actions; timing is a view preference outside project persistence/history",
+    "Hosted CI is separate from these local results; preceding main run 17674 failed with no readable task log or artifacts, while PR #105 head push/PR runs passed; the main failure cause remains undetermined"
+  ],
+  "source_files_sha256": {
+    "CMakeLists.txt": "30d3ab22579a2f143824c302f267165c6eb2efdafc5ec124de790b1fa84011fd",
+    "README.md": "7b293739c9815863095bbe4644745c172fa99a9e611589c66becc55d402ac625",
+    "apps/desktop/Main.qml": "6f1de2caa908308eab83801c9a7c213be27958ec0cf6b55f277035e0896a2f97",
+    "apps/desktop/session.cpp": "222da34555e6ff912d753d0e0ffbf99af100cddc1fb4c9716f636e8d331e7c26",
+    "apps/desktop/session.hpp": "a8c82861a662af544776c74ce107d1b087e4130006234f771e66c6505aaa0a38",
+    "ci/verify.sh": "6d2b376f09005b44ced758f686679220c7fbeb03ca61d66aa05ed38e782279e5",
+    "docs/STATUS.md": "968a0f823545d0039b1c53de0a7b0a8aed7f55b15a7d0d6c65005ffa814adf5a",
+    "docs/ci.md": "6bd6799c50d6487bad4e939d60f810221bfda0e8684cedeb46d82d82c89bd72c",
+    "docs/desktop-identities.md": "9f0d3a2ed7154b65f4f22dffab2df28d2c3a172e593790f9c46da62c713f89d9",
+    "docs/desktop-session.md": "3c041e105d30bbcef6be545a093e01f6f03ce8e78fff49cc825fadadd23db3f0",
+    "docs/document-render.md": "dc32ab3d0c7ffdb061836c4fd3f92e8e09ef7b2bacd6071b5f09639a36bb0baf",
+    "docs/edit-history.md": "25dd09a7094c407851d5a00745712ef3cc2343825b5c8b4140b5c5d41c7ab6cc",
+    "docs/scene-controls.md": "536e910cb50ac8b0351c65ee0c456dc565e48ac112f645930f7e1621a2b0c098",
+    "include/fl_live/controller.hpp": "56b123f1cbb2eb7fe791bed4e1f41001caba5357d7c8dc4b23d700bd3dea6b0e",
+    "include/fl_live/document_render.hpp": "3ade340519db66bda58b0989e4c67090f891a6389bc35f8467a535f4a4c5745c",
+    "include/fl_live/engine.hpp": "b46c37af552a3ee7914f5d79d237c8a47e83025034add733be362e667f83703a",
+    "src/document_render.cpp": "5b63922110d63cae1f24ea615c3e0c468056faf8cb976b15e96813292f14b795",
+    "src/engine.cpp": "8bbde0d97883019bb45a91db947ca01686190e520c6d6fb6521b448ed173d112",
+    "tests/desktop_backend_probe.cpp": "ce50fb23922935bee62e52dc163b98134ab10df675ef2897e16ffc625c4577f4",
+    "tests/desktop_tests.cpp": "a9fbbadb22359b16bf42e074693e583310be5615e214bd73bc9f650e5f7fd50b",
+    "tests/engine_tests.cpp": "2945dfe665f3532a472dc5bcbb97b0790426187a5e70d02baebb9c9a4f484b44",
+    "tests/pipewire_integration.py": "6812db8ffb561e862f2e41029735b01b2531a96f827fd596103f38a3eb4b46e5",
+    "tests/scene_tests.cpp": "e0054647bec2d37bda1375da38f949b7f544f41b2e505604564433218029fa24"
+  }
+}

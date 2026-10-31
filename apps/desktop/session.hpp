@@ -20,6 +20,9 @@ class Session final : public QObject {
     Q_PROPERTY(QVariantList trackIds READ trackIds NOTIFY changed)
     Q_PROPERTY(QVariantList clipIds READ clipIds NOTIFY changed)
     Q_PROPERTY(QVariantList activeClipIds READ activeClipIds NOTIFY changed)
+    Q_PROPERTY(QString sceneId READ sceneId NOTIFY changed)
+    Q_PROPERTY(QString sceneName READ sceneName NOTIFY changed)
+    Q_PROPERTY(QString sceneState READ sceneState NOTIFY changed)
     Q_PROPERTY(int stepCount READ stepCount NOTIFY changed)
     Q_PROPERTY(int selectedStep READ selectedStep NOTIFY changed)
     Q_PROPERTY(QVariantList stepEnabled READ stepEnabled NOTIFY changed)
@@ -55,6 +58,12 @@ public:
     Q_INVOKABLE bool renameClip(const QString& id, const QString& name);
     Q_INVOKABLE bool launchClip(const QString& id);
     Q_INVOKABLE bool stopTrackId(const QString& id);
+    QString sceneId() const;
+    QString sceneName() const;
+    QString sceneState() const;
+    Q_INVOKABLE bool renameScene(const QString& id, const QString& name);
+    Q_INVOKABLE bool launchScene(const QString& id, const QString& policy);
+    Q_INVOKABLE bool stopScene(const QString& id, const QString& policy);
     int stepCount() const { return settings_.step_count; }
     int selectedStep() const { return selected_step_; }
     QVariantList stepEnabled() const;
@@ -115,7 +124,7 @@ private:
     const fl_live::PipeWireConfig config_;
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
-    enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name };
+    enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name };
     struct HistoryEntry {
         ProjectSettings settings;
         Identities identities;
@@ -131,7 +140,11 @@ private:
     static QString editName(const HistoryEntry& entry);
     void edit(const ProjectSettings& next, EditKind kind, int index = -1);
     void pushHistory(EditKind kind, int index);
-    bool rename(const QString& id, const QString& name, bool track);
+    enum class NameKind { track, clip, scene };
+    bool rename(const QString& id, const QString& name, NameKind kind);
+    bool sceneAction(const QString& id, const QString& policy, bool stop);
+    std::uint64_t scene_serial_ = 0;
+    bool scene_stop_ = false;
     int selected_step_ = 0;
     bool replace(const ProjectSettings& settings, Identities identities = {});
     bool editable();

@@ -21,6 +21,32 @@ static ProjectSettings readAuthoredSettings(const QString& path) { return readAu
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void sceneRequestsAndHistory() {
+        Session session;const auto id=session.sceneId();const auto clips=session.clipIds();
+        QCOMPARE(session.sceneState(),QString("Stopped"));
+        QVERIFY(!session.launchScene("05","immediate"));QVERIFY(!session.pending());
+        QVERIFY(!session.launchScene(id,"unknown"));QVERIFY(!session.pending());
+        QVERIFY(!session.stopScene("999","one-bar"));QVERIFY(!session.pending());
+        session.selectStep(2);QVERIFY(session.renameScene(id,"Verse"));QCOMPARE(session.selectedStep(),2);
+        session.undo();QCOMPARE(session.sceneName(),QString("Scene 1"));session.redo();QCOMPARE(session.sceneName(),QString("Verse"));
+        QTemporaryDir directory;const auto path=directory.filePath("scene.json");QVERIFY(session.saveProject(path));
+        QCOMPARE(readAuthoredProject(path).identities.scenes[0].name,std::string("Verse"));
+        QVERIFY(session.launchScene(id,"one-bar"));QCOMPARE(session.sceneState(),QString("Launch requested"));
+        QVERIFY(!session.renameScene(id,"Pending"));session.tick();
+        QCOMPARE(session.sceneState(),QString("Stopped · actions queued"));QVERIFY(!session.dirty());
+        session.play();session.tick();QCOMPARE(session.sceneState(),QString("Active"));QCOMPARE(session.activeClipIds(),clips);
+        QVERIFY(!session.renameScene(id,"Playing"));
+        QVERIFY(session.stopScene(id,"immediate"));QCOMPARE(session.sceneState(),QString("Stop requested"));session.tick();
+        QCOMPARE(session.sceneState(),QString("Stopped"));QVERIFY(session.running());
+        QVERIFY(session.launchScene(id,"one-bar"));session.tick();QCOMPARE(session.sceneState(),QString("Stopped · actions queued"));
+        // Immediate does not discard the queued next-bar action.
+        QVERIFY(session.launchScene(id,"immediate"));session.tick();QCOMPARE(session.sceneState(),QString("Active · actions queued"));
+        session.stop();session.tick();QCOMPARE(session.sceneState(),QString("Stopped"));
+        QVERIFY(session.loadProject(path));QCOMPARE(session.sceneId(),id);QCOMPARE(session.sceneName(),QString("Verse"));
+        for(int n=0;n<64;++n)QVERIFY(session.launchScene(id,"one-bar"));
+        QVERIFY(!session.stopScene(id,"immediate"));QVERIFY(session.message().contains("queue full"));
+        session.panic();session.tick();QCOMPARE(session.sceneState(),QString("Stopped"));QVERIFY(!session.pending());
+    }
     void identityRenamingAndHistory() {
         Session session;session.selectStep(2);
         const auto tracks=session.trackIds(),clips=session.clipIds();
@@ -101,6 +127,9 @@ private slots:
         QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier);QTest::keyClick(window,Qt::Key_Backspace);QTest::keyClick(window,Qt::Key_Return);
         QVERIFY(dialog->property("visible").toBool());QCOMPARE(session.clipNames()[1].toString(),QString("Melody"));
         click("cancelRename");QTRY_VERIFY(!dialog->property("visible").toBool());
+        click("renameScene");QTRY_VERIFY(dialog->property("visible").toBool());
+        QTRY_VERIFY(input->property("activeFocus").toBool());type("Verse");QTest::keyClick(window,Qt::Key_Return);
+        QTRY_COMPARE(session.sceneName(),QString("Verse"));QTRY_VERIFY(find(window->contentItem(),"renameScene")->hasActiveFocus());
         const auto path=directory.filePath("qml-renamed.json");
         auto* projectFile=window->findChild<QObject*>("projectFile");QVERIFY(projectFile);projectFile->setProperty("text",path);
         click("saveProjectButton");QVERIFY(!session.dirty());
@@ -108,7 +137,17 @@ private slots:
         QCOMPARE(session.clipNames()[1].toString(),QString("Melody"));QVERIFY(!session.canUndo());
         const auto saved=readAuthoredProject(path);QCOMPARE(saved.identities.tracks[0].name,std::string("Drums"));
         QCOMPARE(saved.identities.tracks[0].id.value,9007199254740993ULL);
-        click("clip1");click("playButton");session.tick();QCOMPARE(session.activeClipIds()[1],clipId);
+        QCOMPARE(saved.identities.scenes[0].name,std::string("Verse"));QCOMPARE(session.sceneId(),QString("9007199254740997"));
+        click("sceneTiming");QTest::keyClick(window,Qt::Key_Home);QTest::keyClick(window,Qt::Key_Return);
+        auto* timing=find(window->contentItem(),"sceneTiming");QVERIFY(timing);QTRY_COMPARE(timing->property("currentIndex").toInt(),0);
+        click("launchScene");click("playButton");session.tick();QCOMPARE(session.activeClipIds()[1],clipId);
+        QCOMPARE(session.sceneState(),QString("Active"));
+        auto* sceneStop=find(window->contentItem(),"stopScene");QVERIFY(sceneStop);sceneStop->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_Space);session.tick();QCOMPARE(session.sceneState(),QString("Stopped"));QVERIFY(session.running());
+        click("sceneTiming");QTest::keyClick(window,Qt::Key_End);QTest::keyClick(window,Qt::Key_Return);
+        QTRY_COMPARE(timing->property("currentIndex").toInt(),1);click("launchScene");session.tick();
+        QCOMPARE(session.sceneState(),QString("Stopped · actions queued"));
+        QVERIFY(window->grabWindow().save("desktop-scene-controls.png"));
         click("stopButton");session.tick();QVERIFY(!session.running());
         QVERIFY(window->grabWindow().save("desktop-identity-renaming.png"));
     }

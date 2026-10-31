@@ -181,6 +181,8 @@ void controller_allocation_contract() {
     const auto plan = audio_plan();
     RenderController controller(plan);
     std::array<float, 257> output{};
+    Control scene{ControlKind::scene,{},5};scene.batch.count=1;
+    scene.batch.commands[0]={CommandKind::launch,0,0,0};
     const auto before = render_allocations;
     watch_allocations = true;
     (void)controller.submit({ControlKind::start, {}, 1});
@@ -189,8 +191,10 @@ void controller_allocation_contract() {
     (void)controller.submit({ControlKind::launch_next_bar, {CommandKind::launch, 0, 0, 0}, 3});
     (void)controller.submit({ControlKind::stop_next_bar, {CommandKind::stop_track, 0, 0, 0}, 4});
     controller.process(output);
+    (void)controller.submit(scene);controller.process(output);
+    scene.policy=LaunchPolicy::immediate;scene.serial=6;(void)controller.submit(scene);controller.process(output);
     (void)TempoGrid(48000,120000).try_next_bar(std::numeric_limits<Frame>::max());
-    for (std::uint64_t n = 5; n < 69; ++n) (void)controller.submit({ControlKind::start, {}, n});
+    for (std::uint64_t n = 7; n < 71; ++n) (void)controller.submit({ControlKind::start, {}, n});
     controller.panic();
     controller.process(output);
     controller.finish();

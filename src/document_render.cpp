@@ -94,4 +94,16 @@ std::optional<Command> DocumentRenderPlan::stop(TrackId id, Frame at) const noex
     if (!track) return std::nullopt;
     return Command{CommandKind::stop_track, at, *track, 0};
 }
+std::optional<CommandBatch> DocumentRenderPlan::scene(SceneId id, bool stop, Frame at) const noexcept {
+    const auto scene = std::find_if(document_.scenes.begin(), document_.scenes.end(), [id](const auto& item) { return item.id == id; });
+    if (scene == document_.scenes.end()) return std::nullopt;
+    CommandBatch result;
+    for (std::size_t index = 0; index < document_.tracks.size(); ++index) {
+        const auto track = document_.tracks[index].id;
+        const auto entry = std::find_if(scene->entries.begin(), scene->entries.end(), [track](const auto& slot) { return slot.track == track; });
+        result.commands[result.count++] = !stop && entry != scene->entries.end()
+            ? *launch(entry->clip, at) : Command{CommandKind::stop_track, at, index, 0};
+    }
+    return result;
+}
 } // namespace fl_live
