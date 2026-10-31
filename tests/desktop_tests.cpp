@@ -21,6 +21,66 @@ static ProjectSettings readAuthoredSettings(const QString& path) { return readAu
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void sceneManagementHistoryAndIds() {
+        Session session;const auto first=session.sceneId();const auto tracks=session.trackIds();
+        QVERIFY(!session.deleteScene(first));QVERIFY(!session.dirty());
+        QVERIFY(session.createScene());const auto second=session.sceneId();QVERIFY(second!=first);
+        QCOMPARE(session.sceneIncluded(),(QVariantList{false,false}));QCOMPARE(session.selectedSceneIndex(),1);
+        QVERIFY(session.renameScene(second,"Break"));QVERIFY(session.setSceneIncluded(tracks[1].toString(),true));
+        QTemporaryDir directory;const auto path=directory.filePath("arrangements.json");QVERIFY(session.saveProject(path));
+        QVERIFY(session.selectScene(first));QVERIFY(!session.dirty());QCOMPARE(session.sceneIncluded(),(QVariantList{true,true}));
+        QVERIFY(!session.selectScene("999"));QCOMPARE(session.sceneId(),first);
+        QVERIFY(session.selectScene(second));QVERIFY(session.createScene());const auto third=session.sceneId();
+        QVERIFY(session.deleteScene(third));QCOMPARE(session.sceneId(),second);
+        session.undo();QCOMPARE(session.sceneId(),third);session.redo();QCOMPARE(session.sceneId(),second);
+        session.undo();session.undo();QCOMPARE(session.sceneId(),second);QVERIFY(!session.dirty());
+        // Undo cannot recycle the third identity, including after saving/reopening.
+        QVERIFY(session.saveProject(path));const auto cursor=readAuthoredProject(path).identities.next_id;
+        QVERIFY(cursor>third.toULongLong());QVERIFY(session.loadProject(path));
+        QCOMPARE(session.sceneId(),first);QVERIFY(session.createScene());QVERIFY(session.sceneId().toULongLong()>=cursor);
+        const auto fresh=session.sceneId();session.undo();QVERIFY(session.createScene());QVERIFY(session.sceneId().toULongLong()>fresh.toULongLong());
+        QVERIFY(!session.canRedo());
+        const auto empty=session.sceneId();QVERIFY(session.launchScene(first,"immediate"));session.play();
+        QVERIFY(!session.createScene());QVERIFY(!session.deleteScene(empty));
+        QVERIFY(session.selectScene(empty));QVERIFY(!session.sceneState().contains("requested"));session.tick();
+        QVERIFY(session.launchScene(empty,"immediate"));session.tick();QCOMPARE(session.sceneState(),QString("Stopped"));
+        session.stop();session.tick();
+        auto capped=AuthoredProject{{},defaultTemplateIdentities()};fl_live::SessionDocument document(capped.identities);
+        for(int i=1;i<256;++i)document.createScene("Scene");capped.identities=document.snapshot();
+        const auto capPath=directory.filePath("limit.json");writeAuthoredProject(capPath,capped);
+        Session limit;QVERIFY(limit.loadProject(capPath));QVERIFY(!limit.createScene());QVERIFY(!limit.dirty());QVERIFY(!limit.canUndo());
+        QCOMPARE(limit.sceneIds().size(),256);
+    }
+    void qmlSceneManagementInput() {
+        Session session;const auto initial=session.sceneId();
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> find=[&](QQuickItem* item,const QString& name)->QQuickItem*{
+            if(item->objectName()==name && item->isVisible())return item;
+            for(auto* child:item->childItems())if(auto* result=find(child,name))return result;return nullptr;
+        };
+        auto click=[&](const char* name){auto* item=find(window->contentItem(),name);QVERIFY(item);QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());};
+        click("createScene");QCOMPARE(session.sceneIds().size(),2);const auto second=session.sceneId();
+        QCOMPARE(session.sceneIncluded(),(QVariantList{false,false}));click("sceneIncluded1");
+        auto* selector=find(window->contentItem(),"sceneSelector");QVERIFY(selector);
+        click("renameScene");auto* input=window->findChild<QObject*>("renameValue");QVERIFY(input);
+        QTRY_VERIFY(input->property("activeFocus").toBool());for(auto c:QByteArray("Break"))QTest::keyClick(window,c);
+        QTest::keyClick(window,Qt::Key_Return);QTRY_COMPARE(session.sceneName(),QString("Break"));
+        QTRY_COMPARE(selector->property("currentText").toString(),QString("Break"));QCOMPARE(selector->property("currentIndex").toInt(),1);
+        click("sceneSelector");QSignalSpy documents(&session,&Session::documentChanged);session.tick();QCOMPARE(documents.count(),0);
+        QTest::keyClick(window,Qt::Key_Home);QTest::keyClick(window,Qt::Key_Return);QTRY_COMPARE(session.sceneId(),initial);
+        selector->forceActiveFocus();QTest::keyClick(window,Qt::Key_End);QTRY_COMPARE(session.sceneId(),second);
+        QCOMPARE(session.sceneIncluded(),(QVariantList{false,true}));
+        click("deleteScene");QCOMPARE(session.sceneId(),initial);QCOMPARE(session.sceneIds().size(),1);
+        click("undoButton");QCOMPARE(session.sceneId(),second);QCOMPARE(session.sceneIds().size(),2);
+        click("redoButton");QCOMPARE(session.sceneId(),initial);click("undoButton");
+        QTemporaryDir directory;auto* file=window->findChild<QObject*>("projectFile");QVERIFY(file);file->setProperty("text",directory.filePath("scenes.json"));
+        click("saveProjectButton");click("openProjectButton");QCOMPARE(session.sceneIds().size(),2);QCOMPARE(session.sceneId(),initial);
+        click("sceneSelector");QTest::keyClick(window,Qt::Key_End);QTest::keyClick(window,Qt::Key_Return);QTRY_COMPARE(session.sceneId(),second);
+        click("launchScene");click("playButton");session.tick();QCOMPARE(session.sceneState(),QString("Active"));
+        QCOMPARE(session.activeClipIds()[0].toString(),QString{});QCOMPARE(session.activeClipIds()[1],session.clipIds()[1]);
+        QVERIFY(window->grabWindow().save("desktop-scene-management.png"));click("stopButton");session.tick();
+    }
     void sceneSlotHistoryAndPlayback() {
         Session session;session.selectStep(2);const auto tracks=session.trackIds(),clips=session.clipIds();
         const auto id=session.sceneId();QCOMPARE(session.sceneIncluded(),(QVariantList{true,true}));

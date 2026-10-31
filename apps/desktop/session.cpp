@@ -17,7 +17,7 @@ QString identityText(std::uint64_t id){return QString::number(static_cast<qulong
 Session::Session(fl_live::PipeWireConfig config, QObject* parent)
     : QObject(parent), config_(std::move(config)), prepared_(std::make_unique<Prepared>(settings_, *identities_)),
       project_path_(QDir::home().filePath("fl-live-project.json")), preview_(config_.remote.empty()) {
-    history_[0] = {settings_, identities_, EditKind::none, -1};
+    history_[0] = {settings_, identities_, EditKind::none, -1, selected_scene_};
     saved_identities_ = identities_;
     saved_settings_ = settings_;
     if (!preview_) {
@@ -90,12 +90,68 @@ QVariantList Session::activeClipIds() const {
         result.append(id ? identityText(id->value) : QString{});
     }return result;
 }
-QString Session::sceneId() const { return identityText(identities_->scenes[0].id.value); }
-QString Session::sceneName() const { return QString::fromUtf8(identities_->scenes[0].name); }
+const fl_live::DocumentScene& Session::selectedScene() const {
+    return *std::find_if(identities_->scenes.begin(),identities_->scenes.end(),[&](const auto& scene){return scene.id==selected_scene_;});
+}
+QVariantList Session::sceneIds() const {
+    QVariantList result;for(const auto& scene:identities_->scenes)result.append(identityText(scene.id.value));return result;
+}
+QVariantList Session::sceneNames() const {
+    QVariantList result;for(const auto& scene:identities_->scenes)result.append(QString::fromUtf8(scene.name));return result;
+}
+int Session::selectedSceneIndex() const {
+    return static_cast<int>(std::find_if(identities_->scenes.begin(),identities_->scenes.end(),[&](const auto& scene){return scene.id==selected_scene_;})-identities_->scenes.begin());
+}
+void Session::restoreSceneSelection(fl_live::SceneId id,bool notify) {
+    const auto found=std::find_if(identities_->scenes.begin(),identities_->scenes.end(),[id](const auto& scene){return scene.id==id;});
+    selected_scene_=found==identities_->scenes.end() ? identities_->scenes[0].id : id;
+    if(notify)emit sceneSelectionChanged();
+}
+bool Session::selectScene(const QString& id) {
+    try {
+        const fl_live::SceneId target{parseIdentity(id)};
+        if(std::none_of(identities_->scenes.begin(),identities_->scenes.end(),[target](const auto& scene){return scene.id==target;}))
+            throw std::invalid_argument("Unknown scene");
+        restoreSceneSelection(target);emit changed();return true;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+bool Session::createScene() {
+    if(!editable())return false;
+    try {
+        const auto previous=selected_scene_;
+        auto snapshot=*identities_;snapshot.next_id=next_identity_;
+        fl_live::SessionDocument candidate(std::move(snapshot));
+        const auto id=candidate.createScene("New scene");
+        auto identities=std::make_shared<const fl_live::DocumentSnapshot>(candidate.snapshot());
+        if(!replace(settings_,identities))return false;
+        restoreSceneSelection(id);pushHistory(EditKind::scene_create,-1);
+        history_[history_cursor_].undo_selection=previous;emit changed();return true;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+bool Session::deleteScene(const QString& id) {
+    if(!editable())return false;
+    try {
+        const fl_live::SceneId target{parseIdentity(id)};
+        if(identities_->scenes.size()==1)throw std::invalid_argument("Keep at least one scene");
+        const auto found=std::find_if(identities_->scenes.begin(),identities_->scenes.end(),[target](const auto& scene){return scene.id==target;});
+        if(found==identities_->scenes.end())throw std::invalid_argument("Unknown scene");
+        const auto index=static_cast<std::size_t>(found-identities_->scenes.begin());
+        const auto neighbor=identities_->scenes[index ? index-1 : 1].id;
+        fl_live::SessionDocument candidate(*identities_);candidate.deleteScene(target);
+        auto identities=std::make_shared<const fl_live::DocumentSnapshot>(candidate.snapshot());
+        const bool selected=target==selected_scene_;
+        if(!replace(settings_,identities))return false;
+        if(selected)restoreSceneSelection(neighbor);
+        pushHistory(EditKind::scene_delete,-1);history_[history_cursor_].undo_selection=target;
+        emit changed();return true;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+QString Session::sceneId() const { return identityText(selectedScene().id.value); }
+QString Session::sceneName() const { return QString::fromUtf8(selectedScene().name); }
 QVariantList Session::sceneIncluded() const {
     QVariantList result;
-    for(const auto& track:identities_->tracks)result.append(std::any_of(identities_->scenes[0].entries.begin(),
-        identities_->scenes[0].entries.end(),[&](const auto& entry){return entry.track==track.id;}));
+    for(const auto& track:identities_->tracks)result.append(std::any_of(selectedScene().entries.begin(),
+        selectedScene().entries.end(),[&](const auto& entry){return entry.track==track.id;}));
     return result;
 }
 bool Session::setSceneIncluded(const QString& trackId,bool included) {
@@ -105,8 +161,8 @@ bool Session::setSceneIncluded(const QString& trackId,bool included) {
         const auto index=prepared_->mapped.trackIndex(id);
         if(!index)throw std::invalid_argument("Unknown scene track");
         fl_live::SessionDocument candidate(*identities_);
-        if(included)candidate.setSlot(identities_->scenes[0].id,id,*prepared_->mapped.clipId(*index,0));
-        else candidate.clearSlot(identities_->scenes[0].id,id);
+        if(included)candidate.setSlot(selectedScene().id,id,*prepared_->mapped.clipId(*index,0));
+        else candidate.clearSlot(selectedScene().id,id);
         if(candidate.snapshot()==*identities_)return true;
         auto identities=std::make_shared<const fl_live::DocumentSnapshot>(candidate.snapshot());
         if(!replace(settings_,identities))return false;
@@ -114,9 +170,9 @@ bool Session::setSceneIncluded(const QString& trackId,bool included) {
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }
 QString Session::sceneState() const {
-    if(scene_serial_>status_.handled_serial)return scene_stop_ ? "Stop requested" : "Launch requested";
+    if(requested_scene_==selected_scene_ && scene_serial_>status_.handled_serial)return scene_stop_ ? "Stop requested" : "Launch requested";
     bool active=true,stopped=true,queued=false;
-    const auto batch=*prepared_->mapped.scene(identities_->scenes[0].id,false);
+    const auto batch=*prepared_->mapped.scene(selectedScene().id,false);
     for(std::size_t i=0;i<batch.count;++i) {
         const auto& command=batch.commands[i];const auto& state=status_.tracks[command.track];
         const auto expected=command.kind==fl_live::CommandKind::launch ? static_cast<int>(command.clip) : -1;
@@ -139,7 +195,7 @@ bool Session::sceneAction(const QString& id,const QString& policy,bool stop) {
             policy=="immediate" ? fl_live::LaunchPolicy::immediate : fl_live::LaunchPolicy::next_bar})) {
             message_="Control queue full. Try again, or use Silence now.";emit changed();return false;
         }
-        serial_=scene_serial_=next;scene_stop_=stop;
+        serial_=scene_serial_=next;scene_stop_=stop;requested_scene_=fl_live::SceneId{parseIdentity(id)};
         for(std::size_t i=0;i<batch->count;++i) {
             const auto& command=batch->commands[i];track_serials_[command.track]=next;
             track_requests_[command.track]=command.kind==fl_live::CommandKind::launch
@@ -260,6 +316,8 @@ QString Session::editName(const HistoryEntry& entry) {
     case EditKind::clip_name: return QString("clip %1 name").arg(entry.index + 1);
     case EditKind::scene_name: return "scene name";
     case EditKind::scene_slot: return QString("track %1 scene slot").arg(entry.index+1);
+    case EditKind::scene_create: return "new scene";
+    case EditKind::scene_delete: return "scene deletion";
     default: return {};
     }
 }
@@ -281,14 +339,16 @@ void Session::pushHistory(EditKind kind, int index) {
         for (std::size_t n = 1; n <= history_capacity; ++n) history_[n - 1] = history_[n];
         --history_cursor_;
     }
-    history_[++history_cursor_] = {settings_, identities_, kind, index};
+    history_[++history_cursor_] = {settings_, identities_, kind, index, selected_scene_, selected_scene_};
     history_size_ = history_cursor_ + 1; // discard the old redo branch
 }
 void Session::undo() {
     if (!history_cursor_) return;
     const auto name = editName(history_[history_cursor_]);
+    const auto selection=history_[history_cursor_].undo_selection;
     if (!replace(history_[history_cursor_ - 1].settings, history_[history_cursor_ - 1].identities)) return;
     --history_cursor_;
+    restoreSceneSelection(selection);
     selected_step_ = std::min(selected_step_, settings_.step_count - 1);
     message_ = "Undid " + name + "; session returned to the start.";
     emit changed();
@@ -298,6 +358,7 @@ void Session::redo() {
     const auto name = editName(history_[history_cursor_ + 1]);
     if (!replace(history_[history_cursor_ + 1].settings, history_[history_cursor_ + 1].identities)) return;
     ++history_cursor_;
+    restoreSceneSelection(history_[history_cursor_].selection);
     selected_step_ = std::min(selected_step_, settings_.step_count - 1);
     message_ = "Redid " + name + "; session returned to the start.";
     emit changed();
@@ -328,6 +389,10 @@ bool Session::replace(const ProjectSettings& settings, Identities identities) {
         prepared_.swap(candidate); // old plan is destroyed only on the GUI thread
         settings_ = settings;
         identities_ = std::move(identities);
+        next_identity_=std::max(next_identity_,identities_->next_id);
+        restoreSceneSelection(selected_scene_,false);
+        emit documentChanged();
+        emit sceneSelectionChanged();
         serial_ = 0;
         scene_serial_ = 0;
         track_serials_.fill(0);
@@ -361,7 +426,8 @@ bool Session::saveProject(const QString& path) {
         const auto target = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
         if (QFileInfo::exists(target) && target != owned_path_)
             throw std::invalid_argument("File already exists. Open that project first or choose a new path.");
-        writeAuthoredProject(target, {settings_, *identities_});
+        auto persisted=*identities_;persisted.next_id=next_identity_;
+        writeAuthoredProject(target, {settings_, persisted});
         project_path_ = owned_path_ = target;
         saved_settings_ = settings_;
         saved_identities_ = identities_;
@@ -380,11 +446,13 @@ bool Session::loadProject(const QString& path) {
         const auto next = readAuthoredProject(target);
         auto identities = std::make_shared<const fl_live::DocumentSnapshot>(next.identities);
         if (!replace(next.settings, identities)) return false;
+        next_identity_=next.identities.next_id;
+        restoreSceneSelection(next.identities.scenes[0].id);
         project_path_ = owned_path_ = target;
         saved_settings_ = settings_;
         saved_identities_ = identities_;
         selected_step_ = 0;
-        history_[0] = {settings_, identities_, EditKind::none, -1};
+        history_[0] = {settings_, identities_, EditKind::none, -1, selected_scene_};
         history_cursor_ = 0;
         history_size_ = 1;
         message_ = "Project opened. Launch clips, then press Play.";

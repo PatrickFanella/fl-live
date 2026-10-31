@@ -62,6 +62,19 @@ int main(){try{
         rejects([&]{decodeAuthoredProject(QJsonDocument(sparseRoot).toJson());});
     }
     CHECK(root["required_features"].toArray()==QJsonArray{"template-identities-v1"});
+    auto arrangements=project;fl_live::SessionDocument scenes(arrangements.identities);
+    const auto extra=scenes.createScene("Break");arrangements.identities=scenes.snapshot();
+    auto multiple=QJsonDocument::fromJson(encodeAuthoredProject(arrangements)).object();
+    CHECK(multiple["required_features"].toArray().contains("template-scenes-v1"));
+    CHECK(decodeAuthoredProject(QJsonDocument(multiple).toJson()).identities==arrangements.identities);
+    writeAuthoredProject(path,arrangements);CHECK(readAuthoredProject(path).identities==arrangements.identities);
+    multiple["required_features"]=QJsonArray{"template-identities-v1","template-scene-slots-v1"};
+    rejects([&]{decodeAuthoredProject(QJsonDocument(multiple).toJson());});
+    for(const auto& clip:arrangements.identities.clips)scenes.setSlot(extra,clip.track,clip.id);
+    arrangements.identities=scenes.snapshot();multiple=QJsonDocument::fromJson(encodeAuthoredProject(arrangements)).object();
+    CHECK(multiple["required_features"].toArray()==(QJsonArray{"template-identities-v1","template-scenes-v1"}));
+    CHECK(decodeAuthoredProject(QJsonDocument(multiple).toJson()).identities==arrangements.identities);
+    arrangements.identities.scenes.clear();rejects([&]{encodeAuthoredProject(arrangements);});
     const auto bad=[&](auto edit){auto value=root;edit(value);rejects([&]{decodeAuthoredProject(QJsonDocument(value).toJson());});};
     bad([](auto& r){r["version"]=4;});bad([](auto& r){r["version"]=true;});
     bad([](auto& r){r["required_features"]=QJsonArray{"future"};});

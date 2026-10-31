@@ -24,6 +24,9 @@ class Session final : public QObject {
     Q_PROPERTY(QString sceneName READ sceneName NOTIFY changed)
     Q_PROPERTY(QString sceneState READ sceneState NOTIFY changed)
     Q_PROPERTY(QVariantList sceneIncluded READ sceneIncluded NOTIFY changed)
+    Q_PROPERTY(QVariantList sceneIds READ sceneIds NOTIFY documentChanged)
+    Q_PROPERTY(QVariantList sceneNames READ sceneNames NOTIFY documentChanged)
+    Q_PROPERTY(int selectedSceneIndex READ selectedSceneIndex NOTIFY sceneSelectionChanged)
     Q_PROPERTY(int stepCount READ stepCount NOTIFY changed)
     Q_PROPERTY(int selectedStep READ selectedStep NOTIFY changed)
     Q_PROPERTY(QVariantList stepEnabled READ stepEnabled NOTIFY changed)
@@ -63,6 +66,12 @@ public:
     QString sceneName() const;
     QString sceneState() const;
     QVariantList sceneIncluded() const;
+    QVariantList sceneIds() const;
+    QVariantList sceneNames() const;
+    int selectedSceneIndex() const;
+    Q_INVOKABLE bool selectScene(const QString& id);
+    Q_INVOKABLE bool createScene();
+    Q_INVOKABLE bool deleteScene(const QString& id);
     Q_INVOKABLE bool setSceneIncluded(const QString& trackId, bool included);
     Q_INVOKABLE bool renameScene(const QString& id, const QString& name);
     Q_INVOKABLE bool launchScene(const QString& id, const QString& policy);
@@ -80,7 +89,8 @@ public:
     int tempo() const { return settings_.tempo; }
     QVariantList levels() const;
     QVariantList pitches() const;
-    bool dirty() const { return settings_ != saved_settings_ || *identities_ != *saved_identities_; }
+    bool dirty() const { return settings_ != saved_settings_ || identities_->tracks != saved_identities_->tracks ||
+        identities_->clips != saved_identities_->clips || identities_->scenes != saved_identities_->scenes; }
     bool canUndo() const { return canEdit() && history_cursor_ > 0; }
     bool canRedo() const { return canEdit() && history_cursor_ + 1 < history_size_; }
     QString undoText() const;
@@ -112,6 +122,8 @@ public:
 signals:
     void changed();
     void projectPathChanged();
+    void documentChanged();
+    void sceneSelectionChanged();
 private:
     struct Prepared {
         const fl_live::DocumentRenderPlan mapped;
@@ -124,15 +136,19 @@ private:
     ProjectSettings settings_;
     using Identities = std::shared_ptr<const fl_live::DocumentSnapshot>;
     Identities identities_ = std::make_shared<const fl_live::DocumentSnapshot>(defaultTemplateIdentities());
+    fl_live::SceneId selected_scene_ = identities_->scenes[0].id;
+    std::uint64_t next_identity_ = identities_->next_id;
     const fl_live::PipeWireConfig config_;
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
-    enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot };
+    enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete };
     struct HistoryEntry {
         ProjectSettings settings;
         Identities identities;
         EditKind kind = EditKind::none;
         int index = -1;
+        fl_live::SceneId selection{};
+        fl_live::SceneId undo_selection{};
     };
     static constexpr std::size_t history_capacity = 128;
     static_assert(std::is_nothrow_copy_assignable_v<HistoryEntry>);
@@ -148,6 +164,9 @@ private:
     bool sceneAction(const QString& id, const QString& policy, bool stop);
     std::uint64_t scene_serial_ = 0;
     bool scene_stop_ = false;
+    fl_live::SceneId requested_scene_{};
+    const fl_live::DocumentScene& selectedScene() const;
+    void restoreSceneSelection(fl_live::SceneId id, bool notify = true);
     int selected_step_ = 0;
     bool replace(const ProjectSettings& settings, Identities identities = {});
     bool editable();

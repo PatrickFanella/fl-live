@@ -1,6 +1,6 @@
 # Editing history
 
-Undo and Redo cover track/clip/scene names, scene slot inclusion, tempo, track levels, MIDI pattern length and each step's note/rest, pitch, velocity and gate. They require acknowledged stopped transport with no unhandled control messages. Like a normal edit, each successful history operation prepares the session at position zero and clears active clips and queued launches. Clip/scene launches, scene timing, transport, editor selection and file paths are outside document history.
+Undo and Redo cover track/clip/scene names, scene creation/deletion and slot inclusion, tempo, track levels, MIDI pattern length and each step's note/rest, pitch, velocity and gate. They require acknowledged stopped transport with no unhandled control messages. Like a normal edit, each successful history operation prepares the session at position zero and clears active clips and queued launches. Clip/scene launches, scene timing, transport, editor selection and file paths are outside document history.
 
 The header buttons expose the next operation through tooltips. Standard Undo/Redo key bindings are enabled while the window is active, except when an editable text input owns text undo or the unsaved-close or rename dialog is open. On Linux the tested bindings are Ctrl+Z and Ctrl+Shift+Z. Clicking a history button explicitly operates on the musical document. Step selection remains independent of history; undoing to a shorter pattern clamps the current selection to its last valid step.
 
@@ -14,7 +14,7 @@ A new edit after Undo removes that redo branch. When the history reaches 128 edi
 
 ## Save checkpoints and document boundaries
 
-Dirty state compares the entire current source-settings and identity snapshot with the last successfully saved or opened content. It does not compare a history index. Undoing back to saved content makes the project clean; Redo away from it makes it dirty. Manually restoring the same saved content is also clean, even if the corresponding history entry has been evicted.
+Dirty state compares current source settings, tracks, clips and scenes with the last successfully saved or opened content. The allocation cursor is bookkeeping and does not make restored musical content dirty. Save still writes its high-water mark to prevent ID reuse after undo. It does not compare a history index. Undoing back to saved content makes the project clean; Redo away from it makes it dirty. Manually restoring the same saved content is also clean, even if the corresponding history entry has been evicted.
 
 Save and Save As preserve Undo/Redo and update the saved-content checkpoint only after a successful atomic write. History operations do not write files or change the destination path. A failed save leaves the checkpoint unchanged. Saving while positioned in the middle of history keeps its redo branch.
 
@@ -29,3 +29,5 @@ These are local/offscreen/software-graph checks. They do not qualify live edits,
 Project-path notifications are separate from render/status notifications. A path being typed remains intact across render ticks; Save/Open explicitly update the model path. The QML test covers persistence of both the chosen path and an appended character across polling before text Undo.
 
 Rename dialogs reset their text-undo baseline when opened, including repeated edits of the same name. Offscreen input tests cover modal text Undo, invalid names, Cancel, return focus, step selection, saved-name equality and v3 Save/Open/playback with full-width string IDs.
+
+History now retains scene selection context. Undoing creation selects its prior scene; undoing deletion selects the restored scene; Redo restores the original result selection. Standalone scene selection remains outside document history. See [scene management](scene-controls.md#creating-selecting-and-deleting-scenes).

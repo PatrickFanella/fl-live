@@ -4,7 +4,7 @@ import QtQuick.Layouts
 
 ApplicationWindow {
     id: window
-    width: 1040; height: 880
+    width: 1040; height: 920
     minimumWidth: 900; minimumHeight: 620
     visible: true
     property bool discardOnClose: false
@@ -104,6 +104,26 @@ ApplicationWindow {
             Label { text: "Bars" }
             SpinBox { id: exportBars; objectName: "exportBars"; from: 1; to: 16; value: 4; enabled: session.canEdit; Accessible.name: "Export length in bars" }
             Button { objectName: "exportWavButton"; text: "Export both tracks"; enabled: session.canEdit; onClicked: session.exportWav(exportFile.text, exportBars.value) }
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            Label { text: "Scenes" }
+            ComboBox {
+                id: sceneSelector
+                objectName: "sceneSelector"; Layout.fillWidth: true; model: session.sceneNames
+                currentIndex: session.selectedSceneIndex
+                onActivated: function(index) { session.selectScene(session.sceneIds[index]) }
+                Accessible.name: "Selected scene"
+                contentItem: Text { text: sceneSelector.currentText; textFormat: Text.PlainText; color: sceneSelector.palette.text; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter }
+                delegate: ItemDelegate {
+                    required property string modelData
+                    required property int index
+                    width: sceneSelector.width; highlighted: sceneSelector.highlightedIndex === index
+                    contentItem: Text { text: modelData; textFormat: Text.PlainText; color: sceneSelector.palette.text; elide: Text.ElideRight }
+                }
+            }
+            Button { objectName: "createScene"; text: "New scene"; enabled: session.canEdit && session.sceneIds.length < 256; onClicked: session.createScene() }
+            Button { objectName: "deleteScene"; text: "Delete scene"; enabled: session.canEdit && session.sceneIds.length > 1; onClicked: session.deleteScene(session.sceneId) }
         }
         RowLayout {
             Layout.fillWidth: true
