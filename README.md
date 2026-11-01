@@ -87,3 +87,5 @@ Scene launch/stop uses one atomic group with an explicit Immediate or One bar po
 While stopped, use **Include in scene** beside each clip to choose scene membership. These choices support Undo/Redo and Save/Open. Launching a scene stops excluded tracks; individual clip launch remains available.
 
 Use **New scene** to add an empty arrangement, choose its clips with Include in scene, and select it from **Scenes** before launching. **Delete scene** supports Undo; at least one scene remains. Scenes share the authored clips and their settings.
+
+**Copy arrangement** creates another scene with the same slot choices and shared clip sources. **Move up/down** changes scene order. These edits support Undo/Redo and persist through Save/Open.

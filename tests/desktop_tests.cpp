@@ -21,6 +21,35 @@ static ProjectSettings readAuthoredSettings(const QString& path) { return readAu
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void copyAndReorderScenes() {
+        Session session;const auto first=session.sceneId();const auto tracks=session.trackIds(),clips=session.clipIds();
+        QVERIFY(session.setSceneIncluded(tracks[0].toString(),false));
+        QTemporaryDir directory;const auto path=directory.filePath("copies.json");QVERIFY(session.saveProject(path));
+        QVERIFY(!session.copyScene("05"));QVERIFY(!session.copyScene("999"));
+        QVERIFY(!session.moveScene(first,-1));QVERIFY(!session.moveScene(first,0));QVERIFY(!session.dirty());
+        QVERIFY(session.copyScene(first));const auto copy=session.sceneId();QVERIFY(copy!=first);
+        QCOMPARE(session.sceneIncluded(),(QVariantList{false,true}));QCOMPARE(session.clipIds(),clips);QCOMPARE(session.trackIds(),tracks);
+        session.undo();QCOMPARE(session.sceneId(),first);QVERIFY(!session.dirty());session.redo();QCOMPARE(session.sceneId(),copy);
+        QVERIFY(session.setSceneIncluded(tracks[0].toString(),true));
+        QVERIFY(session.selectScene(first));QCOMPARE(session.sceneIncluded(),(QVariantList{false,true}));
+        QVERIFY(session.moveScene(copy,-1));QCOMPARE(session.sceneId(),copy);QCOMPARE(session.selectedSceneIndex(),0);
+        QCOMPARE(session.sceneIds(),(QVariantList{copy,first}));session.undo();QCOMPARE(session.sceneId(),first);
+        QCOMPARE(session.sceneIds(),(QVariantList{first,copy}));session.redo();QCOMPARE(session.sceneId(),copy);
+        QVERIFY(!session.moveScene(copy,-1));QVERIFY(!session.moveScene("999",1));
+        QVERIFY(session.saveProject(path));const auto saved=readAuthoredProject(path);QCOMPARE(saved.identities.clips.size(),std::size_t(2));
+        QCOMPARE(saved.identities.scenes[0].id.value,copy.toULongLong());QCOMPARE(saved.identities.scenes[0].entries.size(),std::size_t(2));
+        QCOMPARE(saved.identities.scenes[1].entries.size(),std::size_t(1));
+        QVERIFY(session.loadProject(path));QCOMPARE(session.sceneId(),copy);
+        QVERIFY(session.launchScene(first,"immediate"));session.play();
+        QVERIFY(!session.copyScene(first));QVERIFY(!session.moveScene(copy,1));session.tick();
+        QCOMPARE(session.activeClipIds()[0].toString(),QString{});QCOMPARE(session.activeClipIds()[1],clips[1]);
+        session.stop();session.tick();QVERIFY(session.selectScene(copy));QVERIFY(session.launchScene(copy,"immediate"));session.play();session.tick();
+        QCOMPARE(session.activeClipIds(),clips);session.stop();session.tick();
+        // Copy uses the same high-water allocation rule as New scene.
+        QVERIFY(session.copyScene(copy));const auto retired=session.sceneId();session.undo();QVERIFY(!session.dirty());
+        QVERIFY(session.saveProject(path));QVERIFY(session.loadProject(path));QVERIFY(session.copyScene(copy));
+        QVERIFY(session.sceneId().toULongLong()>retired.toULongLong());
+    }
     void sceneManagementHistoryAndIds() {
         Session session;const auto first=session.sceneId();const auto tracks=session.trackIds();
         QVERIFY(!session.deleteScene(first));QVERIFY(!session.dirty());
@@ -50,6 +79,7 @@ private slots:
         const auto capPath=directory.filePath("limit.json");writeAuthoredProject(capPath,capped);
         Session limit;QVERIFY(limit.loadProject(capPath));QVERIFY(!limit.createScene());QVERIFY(!limit.dirty());QVERIFY(!limit.canUndo());
         QCOMPARE(limit.sceneIds().size(),256);
+        QVERIFY(!limit.copyScene(limit.sceneId()));QVERIFY(!limit.dirty());QVERIFY(!limit.canUndo());
     }
     void qmlSceneManagementInput() {
         Session session;const auto initial=session.sceneId();
@@ -71,6 +101,13 @@ private slots:
         QTest::keyClick(window,Qt::Key_Home);QTest::keyClick(window,Qt::Key_Return);QTRY_COMPARE(session.sceneId(),initial);
         selector->forceActiveFocus();QTest::keyClick(window,Qt::Key_End);QTRY_COMPARE(session.sceneId(),second);
         QCOMPARE(session.sceneIncluded(),(QVariantList{false,true}));
+        click("copyScene");const auto copied=session.sceneId();QVERIFY(copied!=second);QCOMPARE(session.sceneIds().size(),3);
+        click("sceneUp");QCOMPARE(session.sceneIds(),(QVariantList{initial,copied,second}));
+        click("undoButton");QCOMPARE(session.sceneIds(),(QVariantList{initial,second,copied}));
+        auto* up=find(window->contentItem(),"sceneUp");QVERIFY(up);up->forceActiveFocus();QTest::keyClick(window,Qt::Key_Space);
+        QCOMPARE(session.sceneIds(),(QVariantList{initial,copied,second}));
+        click("sceneDown");QCOMPARE(session.sceneIds(),(QVariantList{initial,second,copied}));
+        click("deleteScene");QCOMPARE(session.sceneId(),second);QCOMPARE(session.sceneIds().size(),2);
         click("deleteScene");QCOMPARE(session.sceneId(),initial);QCOMPARE(session.sceneIds().size(),1);
         click("undoButton");QCOMPARE(session.sceneId(),second);QCOMPARE(session.sceneIds().size(),2);
         click("redoButton");QCOMPARE(session.sceneId(),initial);click("undoButton");
@@ -80,6 +117,7 @@ private slots:
         click("launchScene");click("playButton");session.tick();QCOMPARE(session.sceneState(),QString("Active"));
         QCOMPARE(session.activeClipIds()[0].toString(),QString{});QCOMPARE(session.activeClipIds()[1],session.clipIds()[1]);
         QVERIFY(window->grabWindow().save("desktop-scene-management.png"));click("stopButton");session.tick();
+        QVERIFY(window->grabWindow().save("desktop-scene-copy-order.png"));
     }
     void sceneSlotHistoryAndPlayback() {
         Session session;session.selectStep(2);const auto tracks=session.trackIds(),clips=session.clipIds();

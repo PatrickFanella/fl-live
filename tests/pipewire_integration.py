@@ -375,7 +375,8 @@ context.objects = [
                 assert player.returncode == 0, (output, errors)
                 assert "QML edits, atomic scene launch, scene stop while transport runs and acknowledged transport stop" in output
                 desktop_workflow = dict(frames=144000, peak=peak, pitch=pitch, stopped_silence_frames=12000,
-                                        scene_active_tracks=1, excluded_audio_track_stopped=True, scene_stop_keeps_transport=True)
+                                        scene_active_tracks=1, excluded_audio_track_stopped=True, scene_stop_keeps_transport=True,
+                                        scene_arrangement_copy=True, scene_order_checked=True)
 
             # A second actual client must report the loss of this owned server
             # and exit; this does not touch any pre-existing server or stream.

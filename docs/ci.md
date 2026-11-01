@@ -18,7 +18,7 @@ After building the image, CI runs it as an unprivileged user with networking dis
 
 The scene-control revision runs 45 CTest executions across these five cohorts, including repeated tests across configurations. Each cohort includes the Qt-free document-to-render and atomic scene-scheduling checks. That is not a count of distinct tests. The Qt Core file codecs and authored-project migration/render checks have their own sanitizer cohort; the PipeWire sanitizer cohort still excludes Qt. ThreadSanitizer, native Wayland input, QML-to-device output, physical audio, performance and packaging are separate qualification work.
 
-Configure/build/test output, CTest logs, JUnit reports, installed toolchain versions and the offscreen desktop/active-clip/step-editor/history/identity-renaming/scene-controls/scene-slots/scene-management PNGs are collected under `build/ci-results`. The workflow retains them as the `linux-verification` artifact for 14 days, including available diagnostics after a failed test. The Gitea-compatible v3 artifact action and checkout action are pinned to commits. No deployment, publication or automatic merge is configured.
+Configure/build/test output, CTest logs, JUnit reports, installed toolchain versions and the offscreen desktop/active-clip/step-editor/history/identity-renaming/scene-controls/scene-slots/scene-management/scene-copy-order PNGs are collected under `build/ci-results`. The workflow retains them as the `linux-verification` artifact for 14 days, including available diagnostics after a failed test. The Gitea-compatible v3 artifact action and checkout action are pinned to commits. No deployment, publication or automatic merge is configured.
 
 To reproduce locally with Docker:
 
