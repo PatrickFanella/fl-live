@@ -4,6 +4,7 @@
 #include <QQmlContext>
 #include <QQuickWindow>
 #include <QQuickItem>
+#include <QAccessible>
 #include <QtEndian>
 #include <cstring>
 #include <tuple>
@@ -1202,6 +1203,118 @@ private slots:
             QVERIFY2(std::any_of(frames.begin(),frames.end(),[](const auto& f){return f[0]!=0 || f[1]!=0;}),qPrintable(name+" exported silence"));
             QVERIFY(!session.dirty());
         }
+    }
+    void keyboardContractAndFocus() {
+        QTemporaryDir directory;
+        Session session;
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* r,const QString& name)->QQuickItem* {
+            if(r->objectName()==name && r->isVisible())return r;
+            for(auto* c:r->childItems())if(auto* m=findItem(c,name))return m;
+            return nullptr;
+        };
+        // Shortcut table: every sequence is declared once.
+        QStringList sequences;
+        for(auto* shortcut:window->findChildren<QObject*>()) if(QString(shortcut->metaObject()->className())=="QQuickShortcut") {
+            QStringList own;
+            for(const auto& v:shortcut->property("sequences").toList()) {
+                // Standard keys expand to every platform binding they stand for.
+                if(v.typeId()==QMetaType::Int)for(const auto& k:QKeySequence::keyBindings(static_cast<QKeySequence::StandardKey>(v.toInt())))own.append(k.toString());
+                else own.append(v.toString());
+            }
+            if(own.isEmpty())own.append(QKeySequence(shortcut->property("sequence").toString()).toString());
+            own.removeDuplicates();sequences+=own;
+        }
+        auto unique=sequences;unique.removeDuplicates();
+        QVERIFY2(unique.size()==sequences.size() && sequences.size()>=9,qPrintable(sequences.join(" | ")));
+        // Space toggles transport when no control would consume it.
+        window->contentItem()->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_Space);session.tick();QTRY_VERIFY(session.running());
+        QTest::keyClick(window,Qt::Key_Space);session.tick();QTRY_VERIFY(!session.running());
+        // In a text field, Space and Ctrl+Z are text editing, not transport or history.
+        session.setTempo(121);
+        auto* path=findItem(window->contentItem(),"projectFile");path->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_End);QTest::keyClick(window,Qt::Key_Space);session.tick();
+        QVERIFY(!session.running());QVERIFY(path->property("text").toString().endsWith(" "));
+        QTest::keyClick(window,Qt::Key_Z,Qt::ControlModifier);QCOMPARE(session.tempo(),121);
+        // On a focused button, Space presses that button instead.
+        auto* stopTrack=findItem(window->contentItem(),"stopTrack0");stopTrack->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_Space);session.tick();QVERIFY(!session.running());
+        // Ctrl+S saves to the path field; Ctrl+Shift+A/M add tracks.
+        path->setProperty("text",directory.filePath("keys.json"));window->contentItem()->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_S,Qt::ControlModifier);QVERIFY(QFile::exists(directory.filePath("keys.json")));QVERIFY(!session.dirty());
+        QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier|Qt::ShiftModifier);QTRY_COMPARE(session.trackCount(),3);
+        QTest::keyClick(window,Qt::Key_M,Qt::ControlModifier|Qt::ShiftModifier);QTRY_COMPARE(session.trackCount(),4);
+        QCOMPARE(session.trackKinds(),(QVariantList{"audio","midi","audio","midi"}));
+        // Ctrl+E exports with the row's settings.
+        findItem(window->contentItem(),"exportFile")->setProperty("text",directory.filePath("keys.wav"));
+        window->contentItem()->forceActiveFocus();QTest::keyClick(window,Qt::Key_E,Qt::ControlModifier);
+        QTRY_VERIFY(!session.exporting());QVERIFY(QFile::exists(directory.filePath("keys.wav")));
+        // Keyboard deletion keeps focus on the next track's Delete button,
+        // then on the previous one, then on Add audio track.
+        auto* del=findItem(window->contentItem(),"deleteTrack1");del->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_Space);QTRY_COMPARE(session.trackCount(),3);
+        QTRY_COMPARE(window->activeFocusItem()->objectName(),QString("deleteTrack1"));
+        QCOMPARE(session.trackKinds(),(QVariantList{"audio","audio","midi"}));
+        findItem(window->contentItem(),"deleteTrack2")->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_Space);QTRY_COMPARE(session.trackCount(),2);
+        QTRY_COMPARE(window->activeFocusItem()->objectName(),QString("deleteTrack1"));
+        QTest::keyClick(window,Qt::Key_Space);QTRY_COMPARE(session.trackCount(),1);
+        QTest::keyClick(window,Qt::Key_Space);QTRY_COMPARE(session.trackCount(),0);
+        QTRY_COMPARE(window->activeFocusItem()->objectName(),QString("addAudioTrack"));
+        // Undo from the keyboard restores tracks; focus stays on a visible control.
+        QTest::keyClick(window,Qt::Key_Z,Qt::ControlModifier);QTRY_COMPARE(session.trackCount(),1);
+        QVERIFY(window->activeFocusItem() && window->activeFocusItem()->isVisible());
+        QTest::keyClick(window,Qt::Key_Z,Qt::ControlModifier|Qt::ShiftModifier);QTRY_COMPARE(session.trackCount(),0);
+        // Shortcuts are inactive while a dialog is open.
+        session.undo();QCOMPARE(session.trackCount(),1);
+        findItem(window->contentItem(),"renameTrack0")->forceActiveFocus();QTest::keyClick(window,Qt::Key_Space);
+        QTRY_VERIFY(window->findChild<QObject*>("renameDialog")->property("visible").toBool());
+        QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier|Qt::ShiftModifier);QCOMPARE(session.trackCount(),1);
+        QTest::keyClick(window,Qt::Key_Escape);QTRY_VERIFY(!window->findChild<QObject*>("renameDialog")->property("visible").toBool());
+        QTRY_COMPARE(window->activeFocusItem()->objectName(),QString("renameTrack0")); // focus returns to the opener
+    }
+    void accessibleNames() {
+        // Every visible interactive control has an accessible name, and no
+        // two controls share one, so a screen reader can tell them apart.
+        Session session;QVERIFY(session.addTrack("audio"));QVERIFY(session.addTrack("midi"));
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        QAccessible::setActive(true);
+        QStringList names,unnamed;int controls=0;
+        std::function<void(QQuickItem*)> walk=[&](QQuickItem* item) {
+            if(!item->isVisible())return;
+            const QString type=item->metaObject()->className();
+            // A ComboBox's own text field is part of the combo, which is named.
+            const bool insideCombo=item->parentItem() && item->parentItem()->inherits("QQuickComboBox");
+            const bool control=!insideCombo && (item->inherits("QQuickAbstractButton") || item->inherits("QQuickSpinBox") ||
+                               item->inherits("QQuickComboBox") || item->inherits("QQuickTextField") || item->inherits("QQuickProgressBar"));
+            if(control) {
+                ++controls;
+                auto* iface=QAccessible::queryAccessibleInterface(item);
+                const auto name=iface ? iface->text(QAccessible::Name) : QString();
+                if(name.trimmed().isEmpty())unnamed.append(type+"/"+item->objectName());else names.append(name);
+                if(iface)QVERIFY2(iface->role()!=QAccessible::NoRole,qPrintable(name));
+            }
+            for(auto* child:item->childItems())walk(child);
+        };
+        walk(window->contentItem());
+        QVERIFY(controls>60);
+        QVERIFY2(unnamed.isEmpty(),qPrintable("unnamed: "+unnamed.join(", ")));
+        QStringList duplicates;for(const auto& n:names)if(names.count(n)>1 && !duplicates.contains(n))duplicates.append(n);
+        QVERIFY2(duplicates.isEmpty(),qPrintable("duplicate names: "+duplicates.join(", ")));
+        // State is exposed too: a checked Mute reports the checked state.
+        QVERIFY(session.setMute(session.trackIds()[0].toString(),true));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* r,const QString& name)->QQuickItem* {
+            if(r->objectName()==name && r->isVisible())return r;
+            for(auto* c:r->childItems())if(auto* m=findItem(c,name))return m;
+            return nullptr;
+        };
+        QTRY_VERIFY(QAccessible::queryAccessibleInterface(findItem(window->contentItem(),"mute0"))->state().checked);
+        QAccessible::setActive(false);
     }
     void qmlMixerInput() {
         Session session;

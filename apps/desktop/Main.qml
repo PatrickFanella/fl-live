@@ -14,6 +14,25 @@ ApplicationWindow {
     property bool textOwnsUndo: (activeFocusItem instanceof TextInput || activeFocusItem instanceof TextEdit) && !activeFocusItem.readOnly
     Shortcut { sequences: [StandardKey.Undo]; enabled: session.canUndo && !window.textOwnsUndo && !closeDialog.visible && !renameDialog.visible; onActivated: session.undo() }
     Shortcut { sequences: [StandardKey.Redo]; enabled: session.canRedo && !window.textOwnsUndo && !closeDialog.visible && !renameDialog.visible; onActivated: session.redo() }
+    // Keyboard contract (see docs/keyboard.md). Text fields keep their own
+    // editing keys; Space toggles transport only when no control would use it.
+    readonly property bool dialogOpen: closeDialog.visible || renameDialog.visible
+    readonly property bool focusUsesSpace: activeFocusItem !== null && activeFocusItem !== window.contentItem && (window.textOwnsUndo || activeFocusItem.hasOwnProperty("checkable") || activeFocusItem.hasOwnProperty("currentIndex"))
+    Shortcut { objectName: "saveShortcut"; sequences: [StandardKey.Save]; enabled: !window.dialogOpen; onActivated: session.saveProject(projectFile.text) }
+    Shortcut { objectName: "openShortcut"; sequences: [StandardKey.Open]; enabled: !window.dialogOpen && session.canEdit; onActivated: session.loadProject(projectFile.text) }
+    Shortcut { objectName: "transportShortcut"; sequence: "Space"; enabled: !window.dialogOpen && !window.focusUsesSpace && session.audioAvailable; onActivated: session.running ? session.stop() : session.play() }
+    Shortcut { objectName: "panicShortcut"; sequence: "Ctrl+."; enabled: !window.dialogOpen; onActivated: session.panic() }
+    Shortcut { objectName: "addAudioShortcut"; sequence: "Ctrl+Shift+A"; enabled: !window.dialogOpen && session.canEdit; onActivated: session.addTrack("audio") }
+    Shortcut { objectName: "addMidiShortcut"; sequence: "Ctrl+Shift+M"; enabled: !window.dialogOpen && session.canEdit; onActivated: session.addTrack("midi") }
+    Shortcut { objectName: "exportShortcut"; sequence: "Ctrl+E"; enabled: !window.dialogOpen && session.canEdit && !session.exporting; onActivated: exportButton.clicked() }
+    // After a track is deleted, focus moves to the same control on the track
+    // that took its place (or the previous one), never to nothing.
+    function focusAfterDeletion(index) {
+        Qt.callLater(function() {
+            const target = trackRepeater.count === 0 ? addAudioButton : trackRepeater.itemAt(Math.min(index, trackRepeater.count - 1)).deleteButton
+            target.forceActiveFocus(Qt.TabFocusReason)
+        })
+    }
     title: "fl-live · Session" + (session.dirty ? " · Unsaved changes" : "")
     onClosing: function(close) {
         if (session.dirty && !discardOnClose) {
@@ -100,8 +119,8 @@ ApplicationWindow {
                             ? "Unsaved work from " + modelData.time + " was found (" + (modelData.project ? modelData.project : "never saved") + ", " + modelData.tracks + " tracks). Restore it, or discard it."
                             : "A recovery file could not be used: " + modelData.reason + ". It was left in place; discard it when you no longer need it."
                     }
-                    Button { objectName: "restoreRecovery" + index; text: "Restore"; visible: modelData.valid; enabled: session.canEdit && !session.dirty; onClicked: session.restoreRecovery(modelData.file); ToolTip.visible: hovered; ToolTip.text: "Opens the recovered work unsaved. The project file is not changed until you Save." }
-                    Button { objectName: "discardRecovery" + index; text: "Discard"; onClicked: session.discardRecovery(modelData.file) }
+                    Button { objectName: "restoreRecovery" + index; text: "Restore"; Accessible.name: "Restore recovered work from " + modelData.time; visible: modelData.valid; enabled: session.canEdit && !session.dirty; onClicked: session.restoreRecovery(modelData.file); ToolTip.visible: hovered; ToolTip.text: "Opens the recovered work unsaved. The project file is not changed until you Save." }
+                    Button { objectName: "discardRecovery" + index; text: "Discard"; Accessible.name: "Discard recovery file from " + modelData.time; onClicked: session.discardRecovery(modelData.file) }
                 }
             }
         }
@@ -135,7 +154,7 @@ ApplicationWindow {
             SpinBox { id: exportTail; objectName: "exportTail"; from: 0; to: 10000; stepSize: 100; value: 0; editable: true; enabled: session.canEdit; Layout.preferredWidth: 96; Accessible.name: "Export tail in milliseconds"; ToolTip.visible: hovered; ToolTip.text: "Time rendered after every track stops at the end of the range. Silent until effects or release envelopes exist." }
             ComboBox { id: exportChannels; objectName: "exportChannels"; model: ["Stereo", "Mono"]; Layout.preferredWidth: 92; Accessible.name: "Export channels" }
             ComboBox { id: exportFormat; objectName: "exportFormat"; model: ["16-bit", "24-bit", "32-bit float"]; Layout.preferredWidth: 120; Accessible.name: "Export sample format" }
-            Button { objectName: "exportWavButton"; text: "Export all tracks"; visible: !session.exporting; enabled: session.canEdit; onClicked: session.exportAudio(exportFile.text, exportStart.value, exportBars.value, exportTail.value, exportChannels.currentIndex === 0 ? 2 : 1, ["pcm16", "pcm24", "float32"][exportFormat.currentIndex]) }
+            Button { id: exportButton; objectName: "exportWavButton"; text: "Export all tracks"; visible: !session.exporting; enabled: session.canEdit; onClicked: session.exportAudio(exportFile.text, exportStart.value, exportBars.value, exportTail.value, exportChannels.currentIndex === 0 ? 2 : 1, ["pcm16", "pcm24", "float32"][exportFormat.currentIndex]) }
             ProgressBar { objectName: "exportProgress"; visible: session.exporting; from: 0; to: 1; value: session.exportProgress; Layout.preferredWidth: 120; Accessible.name: "Export progress" }
             Button { objectName: "cancelExportButton"; text: "Cancel export"; visible: session.exporting; onClicked: session.cancelExport(); Accessible.description: "Stops the export and removes the partial file" }
         }
@@ -176,7 +195,7 @@ ApplicationWindow {
         RowLayout {
             Layout.fillWidth: true
             Label { text: "TRACKS"; color: "#9daabd" }
-            Button { objectName: "addAudioTrack"; text: "Add audio track"; enabled: session.canEdit && session.trackCount < 64; onClicked: session.addTrack("audio") }
+            Button { id: addAudioButton; objectName: "addAudioTrack"; text: "Add audio track"; enabled: session.canEdit && session.trackCount < 64; onClicked: session.addTrack("audio") }
             Button { objectName: "addMidiTrack"; text: "Add MIDI track"; enabled: session.canEdit && session.trackCount < 64; onClicked: session.addTrack("midi") }
             Item { Layout.fillWidth: true }
             Label { text: session.trackCount + (session.trackCount === 1 ? " track" : " tracks") + " · one clip each"; color: "#9daabd" }
@@ -197,10 +216,12 @@ ApplicationWindow {
                         id: trackRow; spacing: 16
                         Label { visible: session.trackCount === 0; text: "No tracks. Add an audio or MIDI track."; color: "#b7c5d8" }
                         Repeater {
+                            id: trackRepeater
                             // An integer model keeps delegates (and focus) stable across status updates.
                             model: window.trackSlots
                             ColumnLayout {
                                 id: trackColumn
+                                property alias deleteButton: deleteButton
                                 required property int index
                                 readonly property string trackId: session.trackIds[index] || ""
                                 readonly property bool midi: session.trackKinds[index] === "midi"
@@ -223,7 +244,7 @@ ApplicationWindow {
                                         text: (session.activeClips[index] === 0 ? "●  " : "▶  ") + session.clipNames[index] + "\n" + session.trackSources[index]
                                         contentItem: Text { text: clipButton.text; textFormat: Text.PlainText; color: clipButton.palette.buttonText; font: clipButton.font; wrapMode: Text.Wrap; elide: Text.ElideRight; maximumLineCount: 2; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                         onClicked: session.launchClip(session.clipIds[index])
-                                        Accessible.name: "Launch " + session.clipNames[index]
+                                        Accessible.name: "Launch " + session.clipNames[index] + " on track " + (index + 1)
                                         Accessible.description: session.clipStates[index]
                                     }
                                     ToolButton { id: clipRename; objectName: "renameClip" + index; text: "Rename"; enabled: session.canEdit; Accessible.name: "Rename clip " + (index + 1); onClicked: renameDialog.edit(false, session.clipIds[index], session.clipNames[index], clipRename) }
@@ -233,10 +254,11 @@ ApplicationWindow {
                                     Label { objectName: "clipState" + index; text: session.clipStates[index]; Layout.fillWidth: true; color: session.activeClips[index] >= 0 ? "#68d9a4" : "#b7c5d8" }
                                     CheckBox { objectName: "sceneIncluded" + index; text: "Include in scene"; checked: session.sceneIncluded[index]; enabled: session.canEdit; onClicked: session.setSceneIncluded(trackColumn.trackId, checked); Accessible.name: "Include track " + (index+1) + " in scene"; ToolTip.visible: hovered; ToolTip.text: "An excluded track stops when this scene launches." }
                                 }
-                                Button { text: "Stop track on next bar"; Layout.fillWidth: true; onClicked: session.stopTrackId(trackColumn.trackId) }
+                                Button { objectName: "stopTrack" + index; text: "Stop track on next bar"; Accessible.name: "Stop track " + (index + 1) + " on next bar"; Layout.fillWidth: true; onClicked: session.stopTrackId(trackColumn.trackId) }
                                 Label { objectName: "trackSource" + index; text: session.trackSources[index]; textFormat: Text.PlainText; elide: Text.ElideMiddle; Layout.fillWidth: true; color: text.startsWith("Missing") ? "#e4bc75" : "#b7c5d8" }
                                 Button {
                                     objectName: "editPattern" + index; visible: trackColumn.midi; Layout.fillWidth: true
+                                    Accessible.name: "Edit pattern of track " + (index + 1)
                                     text: session.patternTrackIndex === index ? "Editing pattern below" : "Edit pattern"
                                     highlighted: session.patternTrackIndex === index
                                     onClicked: session.editPattern(trackColumn.trackId)
@@ -245,12 +267,12 @@ ApplicationWindow {
                                     visible: !trackColumn.midi; Layout.fillWidth: true
                                     TextField { id: audioPath; objectName: "audioPath" + index; Layout.fillWidth: true; placeholderText: "WAV file path"; Accessible.name: "WAV file to import into track " + (index + 1) }
                                     Button {
-                                        objectName: "relinkAudio" + index; text: "Relink"
+                                        objectName: "relinkAudio" + index; text: "Relink"; Accessible.name: "Relink audio of track " + (index + 1)
                                         visible: (session.clipFrames[index] || 0) > 0 || (session.trackSources[index] || "").startsWith("Missing")
                                         enabled: !session.importing; onClicked: session.relinkAudio(trackColumn.trackId, audioPath.text)
                                         ToolTip.visible: hovered; ToolTip.text: "Point this clip at another file and keep its range. Refused if the file is shorter than the range."
                                     }
-                                    Button { objectName: "importAudio" + index; text: "Import"; enabled: !session.importing; onClicked: session.importAudio(trackColumn.trackId, audioPath.text); ToolTip.visible: hovered; ToolTip.text: "Mono or stereo WAV at 48 kHz. Decoding runs in the background; the clip changes once transport is stopped." }
+                                    Button { objectName: "importAudio" + index; text: "Import"; Accessible.name: "Import WAV into track " + (index + 1); enabled: !session.importing; onClicked: session.importAudio(trackColumn.trackId, audioPath.text); ToolTip.visible: hovered; ToolTip.text: "Mono or stereo WAV at 48 kHz. Decoding runs in the background; the clip changes once transport is stopped." }
                                 }
                                 Canvas {
                                     id: waveform
@@ -335,7 +357,11 @@ ApplicationWindow {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     Button { objectName: "duplicateTrack" + index; text: "Duplicate"; enabled: session.canEdit && session.trackCount < 64; onClicked: session.duplicateTrack(trackColumn.trackId); Accessible.name: "Duplicate track " + (index + 1) }
-                                    Button { objectName: "deleteTrack" + index; text: "Delete"; enabled: session.canEdit; onClicked: session.deleteTrack(trackColumn.trackId); Accessible.name: "Delete track " + (index + 1); ToolTip.visible: hovered; ToolTip.text: "Removes the track, its clip and its scene slots. Undo restores them." }
+                                    Button { id: deleteButton; objectName: "deleteTrack" + index; text: "Delete"; enabled: session.canEdit; onClicked: {
+                                            // The track list rebuilds on deletion; capture what the focus move needs first.
+                                            const position = index, appWindow = ApplicationWindow.window
+                                            if (session.deleteTrack(trackColumn.trackId)) appWindow.focusAfterDeletion(position)
+                                        } Accessible.name: "Delete track " + (index + 1); ToolTip.visible: hovered; ToolTip.text: "Removes the track, its clip and its scene slots. Undo restores them." }
                                 }
                             }
                         }

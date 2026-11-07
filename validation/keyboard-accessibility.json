@@ -1,0 +1,30 @@
+{
+  "verified_at": "2026-11-07T08:49:15.226350+00:00",
+  "base": "PR #124 head",
+  "issues": [
+    79,
+    80
+  ],
+  "scope": "Keyboard shortcuts, focus restoration and accessible names for the desktop controls",
+  "environment": "Kvant, pinned CI image (Qt 6.12.0, offscreen), docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 20,
+      "total": 20,
+      "desktop_tests": "42 Qt test functions passed",
+      "note": "One of two other runs failed only private-graph captures (pre-#123 harness); desktop-session passed in every run"
+    }
+  },
+  "verified_behaviors": [
+    "Shortcut table has no duplicate key sequence (platform Undo/Redo bindings expanded)",
+    "Space toggles transport only when no text field, button, check box or combo box would use it; in a text field Space types and Ctrl+Z edits text",
+    "Ctrl+S saves, Ctrl+Shift+A/M add tracks, Ctrl+E exports; shortcuts are inactive while the Rename dialog is open",
+    "Keyboard deletion moves focus to the replacing track's Delete button, then the previous one, then Add audio track; Escape returns focus to the Rename opener; Undo/Redo leave focus on a visible control",
+    "With four tracks, every visible interactive control exposes a non-empty, unique accessible name and a role; a checked Mute box reports checked"
+  ],
+  "source_sha256": {
+    "apps/desktop/Main.qml": "859d4e57b29ef60e65dea7efc21df313c60e87db987252850a816346fd6c8e63",
+    "tests/desktop_tests.cpp": "afff3467564ed1e164cd069a7fb97175e1a7b8286a4de78912b0dda4d03d3fde"
+  },
+  "limits": "Offscreen synthetic events and QAccessible queries only; no screen reader or native Wayland input. Adding or deleting tracks rebuilds the track strip."
+}
