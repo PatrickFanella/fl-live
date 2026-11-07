@@ -1,0 +1,51 @@
+{
+  "verified_at": "2026-11-07T06:53:23.486274+00:00",
+  "base": "feat/stereo-engine-output f4d4f6dc226138ad52bc70709aa1284c249bbe91 (PR #110)",
+  "issues": [
+    30
+  ],
+  "scope": "Qt-free WAV admission policy and ordered worker decoding with cancellation",
+  "environment": "Kvant, pinned CI image (Qt 6.12.0, PipeWire 1.6.9, libsndfile 1.2.2), docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 18,
+      "total": 18
+    },
+    "release": {
+      "passed": 7,
+      "total": 7
+    },
+    "engine-only": {
+      "passed": 5,
+      "total": 5,
+      "note": "media import is not built without the renderer/libsndfile"
+    },
+    "pipewire-sanitize": {
+      "passed": 14,
+      "total": 15,
+      "note": "wav-import passed under ASan/UBSan; the one failure was pipewire-frame-coded-control, a pre-existing environment flake (see findings)"
+    },
+    "document-io-sanitize": {
+      "passed": 7,
+      "total": 7
+    }
+  },
+  "verified_behaviors": [
+    "Independent RIFF fixtures: PCM16 mono/stereo, PCM24 and float32 decode to the expected values; integer PCM normalized to [-1,1), float kept unclipped",
+    "Rate policy admits files that match the session rate (48 kHz default, 44.1 kHz policy) and refuses others with a message naming both rates",
+    "Refusals: missing file, directory, text, truncated header, AIFF, A-law, three channels, empty data, NaN, infinity, over-limit file, invalid policy, pre-set cancel",
+    "Inclusive frame limit; a header under-reporting its data cannot bypass the limit",
+    "Imported stereo clip prepares through DocumentRenderPlan and renders the authored frames",
+    "Worker decodes on a separate thread, completes in order, cancels pending and running requests and shuts down promptly during a 20-second decode"
+  ],
+  "findings": [
+    "pipewire-frame-coded-control (unchanged by this work) failed intermittently on unmodified main too: 10/25 and 0/25 in two rounds, and the pw-cat reference producer with no fl-live code failed 3/25, while the host load average was about 27. Hosted CI failed once on this test for PR #110 and was rerun."
+  ],
+  "source_sha256": {
+    "include/fl_live/media_import.hpp": "0e01727523f1b9c2b83f42bb46962a2ebb20275219f6ef6a38a5650f917c5aa9",
+    "src/media_import.cpp": "c5d5c6ee446c9afa5dcb8d929e04e0bd74460fc70089407a9e69e05b17350af6",
+    "tests/media_import_tests.cpp": "367103695c3806b95d35c4c948910fd1bdc8f00597dcd7edc01ce67f45173af3",
+    "CMakeLists.txt": "20fe599da81a1211aa4cf8bdee73f0a09ded9d8c7f86503c3e709aca25181a06"
+  },
+  "limits": "Offline checks only. No desktop import control, waveform view, loop-range editing or asset persistence yet (#27, #31, #56, #60)."
+}
