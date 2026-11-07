@@ -71,4 +71,19 @@ Opening a project decodes its imported WAVs on the control thread before prepari
 - `trackLimit`: 64 tracks, refused 65th add and duplicate without history change, Save/Open.
 - `qmlTrackManagement`: actual pointer input on Add audio/MIDI track, Import, Edit pattern, step editing, Duplicate, Delete, Undo, clip launch and Play.
 
+## D2 journey qualification (#37)
+
+`qmlD2Journey` drives the whole D2 workload through the production QML with pointer and keyboard input only:
+
+1. Type WAV paths and Import into the template audio track (mono) and a newly added audio track (stereo); add a MIDI track.
+2. Edit both MIDI patterns: notes, pitch by arrow keys, gate, and a rest.
+3. Set tempo 128 by typing, adjust levels by arrow keys, type pans L40 and R20, and type a 50 ms clip end.
+4. Build four scenes with New scene, Copy arrangement and Include in scene.
+5. Launch two scenes with Immediate timing while playing, then Stop.
+6. Type a project path, Save and close the window.
+7. In a fresh session and window, Open the project and check track IDs, kinds, sources, tempo, levels, pans, clip range, every scene's membership and both patterns.
+8. Export two bars through the UI and decode the stereo WAV independently. Each channel must match per-track renders mixed with the declared levels and balance pan law within 1 LSB.
+
+Four tracks and four scenes are the qualification workload, not a product limit (`trackLimit` covers 64 tracks; scenes allow 256). Persistence evidence for #13 is in [project files](#project-files-version-4) and the [interrupted-save checks](projects.md#interrupted-and-failed-saves).
+
 These are offline and offscreen checks. Native Wayland input, physical audio and the D2 save/reopen/export journey qualification (#37) remain separate.

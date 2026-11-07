@@ -1,0 +1,42 @@
+{
+  "verified_at": "2026-11-07T08:10:49.559419+00:00",
+  "base": "clip-ranges PR #117 head (stacked on #110, #113-#116)",
+  "issues": [
+    37,
+    9,
+    13
+  ],
+  "scope": "D2 general Session journey through actual offscreen QML input: build, mix, arrange, launch, save, close, reopen, export, independent decode",
+  "environment": "Kvant, pinned CI image (Qt 6.12.0, offscreen platform, software Quick backend), docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 19,
+      "total": 19,
+      "note": "Clean run; one of four other runs failed pipewire-quantum-257 with a one-frame capture slip (finding below), unrelated to the desktop tests"
+    }
+  },
+  "workload": {
+    "tracks": [
+      "audio: imported mono WAV with 0-50 ms range",
+      "midi: template pattern with a rest, level 40",
+      "audio: imported stereo WAV, level 60, pan L40",
+      "midi: new pattern (two notes), pan R20"
+    ],
+    "scenes": 4,
+    "tempo": 128,
+    "export_bars": 2
+  },
+  "verified_behaviors": [
+    "All edits made with pointer clicks and keyboard input on the production QML (typing paths, arrow keys, typed pan notation)",
+    "Two scenes launched Immediate while playing; active clips match each scene's membership",
+    "Saved, window closed, reopened in a fresh Session/QML: track IDs, kinds, sources, tempo, levels, pans, clip range, all four scene memberships and both MIDI patterns equal the authored edits",
+    "Two-bar export via the UI decoded independently: both channels within 1 LSB of per-track renders mixed with the declared levels and balance pan"
+  ],
+  "finding": "pipewire-quantum-257 (mono fl-live-play, unchanged by this test) once captured a one-frame slip mid-stream (values continued shifted by one frame). The dropped-cycle retry intentionally does not cover this; a similar non-dropped mismatch was seen earlier from the pw-cat reference producer, which links no fl-live code.",
+  "source_sha256": {
+    "tests/desktop_tests.cpp": "02b09f14c18b1a5e4189de28caf188c77aa086fe43a87385a773b064c4bbeb0c",
+    "apps/desktop/Main.qml": "1f18f253840df86dcd8ae9330bda4e6aaece5081487215b399777ed11b663485",
+    "apps/desktop/session.cpp": "1956eb8be38627e4b43998eccabff285deb8ce5eb5c0910cca948d84e21fca9b"
+  },
+  "limits": "Offscreen platform with synthetic input events, silent preview clock. Not native Wayland input, not physical audio, not a packaged release."
+}

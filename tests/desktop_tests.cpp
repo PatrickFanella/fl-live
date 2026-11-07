@@ -788,6 +788,148 @@ private slots:
         session.undo();QCOMPARE(session.clipRanges()[0],QVariant(QVariantList{48.0,12000.0,true}));
         QTRY_VERIFY(findItem(window->contentItem(),"rangeLoop0")->property("checked").toBool());
     }
+    void qmlD2Journey() {
+        // #37 qualification workload, driven only through the QML: two audio
+        // and two MIDI tracks, four scenes, mixing, Save, close, Open, Export.
+        QTemporaryDir directory;
+        const auto kick=directory.filePath("kick.wav"),pad=directory.filePath("pad.wav");
+        std::vector<qint16> kickSamples(4800),padSamples(9600*2);
+        for(std::size_t i=0;i<kickSamples.size();++i)kickSamples[i]=static_cast<qint16>(16000.0*std::exp(-static_cast<double>(i)/600)*std::sin(static_cast<double>(i)/30));
+        for(std::size_t i=0;i<9600;++i){padSamples[2*i]=static_cast<qint16>(6000*std::sin(static_cast<double>(i)/50));padSamples[2*i+1]=static_cast<qint16>(6000*std::sin(static_cast<double>(i)/45));}
+        writeWav(kick,1,48000,kickSamples);writeWav(pad,2,48000,padSamples);
+        const auto projectPath=directory.filePath("journey.json"),exportPath=directory.filePath("journey.wav");
+        std::vector<QStringList> sceneTracks;QVariantList trackIds;
+        {
+            Session session;
+            QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);
+            engine.load(QUrl("qrc:/ui/Main.qml"));
+            auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+            std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* root,const QString& name)->QQuickItem* {
+                if(root->objectName()==name && root->isVisible())return root;
+                for(auto* child:root->childItems())if(auto* match=findItem(child,name))return match;
+                return nullptr;
+            };
+            auto show=[&](QQuickItem* item) {
+                auto* scroll=findItem(window->contentItem(),"trackScroll");if(!scroll)return;
+                auto* flick=scroll->property("contentItem").value<QQuickItem*>();if(!flick)return;
+                const auto at=item->mapToItem(flick,QPointF(0,0));
+                if(at.x()<0 || at.x()+item->width()>flick->width())
+                    flick->setProperty("contentX",std::max(0.0,flick->property("contentX").toReal()+at.x()-20));
+                QTest::qWait(20);
+            };
+            auto click=[&](const QString& name) {
+                auto* item=findItem(window->contentItem(),name);QVERIFY2(item,qPrintable(name));show(item);
+                QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());
+            };
+            auto focus=[&](const QString& name) {
+                auto* item=findItem(window->contentItem(),name);QVERIFY2(item,qPrintable(name));show(item);item->forceActiveFocus();
+            };
+            auto type=[&](const QString& name,const QString& text,bool enter=true) {
+                focus(name);QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier);for(const QChar c:text)QTest::keyClick(window,c.toLatin1());
+                if(enter)QTest::keyClick(window,Qt::Key_Return);
+            };
+            auto keys=[&](const QString& name,Qt::Key key,int times){focus(name);for(int i=0;i<times;++i)QTest::keyClick(window,key);};
+            // Two audio tracks with imported WAVs, two MIDI tracks with patterns.
+            type("audioPath0",kick,false);click("importAudio0");QTRY_VERIFY(!session.importing());
+            click("addAudioTrack");QTRY_COMPARE(session.trackCount(),3);
+            type("audioPath2",pad,false);click("importAudio2");QTRY_VERIFY(!session.importing());
+            click("addMidiTrack");QTRY_COMPARE(session.trackCount(),4);
+            QCOMPARE(session.trackKinds(),(QVariantList{"audio","midi","audio","midi"}));
+            click("editPattern3");click("step0");click("stepEnabled");keys("selectedPitch",Qt::Key_Down,12);
+            click("step2");click("stepEnabled");keys("selectedGate",Qt::Key_Up,25);
+            click("editPattern1");click("step3");click("stepEnabled"); // rest on the template's fourth step
+            // Mix: tempo, levels, pans, and a clip range on the first audio track.
+            type("tempoSpin","128");QCOMPARE(session.tempo(),128);
+            keys("level2",Qt::Key_Down,10);type("pan2","L40");type("pan3","R20");keys("level1",Qt::Key_Up,15);
+            type("rangeEnd0","50");QCOMPARE(session.clipRanges()[0],QVariant(QVariantList{0.0,2400.0,true}));
+            // Four scenes: template scene plus three arrangements.
+            click("sceneIncluded2");click("sceneIncluded3");
+            click("createScene");click("sceneIncluded2");click("sceneIncluded3");
+            click("copyScene");click("sceneIncluded2");
+            click("createScene");click("sceneIncluded0");
+            QCOMPARE(session.sceneIds().size(),4);
+            trackIds=session.trackIds();
+            for(const auto& id:session.sceneIds()) {
+                QVERIFY(session.selectScene(id.toString()));QStringList included;
+                for(int t=0;t<4;++t)if(session.sceneIncluded()[t].toBool())included.append(trackIds[t].toString());
+                sceneTracks.push_back(included);
+            }
+            QCOMPARE(sceneTracks[0].size(),4);QCOMPARE(sceneTracks[1].size(),2);QCOMPARE(sceneTracks[2].size(),1);QCOMPARE(sceneTracks[3].size(),1);
+            // Launch scenes through the controls (silent preview clock).
+            focus("sceneSelector");QTest::keyClick(window,Qt::Key_Home);
+            QTRY_COMPARE(session.selectedSceneIndex(),0);
+            findItem(window->contentItem(),"sceneTiming")->setProperty("currentIndex",0);
+            click("launchScene");click("playButton");QTRY_COMPARE(session.sceneState(),QString("Active"));
+            QCOMPARE(session.activeClips(),(QVariantList{0,0,0,0}));
+            focus("sceneSelector");QTest::keyClick(window,Qt::Key_Down);QTRY_COMPARE(session.selectedSceneIndex(),1);
+            click("launchScene");QTRY_COMPARE(session.sceneState(),QString("Active"));
+            QCOMPARE(session.activeClips(),(QVariantList{-1,-1,0,0}));
+            click("stopButton");QTRY_VERIFY(!session.running());QTRY_VERIFY(session.canEdit());
+            QVERIFY(window->grabWindow().save("desktop-d2-journey.png"));
+            type("projectFile",projectPath,false);click("saveProjectButton");QVERIFY2(!session.dirty(),qPrintable(session.message()));
+            QVERIFY(window->close());
+        }
+        // Reopen in a fresh session and window.
+        Session session;
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* root,const QString& name)->QQuickItem* {
+            if(root->objectName()==name && root->isVisible())return root;
+            for(auto* child:root->childItems())if(auto* match=findItem(child,name))return match;
+            return nullptr;
+        };
+        auto click=[&](const QString& name) {
+            auto* item=findItem(window->contentItem(),name);QVERIFY2(item,qPrintable(name));
+            auto* flick=findItem(window->contentItem(),"trackScroll")->property("contentItem").value<QQuickItem*>();
+            const auto at=item->mapToItem(flick,QPointF(0,0));
+            if(item->isAncestorOf(flick) || !flick->isAncestorOf(item)){} else if(at.x()<0 || at.x()+item->width()>flick->width())
+                {flick->setProperty("contentX",std::max(0.0,flick->property("contentX").toReal()+at.x()-20));QTest::qWait(20);}
+            QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());
+        };
+        auto type=[&](const QString& name,const QString& text) {
+            auto* item=findItem(window->contentItem(),name);QVERIFY2(item,qPrintable(name));item->forceActiveFocus();
+            QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier);for(const QChar c:text)QTest::keyClick(window,c.toLatin1());
+        };
+        type("projectFile",projectPath);click("openProjectButton");
+        QCOMPARE(session.trackIds(),trackIds);QCOMPARE(session.tempo(),128);
+        QCOMPARE(session.trackKinds(),(QVariantList{"audio","midi","audio","midi"}));
+        QCOMPARE(session.trackSources()[0].toString(),QString("kick.wav · 0.10 s · mono"));
+        QCOMPARE(session.trackSources()[2].toString(),QString("pad.wav · 0.20 s · stereo"));
+        QCOMPARE(session.levels(),(QVariantList{70,40,60,70}));QCOMPARE(session.pans(),(QVariantList{0,0,-40,20}));
+        QCOMPARE(session.clipRanges()[0],QVariant(QVariantList{0.0,2400.0,true}));
+        std::size_t scene=0;
+        for(const auto& id:session.sceneIds()) {
+            QVERIFY(session.selectScene(id.toString()));QStringList included;
+            for(int t=0;t<4;++t)if(session.sceneIncluded()[t].toBool())included.append(trackIds[t].toString());
+            QCOMPARE(included,sceneTracks[scene++]);
+        }
+        click("editPattern3");
+        QCOMPARE(session.stepEnabled()[0].toBool(),true);QCOMPARE(session.pitches()[0].toInt(),48);
+        QCOMPARE(session.stepEnabled()[2].toBool(),true);QCOMPARE(session.gates()[2].toInt(),100);
+        click("editPattern1");QCOMPARE(session.stepEnabled()[3].toBool(),false);
+        // Export through the UI and decode independently.
+        type("exportFile",exportPath);findItem(window->contentItem(),"exportBars")->setProperty("value",2);
+        click("exportWavButton");QTRY_VERIFY(!session.exporting());QVERIFY2(QFile::exists(exportPath),qPrintable(session.message()));
+        const auto frames=readStereo(exportPath);QCOMPARE(frames.size(),static_cast<std::size_t>(exportFrames(128,2)));
+        const auto n=frames.size();
+        std::vector<float> kickSource(2400);for(std::size_t i=0;i<2400;++i)kickSource[i]=static_cast<float>(kickSamples[i])/32768;
+        fl_live::AudioClip padClip{{},true,2};for(auto v:padSamples)padClip.samples.push_back(static_cast<float>(v)/32768);
+        StepPattern template1;template1.steps[3].enabled=false;
+        StepPattern bass;for(auto& step:bass.steps)step.enabled=false;bass.steps[0]={true,48,70,75};bass.steps[2]={true,67,70,100};
+        const auto a=renderClip(fl_live::AudioClip{kickSource,true},128,n),b=renderClip(patternClip(template1,128),128,n);
+        const auto d=renderClip(patternClip(bass,128),128,n);
+        const auto pcm=[](float v){return static_cast<int>(std::lround(std::clamp(v,-1.0F,1.0F)*32767.0F));};
+        int worst=0;
+        for(std::size_t i=0;i<n;++i) {
+            const float padLeft=padClip.samples[2*(i%9600)],padRight=padClip.samples[2*(i%9600)+1];
+            // Pad: level 60, pan L40 (right x0.6). Bass: level 70, pan R20 (left x0.8).
+            const float left=0.7F*a[i]+0.4F*b[i]+0.6F*padLeft+0.7F*0.8F*d[i];
+            const float right=0.7F*a[i]+0.4F*b[i]+0.6F*0.6F*padRight+0.7F*d[i];
+            worst=std::max({worst,std::abs(frames[i][0]-pcm(left)),std::abs(frames[i][1]-pcm(right))});
+        }
+        QVERIFY2(worst<=1,qPrintable(QString("export differs from independent renders by %1 LSB").arg(worst)));
+    }
     void qmlMixerInput() {
         Session session;
         QQmlApplicationEngine engine;
