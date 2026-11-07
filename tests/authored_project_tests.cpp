@@ -313,10 +313,59 @@ void synthSettings() {
     bad([](auto& r){r["required_features"]=QJsonArray{"general-session-v1"};});
     auto audioSynth=project.content;audioSynth.clips[0].synth.attack_ms=5;rejects([&]{validateContent(audioSynth,project.identities);});
 }
+// Piano-roll notes: validation, tick-to-frame rendering, persistence and
+// malformed files (#35).
+void pianoRoll() {
+    // Validation refuses each malformed case without needing a project.
+    const PianoRoll good{384,4,{{3,0,24,64,50},{1,0,72,60,70},{2,96,72,64,70}}};
+    rejects([&]{validatePiano(good);}); // the order is (start, ID): ID 3 may not precede ID 1 at the same start
+    auto ok=good;sortPiano(ok);validatePiano(ok);
+    CHECK(ok.notes[0].id==1 && ok.notes[1].id==3 && ok.notes[2].id==2);
+    const auto bad=[&](auto edit){auto r=ok;edit(r);rejects([&]{validatePiano(r);});};
+    bad([](auto& r){r.length=0;});bad([](auto& r){r.length=piano_length_limit+1;});
+    bad([](auto& r){r.notes[0].pitch=128;});bad([](auto& r){r.notes[0].velocity=0;});bad([](auto& r){r.notes[0].velocity=101;});
+    bad([](auto& r){r.notes[0].length=0;});bad([](auto& r){r.notes[2].length=289;}); // ends past the clip
+    bad([](auto& r){r.notes[2].start=384;});bad([](auto& r){r.notes[1].id=1;});bad([](auto& r){r.notes[2].id=4;}); // duplicate, unissued
+    bad([](auto& r){r.next_id=1;});
+    auto crowded=ok;for(int n=0;n<14;++n)crowded.notes.push_back({crowded.next_id++,0,24,40+n,80});
+    sortPiano(crowded);validatePiano(crowded); // 16 sounding at tick 0
+    crowded.notes.push_back({crowded.next_id++,10,24,90,80});sortPiano(crowded);rejects([&]{validatePiano(crowded);});
+    PianoRoll many{piano_length_limit,1,{}};
+    for(int n=0;n<1025;++n)many.notes.push_back({many.next_id++,n*6,6,60,80});
+    rejects([&]{validatePiano(many);});many.notes.pop_back();validatePiano(many);
+    // Rendering at 137 BPM: frame = ceil(ticks * 30000 / 137), rounded independently.
+    const auto midi=pianoClip(ok,137,{});
+    const auto frame=[](std::uint64_t t){return (t*30000+136)/137;};
+    CHECK(midi.length==frame(384) && midi.notes.size()==3);
+    CHECK(midi.notes[0].start==0 && midi.notes[0].duration==frame(72) && midi.notes[0].pitch==60 && midi.notes[0].velocity==0.7F);
+    CHECK(midi.notes[2].start==frame(96) && midi.notes[2].duration==frame(168)-frame(96));
+    // A MIDI clip with notes renders them instead of its pattern, and persists behind piano-roll-v1.
+    auto project=general();
+    auto& riff=*std::find_if(project.content.clips.begin(),project.content.clips.end(),[&](const auto& c){return c.clip==project.identities.clips[3].id;});
+    riff.piano=ok;
+    const auto sources=contentSources(project.content,project.identities);
+    const auto& rendered=std::get<fl_live::MidiClip>(std::find_if(sources.begin(),sources.end(),[&](const auto& x){return x.id==riff.clip;})->content);
+    CHECK(rendered.notes.size()==3 && rendered.length==pianoClip(ok,project.content.tempo,{}).length);
+    const auto bytes=encodeAuthoredProject(project);
+    const auto root=QJsonDocument::fromJson(bytes).object();
+    CHECK(root["required_features"].toArray().contains("piano-roll-v1"));
+    const auto piano=root["clips"].toArray()[3].toObject()["piano"].toObject();
+    CHECK(piano["next_id"]=="4" && piano["notes"].toArray()[0].toObject()["id"]=="1" && piano["length"]==384);
+    CHECK(decodeAuthoredProject(bytes).content==project.content);
+    const auto broken=[&](auto edit){auto r=root;edit(r);rejects([&]{decodeAuthoredProject(QJsonDocument(r).toJson());});};
+    const auto note=[&](const char* key,QJsonValue v){broken([&](auto& r){auto a=r["clips"].toArray();auto c=a[3].toObject();auto p=c["piano"].toObject();
+        auto n=p["notes"].toArray();auto o=n[0].toObject();o[key]=v;n[0]=o;p["notes"]=n;c["piano"]=p;a[3]=c;r["clips"]=a;});};
+    note("pitch",128);note("velocity",0);note("start",-1);note("id",7);note("id","01");note("extra",1);note("length",0);
+    broken([](auto& r){auto f=r["required_features"].toArray();f.removeLast();r["required_features"]=f;}); // notes without the feature
+    broken([](auto& r){auto a=r["clips"].toArray();auto c=a[3].toObject();auto p=c["piano"].toObject();
+        const auto n=p["notes"].toArray();p["notes"]=QJsonArray{n[2],n[0],n[1]};c["piano"]=p;a[3]=c;r["clips"]=a;}); // out of order
+    auto onAudio=project.content;onAudio.clips[0].piano=ok;rejects([&]{validateContent(onAudio,project.identities);});
+}
 int main(){try{
+    pianoRoll();
     synthSettings();
     automationLanes();
     relativeAssets();
     legacyMigration();generalRoundTrip();generalRejection();clipRanges();
-    std::cout<<"PASS: v1-v3 migration with sample equivalence, v4 general content round trip, sources, clip ranges and rejection\n";return 0;
+    std::cout<<"PASS: v1-v3 migration with sample equivalence, v4 general content round trip, sources, clip ranges, piano-roll notes and rejection\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

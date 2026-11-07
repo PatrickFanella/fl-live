@@ -440,7 +440,7 @@ ApplicationWindow {
                 Label { visible: session.patternTrackIndex < 0; text: "Add a MIDI track to edit a step pattern."; color: "#b7c5d8" }
                 ColumnLayout {
                     visible: session.patternTrackIndex >= 0
-                    Layout.fillWidth: true; spacing: 8
+                    Layout.fillWidth: true; Layout.fillHeight: session.pianoMode; spacing: 8
                     RowLayout {
                         Layout.fillWidth: true
                         Label { objectName: "patternTitle"; text: "PATTERN · " + (session.trackNames[session.patternTrackIndex] || ""); textFormat: Text.PlainText; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
@@ -460,10 +460,99 @@ ApplicationWindow {
                                 }
                             }
                         }
-                        Label { text: "Quarter-note steps" }
-                        SpinBox { objectName: "stepCount"; from: 1; to: 16; value: session.stepCount; enabled: session.canChange; onValueModified: session.setStepCount(value); Accessible.name: "Pattern length in quarter notes" }
+                        CheckBox { objectName: "pianoMode"; text: "Piano roll"; checked: session.pianoMode; enabled: session.canChange; onClicked: session.usePianoRoll(checked); Accessible.name: "Use the piano roll for this clip"; ToolTip.visible: hovered; ToolTip.text: "Turning it on converts the step pattern into notes once. Turning it off plays the step pattern again." }
+                        Label { text: "Quarter-note steps"; visible: !session.pianoMode }
+                        SpinBox { objectName: "stepCount"; from: 1; to: 16; value: session.stepCount; visible: !session.pianoMode; enabled: session.canChange; onValueModified: session.setStepCount(value); Accessible.name: "Pattern length in quarter notes" }
+                    }
+                    ColumnLayout {
+                        visible: session.pianoMode
+                        Layout.fillWidth: true; Layout.fillHeight: true; spacing: 6
+                        RowLayout {
+                            Button { objectName: "pianoOctaveDown"; text: "Octave down"; enabled: pianoView.base > 0; onClicked: pianoView.base = Math.max(0, pianoView.base - 12) }
+                            Button { objectName: "pianoOctaveUp"; text: "Octave up"; enabled: pianoView.base + pianoView.rows < 128; onClicked: pianoView.base = Math.min(128 - pianoView.rows, pianoView.base + 12) }
+                            Label { objectName: "pianoRange"; text: "Pitches " + pianoView.base + "–" + (pianoView.base + pianoView.rows - 1) + " · 1/16 grid · " + (session.pianoLength / 96) + " beats"; color: "#b7c5d8" }
+                            Item { Layout.fillWidth: true }
+                            Button { objectName: "deleteNotes"; text: "Delete selected"; enabled: session.canChange && session.selectedNotes.length > 0; onClicked: session.deleteNotes(session.selectedNotes); Accessible.name: "Delete selected notes" }
+                        }
+                        Rectangle {
+                            id: pianoView
+                            objectName: "pianoRoll"
+                            property int base: 48
+                            // Two octaves; rows share whatever height the pane has left.
+                            readonly property int rows: 24
+                            readonly property real rowHeight: height / rows
+                            readonly property real tickWidth: width / Math.max(1, session.pianoLength)
+                            Layout.fillWidth: true; Layout.fillHeight: true
+                            Layout.minimumHeight: 120; Layout.maximumHeight: 288
+                            color: "#0f141c"; border.color: activeFocus ? "#e4bc75" : "#2e3a4a"
+                            activeFocusOnTab: true
+                            Accessible.role: Accessible.Grouping
+                            Accessible.name: "Piano roll, " + session.pianoNotes.length + " notes, " + session.selectedNotes.length + " selected. Click to add or select; Delete removes the selection."
+                            Keys.onDeletePressed: session.deleteNotes(session.selectedNotes)
+                            Keys.onEscapePressed: session.clearNoteSelection()
+                            Repeater {
+                                model: pianoView.rows
+                                Rectangle {
+                                    required property int index
+                                    y: index * pianoView.rowHeight; height: pianoView.rowHeight; width: pianoView.width
+                                    color: [1, 3, 6, 8, 10].indexOf((pianoView.base + pianoView.rows - 1 - index) % 12) >= 0 ? "#151d28" : "transparent"
+                                }
+                            }
+                            Repeater {
+                                model: Math.ceil(session.pianoLength / 24)
+                                Rectangle {
+                                    required property int index
+                                    x: index * 24 * pianoView.tickWidth; width: 1; height: pianoView.height
+                                    color: index % 4 === 0 ? "#3d4d62" : "#202a38"
+                                }
+                            }
+                            MouseArea {
+                                objectName: "pianoRollInput"
+                                anchors.fill: parent; enabled: session.canChange
+                                onClicked: function(mouse) {
+                                    pianoView.forceActiveFocus()
+                                    const tick = Math.floor(mouse.x / pianoView.tickWidth)
+                                    const pitch = pianoView.base + pianoView.rows - 1 - Math.floor(mouse.y / pianoView.rowHeight)
+                                    const notes = session.pianoNotes
+                                    for (let i = notes.length - 1; i >= 0; --i) {
+                                        const n = notes[i]
+                                        if (n.pitch === pitch && tick >= n.start && tick < n.start + n.length) {
+                                            session.selectNote(n.id, (mouse.modifiers & Qt.ShiftModifier) !== 0)
+                                            return
+                                        }
+                                    }
+                                    session.addNote(Math.floor(tick / 24) * 24, 24, pitch, 80)
+                                }
+                            }
+                            Repeater {
+                                model: session.pianoNotes
+                                Rectangle {
+                                    required property var modelData
+                                    required property int index
+                                    objectName: "pianoNote" + index
+                                    visible: modelData.pitch >= pianoView.base && modelData.pitch < pianoView.base + pianoView.rows
+                                    x: modelData.start * pianoView.tickWidth; width: Math.max(2, modelData.length * pianoView.tickWidth)
+                                    y: (pianoView.base + pianoView.rows - 1 - modelData.pitch) * pianoView.rowHeight; height: pianoView.rowHeight
+                                    color: session.selectedNotes.indexOf(modelData.id) >= 0 ? "#e4bc75" : "#5fa8d3"
+                                    border.color: "#0f141c"
+                                }
+                            }
+                        }
+                        RowLayout {
+                            Label { text: "Start (16ths)" }
+                            SpinBox { id: noteStart; objectName: "noteStart"; from: 0; to: Math.max(0, Math.ceil(session.pianoLength / 24) - 1); editable: true; Accessible.name: "New note start in sixteenth notes" }
+                            Label { text: "Length (16ths)" }
+                            SpinBox { id: noteLength; objectName: "noteLength"; from: 1; to: 256; value: 1; editable: true; Accessible.name: "New note length in sixteenth notes" }
+                            Label { text: "Pitch (MIDI)" }
+                            SpinBox { id: notePitch; objectName: "notePitch"; from: 0; to: 127; value: 60; editable: true; Accessible.name: "New note pitch" }
+                            Label { text: "Velocity %" }
+                            SpinBox { id: noteVelocity; objectName: "noteVelocity"; from: 1; to: 100; value: 80; editable: true; Accessible.name: "New note velocity percent" }
+                            Button { objectName: "addNoteButton"; text: "Add note"; enabled: session.canChange; onClicked: session.addNote(noteStart.value * 24, noteLength.value * 24, notePitch.value, noteVelocity.value) }
+                            Item { Layout.fillWidth: true }
+                        }
                     }
                     GridLayout {
+                        visible: !session.pianoMode
                         columns: 8
                         Layout.fillWidth: true
                         Repeater {
@@ -483,6 +572,7 @@ ApplicationWindow {
                         }
                     }
                     RowLayout {
+                        visible: !session.pianoMode
                         Layout.fillWidth: true
                         Label { text: "Step " + (session.selectedStep + 1) }
                         CheckBox { objectName: "stepEnabled"; text: "Note enabled"; checked: session.stepEnabled[session.selectedStep]; enabled: session.canChange; onClicked: session.setStepEnabled(session.selectedStep, checked) }
@@ -495,12 +585,12 @@ ApplicationWindow {
                         Item { Layout.fillWidth: true }
                     }
                 }
-                Item { Layout.fillHeight: true }
+                Item { Layout.fillHeight: true; visible: !session.pianoMode }
             }
         }
         Label {
             Layout.fillWidth: true; wrapMode: Text.WordWrap
-            text: "Edit while stopped. Changes return to the start. Launch a scene, then press Play. Scene timing applies to launch and stop; clips use one bar. Immediate actions keep future queued actions. 4/4."
+            text: "Edits apply while playing, except tempo, Open, New, import and export. Launch a scene, then press Play. Scene timing applies to launch and stop; clips use one bar. Immediate actions keep future queued actions. 4/4."
             color: "#9daabd"
         }
         Label { objectName: "statusMessage"; Layout.fillWidth: true; text: session.message; wrapMode: Text.WordWrap }

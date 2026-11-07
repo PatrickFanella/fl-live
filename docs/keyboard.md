@@ -9,8 +9,9 @@
 | Ctrl+O | Open the project path field | Stopped, no dialog |
 | Space | Play / Stop | No text field, button, check box or combo box has focus (those use Space themselves), no dialog, audio available |
 | Ctrl+. | Silence now (panic) | No dialog |
-| Ctrl+Shift+A / Ctrl+Shift+M | Add audio / MIDI track | Stopped, no dialog |
+| Ctrl+Shift+A / Ctrl+Shift+M | Add audio / MIDI track | No dialog |
 | Ctrl+E | Export with the export row's settings | Stopped, not exporting, no dialog |
+| Delete / Escape | Delete the selected notes / clear the selection | The [piano roll](piano-roll.md) grid has focus |
 
 Every key sequence is declared once; `keyboardContractAndFocus` expands the platform Undo/Redo bindings and fails on any duplicate. In a text field, Space types a space and Ctrl+Z undoes text, not the document. Tab moves through the controls in reading order.
 

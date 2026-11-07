@@ -1196,6 +1196,83 @@ private slots:
         for(std::size_t f=1;f<96000;f+=4999)QCOMPARE(w.samples[2*f],static_cast<float>(static_cast<double>(f)/96000.0)*source.samples[f%source.samples.size()]);
         for(std::size_t f=96000;f<192000;f+=4999)QCOMPARE(w.samples[2*f],source.samples[f%source.samples.size()]);
     }
+    // #35: converting the step pattern, adding, selecting and deleting notes,
+    // refusals, stable IDs, Undo/Redo and Save/Open.
+    void pianoRollEditing() {
+        QTemporaryDir directory;Session session;QCOMPARE(session.patternTrackIndex(),1);QVERIFY(!session.pianoMode());
+        QVERIFY(session.exportAudio(directory.filePath("steps.wav"),1,1,0,2,"float32"));QTRY_VERIFY(!session.exporting());
+        QVERIFY(session.usePianoRoll(true));QVERIFY(session.pianoMode());QCOMPARE(session.undoText(),QString("Undo piano roll"));
+        QCOMPARE(session.pianoLength(),384);QCOMPARE(session.trackSources()[1].toString(),QString("Piano roll · 4 notes"));
+        const auto notes=session.pianoNotes();QCOMPARE(notes.size(),4);
+        const auto note=[&](int i){return notes[i].toMap();};
+        QCOMPARE(note(0)["id"].toString(),QString("1"));QCOMPARE(note(0)["start"].toInt(),0);QCOMPARE(note(0)["length"].toInt(),72);
+        QCOMPARE(note(3)["start"].toInt(),288);QCOMPARE(note(3)["pitch"].toInt(),72);QCOMPARE(note(3)["velocity"].toInt(),70);
+        // The converted notes sound exactly like the pattern they came from.
+        QVERIFY(session.exportAudio(directory.filePath("notes.wav"),1,1,0,2,"float32"));QTRY_VERIFY(!session.exporting());
+        QVERIFY(readWav(directory.filePath("notes.wav")).samples==readWav(directory.filePath("steps.wav")).samples);
+        // Add selects the new note; its ID comes from the clip counter.
+        QVERIFY(session.addNote(24,24,62,90));QCOMPARE(session.selectedNotes(),(QVariantList{"5"}));QCOMPARE(session.undoText(),QString("Undo add note"));
+        QCOMPARE(session.pianoNotes()[1].toMap()["id"].toString(),QString("5")); // ordered by start
+        // Refusals leave notes and history unchanged.
+        const auto before=session.pianoNotes();const auto undo=session.undoText();
+        QVERIFY(!session.addNote(384,24,60,80));QVERIFY(!session.addNote(360,48,60,80));QVERIFY(!session.addNote(0,24,128,80));
+        QVERIFY(!session.addNote(0,24,60,0));QVERIFY(!session.addNote(0,0,60,80));QVERIFY(!session.addNote(-24,24,60,80));
+        for(int n=0;n<15;++n)QVERIFY(session.addNote(0,24,30+n,80)); // with note 1, 16 sound at tick 0
+        QVERIFY(!session.addNote(0,24,90,80));QVERIFY(session.message().contains("16 notes"));
+        for(int n=0;n<15;++n)session.undo();
+        QCOMPARE(session.pianoNotes(),before);QCOMPARE(session.undoText(),undo);
+        QVERIFY(!session.deleteNotes({}));QVERIFY(!session.deleteNotes({"99"}));QCOMPARE(session.pianoNotes(),before);
+        // Selection is view state keyed by ID; unrelated edits keep IDs and selection.
+        session.selectNote("1",false);session.selectNote("3",true);QCOMPARE(session.selectedNotes(),(QVariantList{"1","3"}));
+        session.selectNote("1",true);QCOMPARE(session.selectedNotes(),(QVariantList{"3"}));session.selectNote("1",true);
+        session.setLevel(0,40);QCOMPARE(session.selectedNotes(),(QVariantList{"1","3"}));QCOMPARE(session.pianoNotes(),before);
+        session.selectNote("99",false);QVERIFY(session.message().contains("Unknown note"));QCOMPARE(session.selectedNotes(),(QVariantList{"1","3"}));
+        QVERIFY(session.deleteNotes(session.selectedNotes()));QCOMPARE(session.pianoNotes().size(),3);QCOMPARE(session.undoText(),QString("Undo delete notes"));
+        QVERIFY(session.selectedNotes().isEmpty());
+        session.undo();QCOMPARE(session.pianoNotes(),before);session.redo();QCOMPARE(session.pianoNotes().size(),3);
+        // Deleted IDs 1 and 3 are not reissued; Undo restored the counter with the notes it removed.
+        QVERIFY(session.addNote(96,24,61,80));QCOMPARE(session.selectedNotes(),(QVariantList{"6"}));
+        // Turning the piano roll off plays the pattern again; Undo brings the same notes back.
+        const auto withNotes=session.pianoNotes();
+        QVERIFY(session.usePianoRoll(false));QVERIFY(!session.pianoMode());QVERIFY(session.pianoNotes().isEmpty());QCOMPARE(session.stepCount(),4);
+        session.undo();QCOMPARE(session.pianoNotes(),withNotes);
+        // Save/Open keeps positions, lengths, pitches, velocities and IDs.
+        const auto path=directory.filePath("piano.json");QVERIFY(session.saveProject(path));
+        Session reopened;QVERIFY(reopened.loadProject(path));QVERIFY(reopened.pianoMode());QCOMPARE(reopened.pianoNotes(),withNotes);
+        QVERIFY(reopened.addNote(144,24,59,80));QCOMPARE(reopened.selectedNotes(),(QVariantList{"7"}));
+        // Choosing another MIDI clip clears the selection.
+        QVERIFY(reopened.addTrack("midi"));QVERIFY(reopened.editPattern(reopened.trackIds()[2].toString()));QVERIFY(reopened.selectedNotes().isEmpty());
+        QVERIFY(!reopened.pianoMode());QVERIFY(!reopened.addNote(0,24,60,80));QVERIFY(reopened.message().contains("piano roll"));
+    }
+    // #35 through the QML: pointer add/select/Shift-select, Delete key, Undo
+    // button and keyboard entry.
+    void qmlPianoRollInput() {
+        Session session;QmlUi ui(session);QVERIFY(ui.window && QTest::qWaitForWindowExposed(ui.window));
+        ui.click("pianoMode");QTRY_VERIFY(session.pianoMode());
+        auto* roll=ui.item("pianoRoll");QVERIFY(roll->height()>=120);
+        QVERIFY(roll->mapToScene(QPointF(0,roll->height())).y()<=ui.window->height());
+        QVERIFY(ui.item("addNoteButton")->mapToScene(QPointF(0,ui.item("addNoteButton")->height())).y()<=ui.window->height());
+        const auto at=[&](int tick,int pitch){
+            const int base=roll->property("base").toInt(),rows=roll->property("rows").toInt();const double row=roll->property("rowHeight").toDouble();
+            return roll->mapToScene(QPointF((tick+0.5)*roll->width()/session.pianoLength(),(base+rows-1-pitch+0.5)*row)).toPoint();};
+        QTest::mouseClick(ui.window,Qt::LeftButton,Qt::NoModifier,at(200,62)); // snaps to tick 192
+        QTRY_COMPARE(session.pianoNotes().size(),5);
+        QVariantMap added;for(const auto& n:session.pianoNotes())if(n.toMap()["pitch"].toInt()==62)added=n.toMap();
+        QCOMPARE(added["start"].toInt(),192);QCOMPARE(added["length"].toInt(),24);QCOMPARE(session.selectedNotes(),(QVariantList{added["id"]}));
+        QTest::mouseClick(ui.window,Qt::LeftButton,Qt::NoModifier,at(10,60));QTRY_COMPARE(session.selectedNotes(),(QVariantList{"1"}));
+        QTest::mouseClick(ui.window,Qt::LeftButton,Qt::ShiftModifier,at(195,62));
+        QTRY_COMPARE(session.selectedNotes().size(),2);QVERIFY(ui.item("pianoNote0")->property("color").value<QColor>()==QColor("#e4bc75"));
+        QTest::keyClick(ui.window,Qt::Key_Delete);QTRY_COMPARE(session.pianoNotes().size(),3);
+        ui.click("undoButton");QTRY_COMPARE(session.pianoNotes().size(),5);
+        ui.window->requestActivate();ui.item("pianoRoll")->forceActiveFocus();QTest::keyClick(ui.window,Qt::Key_Escape);QTRY_VERIFY(session.selectedNotes().isEmpty());
+        // Keyboard entry: start in sixteenths, length, pitch, velocity.
+        ui.type("noteStart","4",true);ui.type("noteLength","2",true);ui.type("notePitch","65",true);ui.type("noteVelocity","90",true);
+        ui.click("addNoteButton");QTRY_COMPARE(session.pianoNotes().size(),6);
+        QVariantMap typed;for(const auto& n:session.pianoNotes())if(n.toMap()["pitch"].toInt()==65)typed=n.toMap();
+        QCOMPARE(typed["start"].toInt(),96);QCOMPARE(typed["length"].toInt(),48);QCOMPARE(typed["velocity"].toInt(),90);
+        ui.click("pianoOctaveUp");QTRY_VERIFY(ui.item("pianoRange")->property("text").toString().startsWith("Pitches 60–83"));
+        QVERIFY(ui.window->grabWindow().save("desktop-piano-roll.png"));
+    }
     void qmlRelinkMissingAudio() {
         QTemporaryDir root;const auto audio=root.filePath("a.wav"),project=root.filePath("p.json");
         std::vector<qint16> tone(4800);for(std::size_t i=0;i<tone.size();++i)tone[i]=static_cast<qint16>(i%300*50);

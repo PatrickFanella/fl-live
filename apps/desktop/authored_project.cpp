@@ -203,6 +203,8 @@ void validateContent(const SessionContent& content,const fl_live::DocumentSnapsh
             throw std::invalid_argument("Duplicate clip content");
         validatePattern(value.pattern);
         validateSynth(value.synth);
+        if(value.piano)validatePiano(*value.piano);
+        if(value.piano && trackOf(identities,clip.id).kind!=fl_live::TrackKind::midi)throw std::invalid_argument("Only MIDI clips have piano-roll notes");
         if(trackOf(identities,clip.id).kind!=fl_live::TrackKind::midi && value.synth!=SynthSettings{})
             throw std::invalid_argument("Only MIDI clips have synth settings");
         const bool wav=value.audio==AudioSource::wav;
@@ -223,7 +225,8 @@ std::vector<fl_live::DocumentClipSource> contentSources(const SessionContent& co
     for(const auto& clip:identities.clips) {
         const auto& value=clipContent(content,clip.id);
         const auto kind=std::find_if(identities.tracks.begin(),identities.tracks.end(),[&](const auto& t){return t.id==clip.track;})->kind;
-        if(kind==fl_live::TrackKind::midi)result.push_back({clip.id,patternClip(value.pattern,content.tempo,value.synth)});
+        if(kind==fl_live::TrackKind::midi)result.push_back({clip.id,value.piano ? pianoClip(*value.piano,content.tempo,value.synth)
+                                                                                : patternClip(value.pattern,content.tempo,value.synth)});
         else if(value.audio==AudioSource::pulse)result.push_back({clip.id,pulseClip(content.tempo)});
         else if(value.media) {
             // Copy only the selected source frames; the engine loops or stops
@@ -283,6 +286,12 @@ QByteArray encodeAuthoredProject(const AuthoredProject& project,const QString& b
             if(value.synth!=SynthSettings{})
                 object.insert("synth",QJsonObject{{"waveform",waves[value.synth.waveform]},{"attack_ms",value.synth.attack_ms},
                     {"decay_ms",value.synth.decay_ms},{"sustain",value.synth.sustain},{"release_ms",value.synth.release_ms}});
+            if(value.piano) {
+                QJsonArray notes;
+                for(const auto& note:value.piano->notes)
+                    notes.append(QJsonObject{{"id",idText(note.id)},{"start",note.start},{"length",note.length},{"pitch",note.pitch},{"velocity",note.velocity}});
+                object.insert("piano",QJsonObject{{"length",value.piano->length},{"next_id",idText(value.piano->next_id)},{"notes",notes}});
+            }
             clips.append(object);
         }
         else if(value.audio==AudioSource::wav) {
@@ -297,9 +306,10 @@ QByteArray encodeAuthoredProject(const AuthoredProject& project,const QString& b
     const auto session=QJsonDocument::fromJson(fl_live::encodeDocumentMetadata(project.identities)).object();
     const bool automated=!project.content.automation.empty();
     const bool synths=std::any_of(project.content.clips.begin(),project.content.clips.end(),[](const auto& c){return c.synth!=SynthSettings{};});
+    const bool pianos=std::any_of(project.content.clips.begin(),project.content.clips.end(),[](const auto& c){return c.piano.has_value();});
     QJsonObject root{{"format","fl-live-project"},{"version",4},
         {"required_features",[&]{QJsonArray f{"general-session-v1"};if(ranges)f.append("clip-ranges-v1");if(relative)f.append("asset-relative-v1");
-            if(automated)f.append("automation-v1");if(synths)f.append("synth-v1");return f;}()},
+            if(automated)f.append("automation-v1");if(synths)f.append("synth-v1");if(pianos)f.append("piano-roll-v1");return f;}()},
         {"tempo",project.content.tempo},
         {"session",session},{"tracks",tracks},{"clips",clips}};
     if(automated) {
@@ -324,7 +334,7 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
     if(!root["version"].isDouble() || root["version"].toDouble()!=4)return decodeTemplate(bytes,root);
     const auto features=root["required_features"].toArray();
     const bool ranges=features.contains("clip-ranges-v1"),relativePaths=features.contains("asset-relative-v1"),automated=features.contains("automation-v1");
-    const bool synths=features.contains("synth-v1");
+    const bool synths=features.contains("synth-v1"),pianos=features.contains("piano-roll-v1");
     const auto v4=automated ? exact(root,{"format","version","required_features","tempo","session","tracks","clips","automation"})
                             : exact(root,{"format","version","required_features","tempo","session","tracks","clips"});
     QJsonArray canonical{"general-session-v1"};
@@ -332,6 +342,7 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
     if(relativePaths)canonical.append("asset-relative-v1");
     if(automated)canonical.append("automation-v1");
     if(synths)canonical.append("synth-v1");
+    if(pianos)canonical.append("piano-roll-v1");
     if(features!=canonical)throw std::invalid_argument("Unsupported required project feature");
     if(!v4["session"].isObject())throw std::invalid_argument("Project requires a session object");
     AuthoredProject project;
@@ -351,8 +362,9 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
         const auto object=value.toObject();
         ClipContent clip;
         if(object.contains("pattern")) {
-            const bool hasSynth=synths && object.contains("synth");
-            const auto fields=hasSynth ? exact(value,{"id","pattern","synth"}) : exact(value,{"id","pattern"});
+            const bool hasSynth=synths && object.contains("synth"),hasPiano=pianos && object.contains("piano");
+            const auto fields=hasSynth && hasPiano ? exact(value,{"id","pattern","synth","piano"}) : hasSynth ? exact(value,{"id","pattern","synth"})
+                            : hasPiano ? exact(value,{"id","pattern","piano"}) : exact(value,{"id","pattern"});
             clip.clip=fl_live::ClipId{idValue(fields["id"])};clip.pattern=decodePattern(fields["pattern"]);
             if(hasSynth) {
                 const auto synth=exact(fields["synth"],{"waveform","attack_ms","decay_ms","sustain","release_ms"});
@@ -360,6 +372,19 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
                 if(!synth["waveform"].isString() || !waves.contains(synth["waveform"].toString()))throw std::invalid_argument("Unsupported waveform");
                 clip.synth={static_cast<int>(waves.indexOf(synth["waveform"].toString())),integer(synth["attack_ms"],0,10000),
                     integer(synth["decay_ms"],0,10000),integer(synth["sustain"],0,100),integer(synth["release_ms"],0,10000)};
+            }
+            if(hasPiano) {
+                const auto piano=exact(fields["piano"],{"length","next_id","notes"});
+                PianoRoll roll{integer(piano["length"],1,piano_length_limit),idValue(piano["next_id"]),{}};
+                if(!piano["notes"].isArray() || piano["notes"].toArray().size()>static_cast<qsizetype>(fl_live::Engine::notes_per_clip_capacity))
+                    throw std::invalid_argument("Invalid piano-roll notes");
+                for(const auto& n:piano["notes"].toArray()) {
+                    const auto note=exact(n,{"id","start","length","pitch","velocity"});
+                    roll.notes.push_back({idValue(note["id"]),integer(note["start"],0,piano_length_limit),integer(note["length"],1,piano_length_limit),
+                        integer(note["pitch"],0,127),integer(note["velocity"],1,100)});
+                }
+                validatePiano(roll); // order, uniqueness and overlap exactly as saved
+                clip.piano=std::move(roll);
             }
             if(trackOf(project.identities,clip.clip).kind!=fl_live::TrackKind::midi)throw std::invalid_argument("Pattern on an audio clip");
         } else {
