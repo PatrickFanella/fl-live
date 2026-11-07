@@ -1,3 +1,4 @@
+#include <QThread>
 #include "session.hpp"
 #include <QCoreApplication>
 #include <QDir>
@@ -106,6 +107,16 @@ int crash(const QString& dir) {
     std::cout << session.autosaveFile().toStdString() << std::endl;
     std::abort();
 }
+// Dies like a crash while recording: the take stays a .part file with an
+// unfinished header beside its journal (#48).
+int recordCrash(const QString& dir) {
+    Session session;
+    require(session.saveProject(QDir(dir).filePath("recorded.json")), "initial save");
+    require(session.setArmed(session.trackIds()[0].toString(), true) && session.record(), "record");
+    for (int i = 0; i < 50; ++i) session.tick(); // 24,000 frames of preview silence
+    QThread::msleep(300); // the worker writes every few milliseconds
+    std::abort();
+}
 int verify(const QString& dir) {
     const auto path = QDir(dir).filePath("project.json");
     Session session;
@@ -126,6 +137,7 @@ int main(int argc, char** argv) {
         if (mode == "loop") return loop(dir);
         if (mode == "verify") return verify(dir);
         if (mode == "crash") return crash(dir);
+        if (mode == "record-crash") return recordCrash(dir);
         return 2;
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << std::endl;

@@ -158,6 +158,11 @@ public:
     Q_INVOKABLE bool setArmed(const QString& trackId, bool armed);
     bool recording() const { return !takes_.empty(); }
     Q_INVOKABLE bool record();
+    // Takes left as .part files by an interrupted recording, found when the
+    // project opens: {file, track, journal} maps (docs/recording.md).
+    Q_PROPERTY(QVariantList interruptedTakes READ interruptedTakes NOTIFY changed)
+    QVariantList interruptedTakes() const { return interrupted_; }
+    Q_INVOKABLE bool recoverTakes();
     QVariantList trackClips() const;
     QVariantList selectedClips() const;
     Q_INVOKABLE bool selectClip(const QString& clipId);
@@ -351,7 +356,7 @@ private:
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
     enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete, scene_copy, scene_order, track_pan, track_mute, track_solo,
-        track_create, track_duplicate, track_delete, clip_create, clip_duplicate, clip_delete, record_take, audio_import, clip_range, audio_relink, assets_collect, automation, synth, piano_mode, note_add, note_delete, note_move, note_resize, note_velocity, piano_length, piano_loop,
+        track_create, track_duplicate, track_delete, clip_create, clip_duplicate, clip_delete, record_take, recover_takes, audio_import, clip_range, audio_relink, assets_collect, automation, synth, piano_mode, note_add, note_delete, note_move, note_resize, note_velocity, piano_length, piano_loop,
         device_add, device_remove, device_value, device_move };
     struct HistoryEntry {
         Content content;
@@ -389,6 +394,8 @@ private:
     QString ack_report_; // shown instead of the generic acknowledgement once the stop renders
     void finishRecording();
     void openInput(); // throws with actionable text
+    void scanInterrupted();
+    QVariantList interrupted_;
     std::vector<std::uint64_t> selected_notes_;
     int history_index_hint_ = -1; // note count for the delete Undo label
     const PianoRoll* piano() const;

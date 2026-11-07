@@ -83,4 +83,21 @@ private:
     bool done_ = false;
     std::thread worker_;
 };
+
+// Result of recovering an interrupted take (docs/recording.md, #48).
+struct TakeRecovery {
+    bool recovered = false;
+    std::string message;               // actionable text when not recovered
+    std::filesystem::path file;        // the new finalized file
+    std::uint64_t frames = 0;
+    std::uint32_t channels = 0, rate = 0;
+    std::uint64_t discarded_bytes = 0; // a trailing partial frame
+};
+// Copies the whole frames of an interrupted take's .part file into a new
+// finalized 32-bit float WAV at `destination`. A process that died while
+// recording leaves a header whose data size was never written, so the data
+// runs to the end of the file. The .part file is only read; an existing
+// destination is never replaced. Files that are not one- or two-channel
+// 32-bit float WAV takes, or hold no complete frame, are refused.
+TakeRecovery recoverTake(const std::filesystem::path& part, const std::filesystem::path& destination);
 } // namespace fl_live
