@@ -32,6 +32,8 @@ Session::Session(fl_live::PipeWireConfig config, QObject* parent)
 }
 Session::~Session() {
     timer_.stop();
+    if (export_job_) export_job_->progress.cancel.store(true);
+    if (export_thread_.joinable()) export_thread_.join();
     // Prepared's backend is destroyed before its controller and immutable plan.
     prepared_.reset();
 }
@@ -566,6 +568,7 @@ void Session::panic() {
     emit changed();
 }
 void Session::tick() {
+    finishExport();
     if (preview_) {
         std::array<float, 960> discarded{};
         prepared_->controller.process(discarded, 2); // 480 stereo frames; simulated clock, no audio output
@@ -582,15 +585,53 @@ void Session::tick() {
 }
 
 bool Session::exportWav(const QString& path, int bars) {
+    if (export_job_) { message_ = "An export is already running. Cancel it or wait for it to finish."; emit changed(); return false; }
     if (!editable()) return false;
     try {
-        exportProjectWav(path, settings_, *identities_, bars);
-        message_ = QString("Exported %1 bars: both tracks from the start through the mixer, stereo 48 kHz / 16-bit WAV").arg(bars);
+        if (bars < 1 || bars > 16) throw std::invalid_argument("Export length must be 1 to 16 bars");
+        if (path.trimmed().isEmpty()) throw std::invalid_argument("Enter a new WAV file path");
+        auto job = std::make_shared<ExportJob>();
+        job->path = path; job->bars = bars;
+        job->progress.total.store(exportFrames(settings_.tempo, bars));
+        // Copies keep the job independent of later edits on the GUI thread.
+        export_thread_ = std::thread([job, settings = settings_, identities = identities_] {
+            try {
+                const auto outcome = exportProjectWav(job->path, settings, *identities, job->bars, &job->progress);
+                job->state.store(outcome == ExportOutcome::completed ? 1 : 2);
+            } catch (const std::exception& error) {
+                job->error = QString::fromUtf8(error.what());
+                job->state.store(3);
+            }
+        });
+        export_job_ = std::move(job);
+        message_ = QString("Exporting %1 bars in the background").arg(bars);
         emit changed();
         return true;
     } catch (const std::exception& error) {
         message_ = QString::fromUtf8(error.what());
         emit changed();
         return false;
+    }
+}
+void Session::cancelExport() {
+    if (!export_job_) return;
+    export_job_->progress.cancel.store(true);
+    message_ = "Cancelling export";
+    emit changed();
+}
+double Session::exportProgress() const {
+    if (!export_job_) return 0;
+    const auto total = export_job_->progress.total.load();
+    return total ? static_cast<double>(export_job_->progress.frames.load()) / static_cast<double>(total) : 0;
+}
+void Session::finishExport() {
+    if (!export_job_ || export_job_->state.load() == 0) return;
+    export_thread_.join();
+    const auto job = std::move(export_job_);
+    export_job_.reset();
+    switch (job->state.load()) {
+    case 1: message_ = QString("Exported %1 bars: both tracks from the start through the mixer, stereo 48 kHz / 16-bit WAV").arg(job->bars); break;
+    case 2: message_ = "Export cancelled; no file was written"; break;
+    default: message_ = job->error; break;
     }
 }

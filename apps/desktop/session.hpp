@@ -7,6 +7,7 @@
 #include <QTimer>
 #include <QString>
 #include <memory>
+#include <thread>
 #include <optional>
 #include <type_traits>
 
@@ -52,6 +53,8 @@ class Session final : public QObject {
     Q_PROPERTY(QString message READ message NOTIFY changed)
     Q_PROPERTY(QString mode READ mode NOTIFY changed)
     Q_PROPERTY(bool audioAvailable READ audioAvailable NOTIFY changed)
+    Q_PROPERTY(bool exporting READ exporting NOTIFY changed)
+    Q_PROPERTY(double exportProgress READ exportProgress NOTIFY changed)
 public:
     explicit Session(fl_live::PipeWireConfig config = {}, QObject* parent = nullptr);
     ~Session() override;
@@ -115,7 +118,13 @@ public:
     Q_INVOKABLE void setTempo(int value);
     Q_INVOKABLE void setLevel(int track, int value);
     Q_INVOKABLE void setPitch(int note, int value);
+    // Starts a background export of the current document while stopped. The
+    // job renders an immutable copy, so later edits, playback and history do
+    // not affect it. Completion, cancellation and failure are reported by tick().
     Q_INVOKABLE bool exportWav(const QString& path, int bars);
+    Q_INVOKABLE void cancelExport();
+    bool exporting() const { return static_cast<bool>(export_job_); }
+    double exportProgress() const;
     Q_INVOKABLE bool saveProject(const QString& path);
     Q_INVOKABLE bool loadProject(const QString& path);
     bool running() const { return status_.running; }
@@ -186,6 +195,15 @@ private:
     int selected_step_ = 0;
     bool replace(const ProjectSettings& settings, Identities identities = {});
     bool editable();
+    struct ExportJob {
+        ExportProgress progress;
+        std::atomic<int> state{0}; // 0 running, 1 completed, 2 cancelled, 3 failed
+        QString path, error;
+        int bars = 0;
+    };
+    std::shared_ptr<ExportJob> export_job_;
+    std::thread export_thread_;
+    void finishExport();
     QTimer timer_;
     fl_live::RenderStatus status_{};
     std::uint64_t serial_ = 0;

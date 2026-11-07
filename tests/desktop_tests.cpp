@@ -6,6 +6,8 @@
 #include <QQuickItem>
 #include <QtEndian>
 #include <cmath>
+#include <csignal>
+#include <sys/resource.h>
 #include <algorithm>
 #include <array>
 #include <functional>
@@ -397,11 +399,12 @@ private slots:
         QFile silent(directory.filePath("silent.wav"));QVERIFY(silent.open(QIODevice::ReadOnly));silent.seek(44);
         QCOMPARE(silent.readAll(),QByteArray(static_cast<qsizetype>(frames*4),'\0'));
         Session session;session.setTempo(150);const auto projectPath=session.projectPath();const auto undo=session.undoText();
-        QVERIFY(session.exportWav(directory.filePath("session.wav"),1));
+        QVERIFY(session.exportWav(directory.filePath("session.wav"),1));QTRY_VERIFY(!session.exporting());
+        QVERIFY(QFile::exists(directory.filePath("session.wav")));QVERIFY(!QFile::exists(directory.filePath("session.wav.part")));
         QVERIFY(session.dirty());QCOMPARE(session.projectPath(),projectPath);QCOMPARE(session.undoText(),undo);
         session.play();QVERIFY(!session.exportWav(invalid,1));session.tick();
         QVERIFY(!session.exportWav(invalid,1));QVERIFY(!QFile::exists(invalid));
-        session.stop();session.tick();QVERIFY(session.exportWav(invalid,1));
+        session.stop();session.tick();QVERIFY(session.exportWav(invalid,1));QTRY_VERIFY(!session.exporting());QVERIFY(QFile::exists(invalid));
     }
     void mixerControlsAndExport() {
         // Independent per-track mono renders, mixed with the declared balance
@@ -415,7 +418,7 @@ private slots:
         };
         const auto pcm=[](float v){return static_cast<qint16>(std::lround(std::clamp(v,-1.0F,1.0F)*32767.0F));};
         const auto check=[&](Session& session,const QString& path,std::array<float,2> left,std::array<float,2> right) {
-            QVERIFY(session.exportWav(path,1));
+            QVERIFY(session.exportWav(path,1));QTRY_VERIFY(!session.exporting());
             QFile file(path);QVERIFY(file.open(QIODevice::ReadOnly));const auto bytes=file.readAll();
             const auto frames=static_cast<std::size_t>((bytes.size()-44)/4);
             const auto a=trackRender(0,frames),m=trackRender(1,frames);
@@ -461,6 +464,77 @@ private slots:
         // Back at defaults the file is identity-only again.
         const auto plain=directory.filePath("plain.json");QVERIFY(reopened.saveProject(plain));
         QFile plainFile(plain);QVERIFY(plainFile.open(QIODevice::ReadOnly));QVERIFY(!plainFile.readAll().contains("track-mixer-v1"));
+    }
+    void exportCancellationAndFailures() {
+        QTemporaryDir directory;
+        const auto dest=directory.filePath("long.wav"),part=directory.filePath("long.wav.part");
+        // Actual UI cancellation of a long export (16 bars at 20 BPM, 192 s).
+        Session session;session.setTempo(20);session.setPitch(0,50);
+        const auto undo=session.undoText();const auto projectPath=session.projectPath();
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* root,const QString& name)->QQuickItem* {
+            if(root->objectName()==name && root->isVisible())return root;
+            for(auto* child:root->childItems())if(auto* match=findItem(child,name))return match;
+            return nullptr;
+        };
+        auto click=[&](const char* name) {
+            auto* item=findItem(window->contentItem(),QString::fromUtf8(name));QVERIFY2(item,name);
+            QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());
+        };
+        findItem(window->contentItem(),"exportFile")->setProperty("text",dest);
+        findItem(window->contentItem(),"exportBars")->setProperty("value",16);
+        click("exportWavButton");
+        QVERIFY(session.exporting());QTRY_VERIFY(session.exportProgress()>0);QVERIFY(QFile::exists(part));
+        QVERIFY(findItem(window->contentItem(),"exportProgress"));QVERIFY(!findItem(window->contentItem(),"exportWavButton"));
+        // Editing and transport stay available; the job keeps its own copy.
+        session.setTempo(21);QCOMPARE(session.tempo(),21);session.undo();QCOMPARE(session.tempo(),20);
+        QVERIFY(!session.exportWav(directory.filePath("second.wav"),1));
+        QVERIFY(session.message().contains("already running"));
+        QVERIFY(window->grabWindow().save("desktop-export-progress.png"));
+        click("cancelExportButton");
+        QTRY_VERIFY(!session.exporting());
+        QCOMPARE(session.message(),QString("Export cancelled; no file was written"));
+        QVERIFY(!QFile::exists(dest));QVERIFY(!QFile::exists(part));
+        QCOMPARE(session.undoText(),undo);QCOMPARE(session.projectPath(),projectPath);QVERIFY(session.dirty());
+        QCOMPARE(session.pitches()[0].toInt(),50);QVERIFY(!session.running());QVERIFY(session.canRedo());
+        QVERIFY(findItem(window->contentItem(),"exportWavButton"));
+        // Write failure: a 1 MiB file-size limit stops the export mid-stream.
+        rlimit before{};QCOMPARE(getrlimit(RLIMIT_FSIZE,&before),0);
+        const auto previousHandler=std::signal(SIGXFSZ,SIG_IGN);
+        rlimit limited=before;limited.rlim_cur=1<<20;QCOMPARE(setrlimit(RLIMIT_FSIZE,&limited),0);
+        QVERIFY(session.exportWav(dest,16));QTRY_VERIFY_WITH_TIMEOUT(!session.exporting(),20000);
+        QCOMPARE(setrlimit(RLIMIT_FSIZE,&before),0);std::signal(SIGXFSZ,previousHandler);
+        QVERIFY2(session.message().contains("Cannot write WAV samples"),qPrintable(session.message()));
+        QVERIFY(!QFile::exists(dest));QVERIFY(!QFile::exists(part));QCOMPARE(session.undoText(),undo);QVERIFY(session.dirty());
+        // A leftover partial file from a crash is never overwritten or reused.
+        {QFile stale(part);QVERIFY(stale.open(QIODevice::WriteOnly));stale.write("stale");}
+        QVERIFY(session.exportWav(dest,1));QTRY_VERIFY(!session.exporting());
+        QVERIFY(session.message().contains("interrupted"));QVERIFY(!QFile::exists(dest));
+        {QFile stale(part);QVERIFY(stale.open(QIODevice::ReadOnly));QCOMPARE(stale.readAll(),QByteArray("stale"));}
+        QVERIFY(QFile::remove(part));
+        // A file that appears at the destination during export is never replaced.
+        QVERIFY(session.exportWav(dest,16));QTRY_VERIFY(session.exportProgress()>0);
+        {QFile other(dest);QVERIFY(other.open(QIODevice::WriteOnly|QIODevice::NewOnly));other.write("theirs");}
+        QTRY_VERIFY_WITH_TIMEOUT(!session.exporting(),30000);
+        QVERIFY(session.message().contains("Another file appeared"));
+        {QFile other(dest);QVERIFY(other.open(QIODevice::ReadOnly));QCOMPARE(other.readAll(),QByteArray("theirs"));}
+        QVERIFY(!QFile::exists(part));
+        // The exported mix is the document at the start, not later edits.
+        const auto snapshot=directory.filePath("snapshot.wav"),reference=directory.filePath("reference.wav");
+        session.setTempo(150);
+        QVERIFY(session.exportWav(snapshot,1));session.setPitch(0,72);session.setTempo(151);QTRY_VERIFY(!session.exporting());
+        session.undo();session.undo();QCOMPARE(session.tempo(),150);
+        QVERIFY(session.exportWav(reference,1));QTRY_VERIFY(!session.exporting());
+        QFile a(snapshot),b(reference);QVERIFY(a.open(QIODevice::ReadOnly));QVERIFY(b.open(QIODevice::ReadOnly));QCOMPARE(a.readAll(),b.readAll());
+        // Closing the session cancels and joins a running export.
+        const auto closing=directory.filePath("closing.wav");
+        {
+            Session temporary;temporary.setTempo(20);QVERIFY(temporary.exportWav(closing,16));
+            QTRY_VERIFY(temporary.exportProgress()>0);
+        }
+        QVERIFY(!QFile::exists(closing));QVERIFY(!QFile::exists(closing+".part"));
     }
     void qmlMixerInput() {
         Session session;
@@ -814,7 +888,7 @@ private slots:
         QTemporaryDir directory;
         auto* exportFile=findItem(window->contentItem(),"exportFile");QVERIFY(exportFile);
         exportFile->setProperty("text",directory.filePath("qml.wav"));
-        click("exportWavButton");QVERIFY(QFile::exists(directory.filePath("qml.wav")));QVERIFY(session.dirty());
+        click("exportWavButton");QTRY_VERIFY(!session.exporting());QVERIFY(QFile::exists(directory.filePath("qml.wav")));QVERIFY(session.dirty());
         auto* projectFile = window->findChild<QObject*>("projectFile");
         QVERIFY(projectFile); projectFile->setProperty("text",directory.filePath("qml.json"));
         findItem(window->contentItem(),"projectFile")->forceActiveFocus();

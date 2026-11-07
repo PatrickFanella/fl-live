@@ -103,7 +103,9 @@ ApplicationWindow {
             TextField { id: exportFile; objectName: "exportFile"; Layout.fillWidth: true; placeholderText: "New WAV file path"; Accessible.name: "New WAV export path" }
             Label { text: "Bars" }
             SpinBox { id: exportBars; objectName: "exportBars"; from: 1; to: 16; value: 4; enabled: session.canEdit; Accessible.name: "Export length in bars" }
-            Button { objectName: "exportWavButton"; text: "Export both tracks"; enabled: session.canEdit; onClicked: session.exportWav(exportFile.text, exportBars.value) }
+            Button { objectName: "exportWavButton"; text: "Export both tracks"; visible: !session.exporting; enabled: session.canEdit; onClicked: session.exportWav(exportFile.text, exportBars.value) }
+            ProgressBar { objectName: "exportProgress"; visible: session.exporting; from: 0; to: 1; value: session.exportProgress; Layout.preferredWidth: 120; Accessible.name: "Export progress" }
+            Button { objectName: "cancelExportButton"; text: "Cancel export"; visible: session.exporting; onClicked: session.cancelExport(); Accessible.description: "Stops the export and removes the partial file" }
         }
         RowLayout {
             Layout.fillWidth: true
