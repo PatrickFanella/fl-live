@@ -70,7 +70,10 @@ void Session::audioFailed(const QString& reason) {
     prepared_->controller.finish();
     status_ = prepared_->controller.status();
     failed_ = true;
-    message_ = reason + ". Audio is stopped. Save your project or choose Retry audio after restoring the server/output.";
+    // Name the remote and target the user configured.
+    const auto where = QString("PipeWire remote %1%2").arg(QString::fromStdString(config_.remote),
+        config_.target.empty() ? QString() : QString(", target %1").arg(QString::fromStdString(config_.target)));
+    message_ = reason + " (" + where + "). Audio is stopped; your project and history are kept. Save your project or choose Retry audio after restoring the server/output.";
     emit changed();
 }
 bool Session::reconnectAudio() {
@@ -627,7 +630,11 @@ bool Session::saveProject(const QString& path) {
         emit projectPathChanged();
         emit changed();
         return true;
-    } catch (const std::exception& error) { message_ = QString::fromUtf8(error.what()); emit changed(); return false; }
+    } catch (const std::exception& error) {
+        message_ = QString("Could not save %1: %2. Your edits are kept; choose another path or fix the folder, then save again.")
+            .arg(QFileInfo(path).fileName().isEmpty() ? QStringLiteral("the project") : QFileInfo(path).fileName(), QString::fromUtf8(error.what()));
+        emit changed(); return false;
+    }
 }
 bool Session::loadProject(const QString& path) {
     if (dirty()) { message_ = "Save your changes before opening another project."; emit changed(); return false; }
@@ -666,7 +673,12 @@ bool Session::loadProject(const QString& path) {
         emit projectPathChanged();
         emit changed();
         return true;
-    } catch (const std::exception& error) { message_ = QString::fromUtf8(error.what()); emit changed(); return false; }
+    } catch (const std::exception& error) {
+        // Name the file and say what is kept and what to do.
+        message_ = QString("Could not open %1: %2. The open project is unchanged; check the file or choose another.")
+            .arg(QFileInfo(path).fileName().isEmpty() ? path : QFileInfo(path).fileName(), QString::fromUtf8(error.what()));
+        emit changed(); return false;
+    }
 }
 QString Session::position() const {
     constexpr std::uint64_t frames_per_minute = 48000ULL * 60;
@@ -761,7 +773,8 @@ bool Session::exportAudio(const QString& path, int startBar, int bars, int tailM
         emit changed();
         return true;
     } catch (const std::exception& error) {
-        message_ = QString::fromUtf8(error.what());
+        message_ = QString("Could not export %1: %2. Nothing was written; adjust the export settings or choose another path.")
+            .arg(QFileInfo(path).fileName().isEmpty() ? QStringLiteral("audio") : QFileInfo(path).fileName(), QString::fromUtf8(error.what()));
         emit changed();
         return false;
     }
@@ -785,7 +798,8 @@ void Session::finishExport() {
     switch (job->state.load()) {
     case 1: message_ = QString("Exported %1 bars through the mixer to %2").arg(job->bars).arg(QFileInfo(job->path).fileName()); break;
     case 2: message_ = "Export cancelled; no file was written"; break;
-    default: message_ = job->error; break;
+    default: message_ = QString("Could not export %1: %2. No file was left behind; choose another path or free space and export again.")
+        .arg(QFileInfo(job->path).fileName(), job->error); break;
     }
 }
 
@@ -990,7 +1004,8 @@ void Session::pollImport() {
             if(!result->import) {
                 import_ticket_=0;
                 message_=result->import.error==fl_live::ImportError::cancelled ? QString::fromStdString(result->import.message)
-                    : "Import failed: " + QString::fromStdString(result->import.message);
+                    : QString("Could not import %1: %2. The track is unchanged; choose a supported WAV or relink another file.")
+                        .arg(QFileInfo(import_path_).fileName(), QString::fromStdString(result->import.message));
                 emit changed();return;
             }
             ready_import_=std::move(result->import);

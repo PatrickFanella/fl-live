@@ -1,0 +1,31 @@
+{
+  "verified_at": "2026-11-07T12:09:26.047641+00:00",
+  "base": "main after PR #147",
+  "issues": [
+    82
+  ],
+  "scope": "Failure messages name the resource and action; document, history and media are preserved",
+  "environment": "Kvant, pinned CI image, docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 24,
+      "total": 24
+    }
+  },
+  "verified_behaviors": [
+    "Missing audio server: message names the remote and target, says project and history are kept and offers Retry audio; Save still works",
+    "Save into a missing folder and over another existing file: 'Could not save NAME', edits kept, save again; state unchanged",
+    "Open of a missing, malformed and future-feature file: 'Could not open NAME' with the reason, open project unchanged, choose another; state unchanged",
+    "Import of a 44.1 kHz WAV: 'Could not import odd-rate.wav' with the 48000 reason, track unchanged; decoded audio kept",
+    "Export over an existing file (left byte-identical), with an unsupported format and into a missing folder: 'Could not export NAME', no file left",
+    "Missing audio on open is named with a relink or import action; Relink to the moved file restores the source",
+    "Injected write, sync and rename save faults: message names the file, preserves the previous file, keeps edits and history"
+  ],
+  "source_sha256": {
+    "apps/desktop/session.cpp": "4a93b8da27d61c1a128be8b97766350ba46eaf4fb48c3d51ca4025e2ea9d18e9",
+    "tests/desktop_tests.cpp": "15c7fcc0be8c40e3e226fedaf88557b7d57671ec16abbb5bdef2e5e13debbb8f",
+    "tests/save_fault_probe.cpp": "11b08f66bbd5a8633c17c0514d846a00aa10e039f55777640f9e28d48e85c9eb",
+    "docs/errors.md": "d8d5157b932adbbcdf953f7995f72be20adce15fa2f8a401bbe8bbd73d9aa635"
+  },
+  "limits": "No plugin failures exist yet (#72); device-loss behaviour on physical hardware is #25."
+}
