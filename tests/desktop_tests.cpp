@@ -1385,6 +1385,64 @@ private slots:
         ui.click("pianoLoop");QTRY_VERIFY(!session.pianoLoop());
         ui.click("undoButton");QTRY_VERIFY(session.pianoLoop());ui.click("undoButton");QTRY_COMPARE(session.pianoLength(),384);
     }
+    // #39: every piano-roll operation through Undo/Redo and Save/Open, and
+    // refused loads that leave the open document and its history alone.
+    void pianoRollHistoryAndPersistence() {
+        QTemporaryDir directory;Session session;
+        struct State { QVariantList notes; int length; bool loop; bool mode; QString undo; };
+        const auto state=[&]{return State{session.pianoNotes(),session.pianoLength(),session.pianoLoop(),session.pianoMode(),session.undoText()};};
+        const auto same=[](const State& a,const State& b){return a.notes==b.notes && a.length==b.length && a.loop==b.loop && a.mode==b.mode && a.undo==b.undo;};
+        std::vector<State> states{state()};
+        const std::vector<std::function<bool()>> edits{
+            [&]{return session.usePianoRoll(true);},
+            [&]{return session.addNote(24,36,62,55);},
+            [&]{return session.moveNotes({"5","2"},12,-3);},
+            [&]{return session.resizeNotes({"5"},30);},
+            [&]{return session.setNotesVelocity({"1","5"},33);},
+            [&]{return session.deleteNotes({"3"});},
+            [&]{return session.setPianoLength(250);},
+            [&]{return session.setPianoLoop(false);},
+            [&]{return session.addNote(200,49,127,1);},
+        };
+        for(std::size_t i=0;i<edits.size();++i) {
+            QVERIFY2(edits[i](),qPrintable(QString::number(i)+": "+session.message()));
+            states.push_back(state());
+            // Every intermediate state survives Save and a fresh Open, IDs included.
+            const auto path=directory.filePath(QString("step%1.json").arg(i));QVERIFY(session.saveProject(path));
+            Session reopened;QVERIFY(reopened.loadProject(path));
+            QCOMPARE(reopened.pianoNotes(),states.back().notes);QCOMPARE(reopened.pianoLength(),states.back().length);
+            QCOMPARE(reopened.pianoLoop(),states.back().loop);QCOMPARE(reopened.pianoMode(),states.back().mode);
+        }
+        QVariantMap added,past;for(const auto& n:session.pianoNotes()){const auto m=n.toMap();if(m["id"]=="6")added=m;if(m["id"]=="4")past=m;}
+        QCOMPARE(added["sounding"].toBool(),true);QCOMPARE(added["pitch"].toInt(),127);QCOMPARE(past["sounding"].toBool(),false); // 288 is past the 250-tick end
+        for(std::size_t i=states.size()-1;i>0;--i){QVERIFY(same(state(),states[i]));session.undo();}
+        QVERIFY(same(state(),states[0]));QVERIFY(!session.canUndo());
+        for(std::size_t i=1;i<states.size();++i){session.redo();QVERIFY2(same(state(),states[i]),qPrintable(QString::number(i)));}
+        QVERIFY(!session.canRedo());
+        // Refused loads change nothing: the open document, its history and its path stay.
+        const auto good=directory.filePath(QString("step%1.json").arg(edits.size()-1));
+        QFile file(good);QVERIFY(file.open(QIODevice::ReadOnly));const auto bytes=file.readAll();file.close();
+        const auto corrupt=[&](const QString& name,auto edit){
+            auto root=QJsonDocument::fromJson(bytes).object();edit(root);
+            const auto path=directory.filePath(name);QFile out(path);out.open(QIODevice::WriteOnly);out.write(QJsonDocument(root).toJson());out.close();return path;};
+        const auto withNote=[](auto change){return [change](QJsonObject& root){auto clips=root["clips"].toArray();auto clip=clips[1].toObject();
+            auto piano=clip["piano"].toObject();auto notes=piano["notes"].toArray();auto note=notes[0].toObject();change(note,piano);
+            notes[0]=note;piano["notes"]=notes;clip["piano"]=piano;clips[1]=clip;root["clips"]=clips;};};
+        const QStringList broken{
+            corrupt("pitch.json",withNote([](QJsonObject& n,QJsonObject&){n["pitch"]=200;})),
+            corrupt("unissued.json",withNote([](QJsonObject&,QJsonObject& p){p["next_id"]="2";})),
+            corrupt("extra.json",withNote([](QJsonObject& n,QJsonObject&){n["colour"]="red";})),
+            corrupt("loop.json",withNote([](QJsonObject&,QJsonObject& p){p["loop"]=true;})),
+            corrupt("feature.json",[](QJsonObject& root){root["required_features"]=QJsonArray{"general-session-v1","synth-v1"};}),
+            corrupt("future.json",[](QJsonObject& root){auto f=root["required_features"].toArray();f.append("piano-roll-v2");root["required_features"]=f;}),
+        };
+        session.undo();const auto before=state();const auto path=session.projectPath();const bool dirty=session.dirty();
+        for(const auto& file:broken) {
+            QVERIFY2(!session.loadProject(file),qPrintable(file));
+            QVERIFY(same(state(),before));QCOMPARE(session.projectPath(),path);QCOMPARE(session.dirty(),dirty);QVERIFY(session.canRedo());
+        }
+        session.redo();QVERIFY(same(state(),states.back()));
+    }
     void qmlRelinkMissingAudio() {
         QTemporaryDir root;const auto audio=root.filePath("a.wav"),project=root.filePath("p.json");
         std::vector<qint16> tone(4800);for(std::size_t i=0;i<tone.size();++i)tone[i]=static_cast<qint16>(i%300*50);

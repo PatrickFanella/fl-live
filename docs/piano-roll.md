@@ -78,4 +78,6 @@ For #38:
 - `pianoRollLengthLoop` shows that a clip shortened to two beats exports exactly like a two-beat clip whose later notes were deleted. Lengthening restores the original export. Edits outside the length are refused, Loop off plays one bar then silence, and Save/Open keeps the length, flag and silent notes.
 - `qmlPianoRollLength` drives the length box, the Loop box and Undo.
 
-The [length and loop receipt](../validation/piano-roll-length.json) records the run. The [receipt](../validation/piano-roll-notes.json) records the run.
+The [length and loop receipt](../validation/piano-roll-length.json) records the run.
+
+For #39, `pianoRollHistoryAndPersistence` applies every operation in turn: conversion, add, a two-note move, resize, velocity, delete, length, loop off and an add at pitch 127 and velocity 1. After each one it saves and reopens in a fresh session, checking notes, IDs, length, loop flag and mode. It then undoes back to the start and redoes forward, matching the recorded state, including the Undo label, at every step. Six refused files change nothing: the open document, its redo branch, path and saved state stay as they were. The files are an out-of-range pitch, an ID above the counter, an unknown note field, `"loop": true`, notes without `piano-roll-v1`, and an unknown `piano-roll-v2` feature. The [history receipt](../validation/piano-roll-history.json) records the run. The [receipt](../validation/piano-roll-notes.json) records the run.
