@@ -1,0 +1,30 @@
+{
+  "verified_at": "2026-11-07T10:23:22.122495+00:00",
+  "base": "feat/recovery-journey (PR #135) head",
+  "issues": [
+    12,
+    54,
+    52
+  ],
+  "scope": "Epic #12 user journey through the production QML: automation and edits while playing, Undo, Silence now, Save/reopen and export",
+  "environment": "Kvant, pinned CI image, docker --network none, Qt offscreen platform, silent preview clock",
+  "gates": {
+    "desktop": {
+      "passed": 24,
+      "total": 24
+    }
+  },
+  "verified_behaviors": [
+    "Clip buttons and Play start both tracks; the tempo field is disabled while playing",
+    "Two pointer clicks on the lane draw a one-bar level ramp while playing; the status reads 'while playing', at least two playback edits activate and both clips keep playing",
+    "Mute and a step toggle apply while playing; the Undo button reverts the step while playing",
+    "Ctrl+. stops playback; Save writes the automated, muted project",
+    "A fresh session reopens the same lane points and mute; the float export follows the ramp exactly (0 at the start, linear to full level over bar 1, full level through bar 2)"
+  ],
+  "source_sha256": {
+    "tests/desktop_tests.cpp": "1d52b6095118aea36fbb112787024a0ec4f6b0d2d64233d2d2ddbaf9c1ae0e59",
+    "apps/desktop/session.cpp": "42c855b8446db65a405502da173ba8b72c57874bd04425d0aff8d68a3ef6d4fd",
+    "apps/desktop/Main.qml": "3af25dabd9ec126b8201d181d3b8cd093a96a9766c3def369329950881d25b6a"
+  },
+  "limits": "Offscreen platform with synthetic input and the silent preview clock; native Wayland input and physical audio remain #22 and #19."
+}
