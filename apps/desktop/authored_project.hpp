@@ -4,6 +4,7 @@
 #include <QString>
 #include <atomic>
 #include <memory>
+#include <optional>
 
 // General desktop content beside the identity document. Each track has one
 // clip in this slice. MIDI clips own a step pattern; audio clips use the
@@ -13,6 +14,7 @@ struct ClipContent {
     fl_live::ClipId clip;
     StepPattern pattern;                // MIDI clips
     SynthSettings synth;                // MIDI clips
+    std::optional<PianoRoll> piano;     // MIDI clips; replaces the pattern when set
     AudioSource audio = AudioSource::pulse; // audio clips
     QString asset;                      // absolute path, audio == wav only
     // Decoded asset; not persisted. Null means missing or not yet loaded,

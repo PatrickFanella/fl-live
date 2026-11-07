@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -75,6 +76,53 @@ fl_live::MidiClip patternClip(const StepPattern& pattern, int tempo, const Synth
     clip.instrument = {static_cast<fl_live::Waveform>(synth.waveform), static_cast<fl_live::Frame>(synth.attack_ms) * 48,
         static_cast<fl_live::Frame>(synth.decay_ms) * 48, static_cast<float>(synth.sustain) / 100, static_cast<fl_live::Frame>(synth.release_ms) * 48};
     return clip;
+}
+void sortPiano(PianoRoll& roll) {
+    std::sort(roll.notes.begin(), roll.notes.end(), [](const PianoNote& a, const PianoNote& b) {
+        return a.start != b.start ? a.start < b.start : a.id < b.id; });
+}
+void validatePiano(const PianoRoll& roll) {
+    if (roll.length < 1 || roll.length > piano_length_limit) throw std::invalid_argument("Piano-roll length must be 1 tick to 16 bars");
+    if (roll.notes.size() > fl_live::Engine::notes_per_clip_capacity) throw std::invalid_argument("A clip holds at most 1024 notes");
+    std::vector<std::uint64_t> ids;
+    for (std::size_t i = 0; i < roll.notes.size(); ++i) {
+        const auto& note = roll.notes[i];
+        if (note.id < 1 || note.id >= roll.next_id) throw std::invalid_argument("Note IDs must come from the clip's counter");
+        if (note.pitch < 0 || note.pitch > 127) throw std::invalid_argument("Note pitch must be 0 to 127");
+        if (note.velocity < 1 || note.velocity > 100) throw std::invalid_argument("Note velocity must be 1 to 100 percent");
+        if (note.start < 0 || note.length < 1 || note.start >= roll.length || note.length > roll.length - note.start)
+            throw std::invalid_argument("A note must lie inside the clip");
+        if (i && (roll.notes[i - 1].start > note.start || (roll.notes[i - 1].start == note.start && roll.notes[i - 1].id >= note.id)))
+            throw std::invalid_argument("Notes must be ordered by start, then ID");
+        ids.push_back(note.id);
+    }
+    std::sort(ids.begin(), ids.end());
+    if (std::adjacent_find(ids.begin(), ids.end()) != ids.end()) throw std::invalid_argument("Note IDs must be unique");
+    // At most 16 notes sound at once (the synth's voice count): count notes
+    // still sounding at each note start.
+    for (const auto& note : roll.notes) {
+        const auto sounding = std::count_if(roll.notes.begin(), roll.notes.end(), [&](const PianoNote& other) {
+            return other.start <= note.start && other.start + other.length > note.start; });
+        if (sounding > static_cast<std::ptrdiff_t>(fl_live::Engine::voices_per_track))
+            throw std::invalid_argument("At most 16 notes can sound at once");
+    }
+}
+fl_live::MidiClip pianoClip(const PianoRoll& roll, int tempo, const SynthSettings& synth) {
+    validatePiano(roll);
+    validateSynth(synth);
+    // frame = ceil(ticks * 48000 * 60 / (tempo * 96)), the shared upward rounding.
+    const auto frame = [tempo](int ticks) {
+        const auto numerator = static_cast<std::uint64_t>(ticks) * 30000U;
+        const auto denominator = static_cast<std::uint64_t>(tempo);
+        return static_cast<fl_live::Frame>((numerator + denominator - 1) / denominator);
+    };
+    fl_live::MidiClip midi{frame(roll.length), {}, true};
+    for (const auto& note : roll.notes)
+        midi.notes.push_back({frame(note.start), frame(note.start + note.length) - frame(note.start),
+            static_cast<std::uint8_t>(note.pitch), static_cast<float>(note.velocity) / 100});
+    midi.instrument = {static_cast<fl_live::Waveform>(synth.waveform), static_cast<fl_live::Frame>(synth.attack_ms) * 48,
+        static_cast<fl_live::Frame>(synth.decay_ms) * 48, static_cast<float>(synth.sustain) / 100, static_cast<fl_live::Frame>(synth.release_ms) * 48};
+    return midi;
 }
 fl_live::SessionPlan prepareProject(const ProjectSettings& s) {
     validate(s);

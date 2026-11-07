@@ -65,6 +65,10 @@ class Session final : public QObject {
     Q_PROPERTY(QVariantList trackSources READ trackSources NOTIFY changed)
     Q_PROPERTY(int patternTrackIndex READ patternTrackIndex NOTIFY changed)
     Q_PROPERTY(QVariantList synth READ synth NOTIFY changed)
+    Q_PROPERTY(bool pianoMode READ pianoMode NOTIFY changed)
+    Q_PROPERTY(int pianoLength READ pianoLength NOTIFY changed)
+    Q_PROPERTY(QVariantList pianoNotes READ pianoNotes NOTIFY changed)
+    Q_PROPERTY(QVariantList selectedNotes READ selectedNotes NOTIFY changed)
     Q_PROPERTY(bool importing READ importing NOTIFY changed)
     Q_PROPERTY(QVariantList clipFrames READ clipFrames NOTIFY changed)
     Q_PROPERTY(QVariantList recoveryCandidates READ recoveryCandidates NOTIFY recoveryChanged)
@@ -113,6 +117,25 @@ public:
     // Built-in synth of the MIDI clip in the step editor:
     // [waveform, attack_ms, decay_ms, sustain, release_ms]. Stopped edit, one Undo step.
     QVariantList synth() const;
+    // Piano roll of the MIDI clip in the step editor (docs/piano-roll.md).
+    // Positions are ticks of 1/96 beat. pianoNotes lists
+    // {id, start, length, pitch, velocity} in start order; IDs are strings.
+    bool pianoMode() const;
+    int pianoLength() const;
+    QVariantList pianoNotes() const;
+    // Switches the clip between its step pattern and piano-roll notes. Turning
+    // it on converts the pattern's sounding steps once; turning it off keeps
+    // only the pattern. Each is one Undo step.
+    Q_INVOKABLE bool usePianoRoll(bool on);
+    // Adds a note and selects it; refused with a message when out of range or
+    // above 16 simultaneous notes.
+    Q_INVOKABLE bool addNote(int start, int length, int pitch, int velocity);
+    Q_INVOKABLE bool deleteNotes(const QVariantList& ids);
+    // Selection is view state: not saved or undone, kept by note ID across
+    // unrelated edits, cleared when the edited clip changes.
+    QVariantList selectedNotes() const;
+    Q_INVOKABLE void selectNote(const QString& id, bool additive);
+    Q_INVOKABLE void clearNoteSelection();
     Q_INVOKABLE bool setSynth(const QString& field, int value);
     // WAV decoding runs on a worker; the result is applied as one Undo step
     // once transport is stopped. One import at a time.
@@ -259,7 +282,7 @@ private:
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
     enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete, scene_copy, scene_order, track_pan, track_mute, track_solo,
-        track_create, track_duplicate, track_delete, audio_import, clip_range, audio_relink, assets_collect, automation, synth };
+        track_create, track_duplicate, track_delete, audio_import, clip_range, audio_relink, assets_collect, automation, synth, piano_mode, note_add, note_delete };
     struct HistoryEntry {
         Content content;
         Identities identities;
@@ -281,6 +304,10 @@ private:
     const StepPattern& pattern() const;
     void editPatternStep(EditKind kind, int index, const std::function<void(StepPattern&)>& change);
     fl_live::ClipId pattern_clip_{};
+    std::vector<std::uint64_t> selected_notes_;
+    int history_index_hint_ = -1; // note count for the delete Undo label
+    const PianoRoll* piano() const;
+    bool editPiano(EditKind kind, const std::function<void(PianoRoll&)>& change);
     void restorePatternTarget();
     std::unique_ptr<fl_live::WavImportWorker> importer_;
     std::uint64_t import_ticket_ = 0;

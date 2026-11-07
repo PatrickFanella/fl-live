@@ -1,0 +1,45 @@
+{
+  "verified_at": "2026-11-07T10:34:08.327070+00:00",
+  "base": "main after PR #136",
+  "issues": [
+    35
+  ],
+  "scope": "Piano-roll notes on MIDI clips: model, validation, rendering, persistence, pointer and keyboard create/select/delete",
+  "environment": "Kvant, pinned CI image, docker --network none, Qt offscreen platform",
+  "gates": {
+    "desktop": {
+      "passed": 24,
+      "total": 24
+    },
+    "release": {
+      "passed": 10,
+      "total": 10
+    },
+    "document-io-sanitize": {
+      "passed": 11,
+      "total": 11
+    }
+  },
+  "verified_behaviors": [
+    "Validation refuses length outside 1 tick..16 bars, pitch 128, velocity 0/101, zero length, notes past the clip end, duplicate or unissued IDs, a counter below the IDs, out-of-order notes, a 17th simultaneous note and a 1025th note",
+    "Ticks become frames with independent upward rounding: ceil(ticks*30000/tempo) checked at 137 BPM",
+    "A clip with notes renders them instead of its pattern; piano-roll-v1 round trips exactly; malformed notes, notes without the feature, reordered notes and notes on audio clips are refused",
+    "Converting the template pattern gives four notes (72-tick gates, 70 % velocity) whose float export is sample-identical to the pattern's",
+    "Add selects the new note; refusals (outside the clip, pitch, velocity, zero or negative values, the 16-note limit) leave notes and Undo text unchanged",
+    "Selection toggles with additive select, survives an unrelated level edit by ID, ignores unknown IDs and clears when another clip is chosen; deleted IDs are not reissued",
+    "Delete, Undo, Redo, switching back to the pattern and Undo again restore the same notes and IDs; Save/Open keeps them",
+    "QML: a pointer click adds a snapped note, clicking selects, Shift-click extends, Delete removes, the Undo button restores, Escape clears, keyboard fields add an exact note, octave buttons move the view, and the grid and entry row fit a 1000-pixel window"
+  ],
+  "source_sha256": {
+    "apps/desktop/project.hpp": "ccffc596fd8bdcb6fe441717e14e36a8cd6dc4b1fc13cce56c5283cf8d7a8fc9",
+    "apps/desktop/project.cpp": "814524cf623a9d25feb811460b424abb564a739817becec654d53d1748a6efa8",
+    "apps/desktop/authored_project.hpp": "2e5af6b6e543a91588b8a87d7ae404d8b7ed0e94b46a96620cffb9f9518deb2c",
+    "apps/desktop/authored_project.cpp": "6c3f00ac079eb07aa1ab6c48ef870f082115b8ac6c3008c2163b0e6c880d3474",
+    "apps/desktop/session.hpp": "039fdee137d00e1d5567fb478e9e285dabbac94ae3e8ce4a07522ff2e515706d",
+    "apps/desktop/session.cpp": "1c176eb16809d862f4ac2a0830c54a9e5e0d8e6fcb98af16959130dd69bfdaaf",
+    "apps/desktop/Main.qml": "14c9f86b99b9a41f37e0df4c9235d2ebac5fbcfd3fdec3e851346ce68c00a05c",
+    "tests/authored_project_tests.cpp": "431eafbd0b5e21a34fe6fa8bdc078bd1cec3e94d6f4c82a096c67252345120f3",
+    "tests/desktop_tests.cpp": "c6c85285cf642d7a397255bf3bdcdce90a128342f674bfa3d19e5343c444db78"
+  },
+  "limits": "No move/resize/per-note edits (#36), clip length/loop controls (#38) or dense-drawing measurement (#41); offscreen platform with synthetic input."
+}

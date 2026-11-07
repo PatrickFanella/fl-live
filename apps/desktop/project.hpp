@@ -46,6 +46,34 @@ struct SynthSettings {
 };
 void validateSynth(const SynthSettings& synth);
 fl_live::MidiClip patternClip(const StepPattern& pattern, int tempo, const SynthSettings& synth);
+// Piano-roll notes of a MIDI clip, in ticks of 1/96 beat from the clip start.
+// A clip that uses the piano roll renders these notes instead of its step
+// pattern, which is retained. Note IDs are stable within the clip; next_id is
+// a counter saved with the notes, so later edits never reissue a deleted ID
+// (Undo restores the counter together with the notes it removes).
+inline constexpr int piano_ticks_per_beat = 96;
+inline constexpr int piano_length_limit = 16 * 4 * piano_ticks_per_beat; // 16 bars
+struct PianoNote {
+    std::uint64_t id = 0;
+    int start = 0;     // ticks from the clip start
+    int length = 24;   // ticks, at least 1
+    int pitch = 60;    // MIDI 0..127
+    int velocity = 80; // percent 1..100
+    bool operator==(const PianoNote&) const = default;
+};
+struct PianoRoll {
+    int length = 4 * piano_ticks_per_beat; // ticks, 1..piano_length_limit
+    std::uint64_t next_id = 1;
+    std::vector<PianoNote> notes; // ordered by start, then ID
+    bool operator==(const PianoRoll&) const = default;
+};
+// Throws std::invalid_argument for out-of-range values, notes outside the
+// clip, duplicate or unissued IDs, wrong order, more than 1024 notes or more
+// than 16 notes sounding at once.
+void validatePiano(const PianoRoll& roll);
+// Sorts notes into the canonical order (start, then ID).
+void sortPiano(PianoRoll& roll);
+fl_live::MidiClip pianoClip(const PianoRoll& roll, int tempo, const SynthSettings& synth);
 fl_live::SessionPlan prepareProject(const ProjectSettings& settings);
 ProjectSettings readProject(const QString& path);
 void writeProject(const QString& path, const ProjectSettings& settings);

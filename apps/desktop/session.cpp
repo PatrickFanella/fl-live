@@ -419,6 +419,9 @@ QString Session::editName(const HistoryEntry& entry) {
     case EditKind::audio_relink: return QString("track %1 audio relink").arg(entry.index+1);
     case EditKind::assets_collect: return "audio collection";
     case EditKind::automation: return QString("track %1 automation").arg(entry.index+1);
+    case EditKind::piano_mode: return "piano roll";
+    case EditKind::note_add: return "add note";
+    case EditKind::note_delete: return entry.index == 1 ? "delete note" : "delete notes";
     case EditKind::synth: return "synth "+QString::fromLatin1(entry.index==0 ? "waveform" : entry.index==1 ? "attack" : entry.index==2 ? "decay" : entry.index==3 ? "sustain" : "release");
     default: return {};
     }
@@ -790,7 +793,11 @@ QVariantList Session::trackSources() const {
     for(const auto& track:identities_->tracks) {
         const auto& clip=clipContent(*content_,firstClip(*identities_,track.id));
         if(import_ticket_ && track.id==import_track_) { result.append("Importing " + QFileInfo(import_path_).fileName() + "…"); continue; }
-        if(track.kind==fl_live::TrackKind::midi) { result.append(QString("MIDI pattern · %1 steps").arg(clip.pattern.step_count)); continue; }
+        if(track.kind==fl_live::TrackKind::midi) {
+            result.append(clip.piano ? QString("Piano roll · %1 note%2").arg(clip.piano->notes.size()).arg(clip.piano->notes.size()==1 ? "" : "s")
+                                     : QString("MIDI pattern · %1 steps").arg(clip.pattern.step_count));
+            continue;
+        }
         switch(clip.audio) {
         case AudioSource::pulse: result.append("Built-in pulse"); break;
         case AudioSource::empty: result.append("Empty · import a WAV"); break;
@@ -822,6 +829,7 @@ void Session::restorePatternTarget() {
     const auto exists=std::any_of(identities_->clips.begin(),identities_->clips.end(),[&](const auto& c){return c.id==pattern_clip_;});
     if(pattern_clip_.value && exists)return;
     pattern_clip_={};
+    selected_notes_.clear();
     for(const auto& track:identities_->tracks)
         if(track.kind==fl_live::TrackKind::midi) { pattern_clip_=firstClip(*identities_,track.id); break; }
     selected_step_=0;
@@ -831,6 +839,7 @@ bool Session::editPattern(const QString& trackId) {
         const fl_live::TrackId id{parseIdentity(trackId)};
         const auto track=std::find_if(identities_->tracks.begin(),identities_->tracks.end(),[id](const auto& t){return t.id==id;});
         if(track==identities_->tracks.end() || track->kind!=fl_live::TrackKind::midi)throw std::invalid_argument("Choose a MIDI track to edit its pattern");
+        if(firstClip(*identities_,id)!=pattern_clip_)selected_notes_.clear();
         pattern_clip_=firstClip(*identities_,id);selected_step_=0;
         emit changed();return true;
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
@@ -1320,6 +1329,99 @@ QVariantList Session::synth() const {
     const auto found=std::find_if(content_->clips.begin(),content_->clips.end(),[&](const auto& c){return c.clip==pattern_clip_;});
     if(pattern_clip_.value && found!=content_->clips.end())value=found->synth;
     return {value.waveform,value.attack_ms,value.decay_ms,value.sustain,value.release_ms};
+}
+const PianoRoll* Session::piano() const {
+    const auto found=std::find_if(content_->clips.begin(),content_->clips.end(),[&](const auto& c){return c.clip==pattern_clip_;});
+    return pattern_clip_.value && found!=content_->clips.end() && found->piano ? &*found->piano : nullptr;
+}
+bool Session::pianoMode() const { return piano()!=nullptr; }
+int Session::pianoLength() const { return piano() ? piano()->length : 0; }
+QVariantList Session::pianoNotes() const {
+    QVariantList result;
+    if(const auto* roll=piano())
+        for(const auto& note:roll->notes)
+            result.append(QVariantMap{{"id",identityText(note.id)},{"start",note.start},{"length",note.length},{"pitch",note.pitch},{"velocity",note.velocity}});
+    return result;
+}
+QVariantList Session::selectedNotes() const {
+    QVariantList result;
+    if(const auto* roll=piano())
+        for(const auto& note:roll->notes)
+            if(std::find(selected_notes_.begin(),selected_notes_.end(),note.id)!=selected_notes_.end())result.append(identityText(note.id));
+    return result;
+}
+void Session::selectNote(const QString& id,bool additive) {
+    try {
+        const auto value=parseIdentity(id);const auto* roll=piano();
+        if(!roll || std::none_of(roll->notes.begin(),roll->notes.end(),[&](const auto& n){return n.id==value;}))throw std::invalid_argument("Unknown note");
+        const auto at=std::find(selected_notes_.begin(),selected_notes_.end(),value);
+        if(!additive){selected_notes_.assign(1,value);}
+        else if(at!=selected_notes_.end())selected_notes_.erase(at);
+        else selected_notes_.push_back(value);
+        emit changed();
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();}
+}
+void Session::clearNoteSelection(){selected_notes_.clear();emit changed();}
+bool Session::editPiano(EditKind kind,const std::function<void(PianoRoll&)>& change) {
+    if(!changeable())return false;
+    try {
+        if(!piano())throw std::invalid_argument("Turn on the piano roll for this clip first");
+        auto next=*content_;
+        auto& clip=*std::find_if(next.clips.begin(),next.clips.end(),[&](const auto& c){return c.clip==pattern_clip_;});
+        change(*clip.piano);
+        sortPiano(*clip.piano);
+        validatePiano(*clip.piano);
+        if(next==*content_)return true;
+        edit(next,kind,history_index_hint_);
+        return *content_==next;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+bool Session::usePianoRoll(bool on) {
+    if(!changeable())return false;
+    try {
+        if(patternTrackIndex()<0)throw std::invalid_argument("Add or choose a MIDI track to use the piano roll");
+        if(on==pianoMode())return true;
+        auto next=*content_;
+        auto& clip=*std::find_if(next.clips.begin(),next.clips.end(),[&](const auto& c){return c.clip==pattern_clip_;});
+        if(on) {
+            // One note per sounding step: a quarter-note step is 96 ticks and
+            // the gate is a percentage of it (at least one tick).
+            PianoRoll roll{clip.pattern.step_count*piano_ticks_per_beat,1,{}};
+            for(int n=0;n<clip.pattern.step_count;++n) {
+                const auto& step=clip.pattern.steps[static_cast<std::size_t>(n)];
+                if(!step.enabled)continue;
+                roll.notes.push_back({roll.next_id++,n*piano_ticks_per_beat,std::max(1,step.gate*piano_ticks_per_beat/100),step.pitch,std::max(1,step.velocity)});
+            }
+            clip.piano=std::move(roll);
+        } else clip.piano.reset();
+        selected_notes_.clear();
+        edit(next,EditKind::piano_mode,patternTrackIndex());
+        return *content_==next;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+bool Session::addNote(int start,int length,int pitch,int velocity) {
+    std::uint64_t id=0;
+    history_index_hint_=-1;
+    const bool done=editPiano(EditKind::note_add,[&](PianoRoll& roll) {
+        id=roll.next_id++;
+        roll.notes.push_back({id,start,length,pitch,velocity});
+    });
+    if(done){selected_notes_.assign(1,id);emit changed();}
+    return done;
+}
+bool Session::deleteNotes(const QVariantList& ids) {
+    std::vector<std::uint64_t> values;
+    try { for(const auto& id:ids)values.push_back(parseIdentity(id.toString())); }
+    catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+    if(values.empty()){message_="Select notes to delete";emit changed();return false;}
+    history_index_hint_=static_cast<int>(values.size());
+    const bool done=editPiano(EditKind::note_delete,[&](PianoRoll& roll) {
+        for(const auto value:values)
+            if(std::none_of(roll.notes.begin(),roll.notes.end(),[&](const auto& n){return n.id==value;}))throw std::invalid_argument("Unknown note");
+        std::erase_if(roll.notes,[&](const auto& n){return std::find(values.begin(),values.end(),n.id)!=values.end();});
+    });
+    if(done){std::erase_if(selected_notes_,[&](auto id){return std::find(values.begin(),values.end(),id)!=values.end();});emit changed();}
+    return done;
 }
 bool Session::setSynth(const QString& field,int value) {
     if(!changeable())return false;
