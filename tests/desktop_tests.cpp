@@ -2072,6 +2072,61 @@ private slots:
         QCOMPARE(clips(1).size(),after.size()+1);
         session.undo();QCOMPARE(clips(1),after);
     }
+    // #50: the audio and MIDI recording journey through the production QML
+    // with synthetic pointer and keyboard input: arm, record, stop, edit
+    // both clips, save, reopen and play. Preview feeds silence for audio and
+    // previewMidi() stands in for a MIDI device; native input is #22.
+    void qmlRecordingJourney() {
+        QTemporaryDir directory;const auto path=directory.filePath("journey.json");
+        QString audioTake,midiTake;int moved=0;
+        {
+            Session session;QmlUi ui(session);QVERIFY(QTest::qWaitForWindowExposed(ui.window));
+            ui.type("projectFile",path);ui.click("saveProjectButton");QTRY_VERIFY(QFile::exists(path));
+            ui.click("arm0");ui.click("arm1");QTRY_COMPARE(session.armed(),(QVariantList{true,true}));
+            // record() runs on the click; no event loop until the notes are
+            // in, so the session's own tick timer cannot shift them.
+            ui.click("recordButton");QVERIFY(session.recording());
+            const auto wait=[&](int ticks){for(int i=0;i<ticks;++i)session.tick();};
+            wait(25);QVERIFY(session.previewMidi(0x90,60,100));wait(25);QVERIFY(session.previewMidi(0x80,60,0)); // ticks 48..96
+            wait(25);QVERIFY(session.previewMidi(0x90,64,90));wait(25);QVERIFY(session.previewMidi(0x80,64,0));  // ticks 144..192
+            wait(50);ui.click("stopButton");QTRY_VERIFY(!session.recording());session.tick();
+            QVERIFY2(ui.status().startsWith("Recorded 2 takes as new clips"),qPrintable(ui.status()));
+            audioTake=session.selectedClips()[0].toString();midiTake=session.selectedClips()[1].toString();
+            // Edit the MIDI take in the piano roll: select note 1, move it a
+            // sixteenth later and a semitone up.
+            ui.click("editPattern1");QTRY_VERIFY(session.pianoMode());
+            const auto note=[&](int i){const auto m=session.pianoNotes()[i].toMap();return QList<int>{m["start"].toInt(),m["length"].toInt(),m["pitch"].toInt()};};
+            // The session's 10 ms tick timer may add a preview tick around the
+            // clicks, so the take's start can move by whole ticks; the notes
+            // keep their spacing and lengths.
+            const int first=note(0)[0];
+            QVERIFY2(first>=48 && first<=56,qPrintable(QString::number(first)));
+            QCOMPARE(note(0),(QList<int>{first,48,60}));QCOMPARE(note(1),(QList<int>{first+96,48,64}));
+            auto* roll=ui.item("pianoRoll");
+            const int base=roll->property("base").toInt(),rows=roll->property("rows").toInt();const double row=roll->property("rowHeight").toDouble();
+            const auto at=roll->mapToScene(QPointF((first+12.0)*roll->width()/session.pianoLength(),(base+rows-1-60+0.5)*row)).toPoint();
+            QTest::mouseClick(ui.window,Qt::LeftButton,Qt::NoModifier,at);QTRY_COMPARE(session.selectedNotes().size(),qsizetype(1));
+            QTest::keyClick(ui.window,Qt::Key_Right);QTRY_COMPARE(note(0)[0],first+24);
+            QTest::keyClick(ui.window,Qt::Key_Up);QTRY_COMPARE(note(0)[2],61);
+            moved=note(0)[0];
+            // Edit the audio take's range: the field is in milliseconds; 25 ms is 1,200 frames.
+            ui.type("rangeStart0","25",true);QTRY_COMPARE(session.clipRanges()[0].toList()[0].toDouble(),1200.0);
+            QTest::keyClick(ui.window,Qt::Key_S,Qt::ControlModifier);QTRY_VERIFY(!session.dirty());
+        }
+        Session session;QmlUi ui(session);QVERIFY(QTest::qWaitForWindowExposed(ui.window));
+        ui.type("projectFile",path);ui.click("openProjectButton");QTRY_VERIFY2(session.message().startsWith("Project opened"),qPrintable(session.message()));
+        QVERIFY(session.selectClip(audioTake));QCOMPARE(session.clipRanges()[0].toList()[0].toDouble(),1200.0);
+        QVERIFY(session.selectClip(midiTake));
+        QList<QList<int>> notes;for(const auto& n:session.pianoNotes()){const auto m=n.toMap();notes.append({m["start"].toInt(),m["length"].toInt(),m["pitch"].toInt()});}
+        QCOMPARE(notes,(QList<QList<int>>{{moved,48,61},{moved+72,48,64}}));
+        // Play both takes through the controls; the moved note sounds 48 ticks
+        // (25 preview ticks) from its start.
+        ui.click("clip0");ui.click("clip1");ui.click("playButton");
+        for(int i=0;i<moved*250/480+3;++i)session.tick(); // just past the moved note's start
+        QCOMPARE(session.activeClipIds()[0].toString(),audioTake);QCOMPARE(session.activeClipIds()[1].toString(),midiTake);
+        QVERIFY(session.activeVoices()>0);
+        ui.click("stopButton");session.tick();QVERIFY(!session.running());
+    }
     // #45: placement. Recording while the transport runs places each take
     // on the first bar line at or after its first frame: the audio clip's
     // range starts there (the file keeps everything) and MIDI notes count
