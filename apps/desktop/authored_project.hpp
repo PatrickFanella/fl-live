@@ -120,7 +120,7 @@ struct AuthoredProject {
     fl_live::DocumentSnapshot identities;
     std::vector<RelativeAsset> relative; // filled by decoding; not document state
 };
-inline constexpr std::size_t desktop_clips_per_track = 1;
+inline constexpr std::size_t desktop_clips_per_track = 8; // at least one, at most this many
 
 fl_live::DocumentSnapshot defaultTemplateIdentities();
 AuthoredProject defaultProject();
@@ -177,6 +177,9 @@ struct ExportOptions {
     int tail_ms = 0;
     int channels = 2;
     ExportFormat format = ExportFormat::pcm16;
+    // Clip index to play on each track (the desktop's selected clips); a
+    // missing entry plays the track's first clip.
+    std::vector<std::size_t> clips;
 };
 void validateExportOptions(const ExportOptions& options);
 std::uint64_t exportFrames(int tempo, int bars);

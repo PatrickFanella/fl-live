@@ -104,12 +104,12 @@ QVariantList Session::trackIds() const {
     QVariantList result;for(const auto& track:identities_->tracks)result.append(identityText(track.id.value));return result;
 }
 QVariantList Session::clipIds() const {
-    QVariantList result;for(std::size_t i=0;i<identities_->tracks.size();++i)result.append(identityText(prepared_->view().clipId(i,0)->value));return result;
+    QVariantList result;for(const auto& track:identities_->tracks)result.append(identityText(trackClip(track.id).value));return result;
 }
 QVariantList Session::clipNames() const {
     QVariantList result;
     for(std::size_t i=0;i<identities_->tracks.size();++i) {
-        const auto id=*prepared_->view().clipId(i,0);
+        const auto id=trackClip(identities_->tracks[i].id);
         const auto found=std::find_if(identities_->clips.begin(),identities_->clips.end(),[id](const auto& clip){return clip.id==id;});
         result.append(QString::fromUtf8(found->name));
     }
@@ -221,7 +221,7 @@ bool Session::setSceneIncluded(const QString& trackId,bool included) {
         const auto index=prepared_->view().trackIndex(id);
         if(!index)throw std::invalid_argument("Unknown scene track");
         fl_live::SessionDocument candidate(*identities_);
-        if(included)candidate.setSlot(selectedScene().id,id,*prepared_->view().clipId(*index,0));
+        if(included)candidate.setSlot(selectedScene().id,id,trackClip(id));
         else candidate.clearSlot(selectedScene().id,id);
         if(candidate.snapshot()==*identities_)return true;
         auto identities=std::make_shared<const fl_live::DocumentSnapshot>(candidate.snapshot());
@@ -415,6 +415,9 @@ QString Session::editName(const HistoryEntry& entry) {
     case EditKind::track_create: return "new track";
     case EditKind::track_duplicate: return QString("track %1 duplicate").arg(entry.index+1);
     case EditKind::track_delete: return "track deletion";
+    case EditKind::clip_create: return QString("track %1 new clip").arg(entry.index+1);
+    case EditKind::clip_duplicate: return QString("track %1 clip duplicate").arg(entry.index+1);
+    case EditKind::clip_delete: return QString("track %1 clip deletion").arg(entry.index+1);
     case EditKind::audio_import: return QString("track %1 audio import").arg(entry.index+1);
     case EditKind::clip_range: return QString("track %1 clip range").arg(entry.index+1);
     case EditKind::audio_relink: return QString("track %1 audio relink").arg(entry.index+1);
@@ -742,6 +745,12 @@ bool Session::exportAudio(const QString& path, int startBar, int bars, int tailM
         else if (format == "float32") options.format = ExportFormat::float32;
         else throw std::invalid_argument("Export format must be pcm16, pcm24 or float32");
         validateExportOptions(options);
+        // Each track plays its selected clip.
+        for(const auto& track:identities_->tracks) {
+            std::size_t index=0;
+            for(const auto& clip:identities_->clips)if(clip.track==track.id){if(clip.id==trackClip(track.id))break;++index;}
+            options.clips.push_back(index);
+        }
         if (path.trimmed().isEmpty()) throw std::invalid_argument("Enter a new WAV file path");
         auto job = std::make_shared<ExportJob>();
         job->path = path; job->bars = bars;
@@ -797,13 +806,45 @@ fl_live::ClipId firstClip(const fl_live::DocumentSnapshot& identities,fl_live::T
     return found==identities.clips.end() ? fl_live::ClipId{} : found->id;
 }
 }
+fl_live::ClipId Session::trackClip(fl_live::TrackId track) const {
+    if(const auto chosen=selected_clip_.find(track.value);chosen!=selected_clip_.end())
+        if(std::any_of(identities_->clips.begin(),identities_->clips.end(),[&](const auto& c){return c.id.value==chosen->second && c.track==track;}))
+            return fl_live::ClipId{chosen->second};
+    return firstClip(*identities_,track);
+}
+QVariantList Session::trackClips() const {
+    QVariantList result;
+    for(const auto& track:identities_->tracks) {
+        QVariantList clips;
+        for(const auto& clip:identities_->clips)if(clip.track==track.id)
+            clips.append(QVariantMap{{"id",identityText(clip.id.value)},{"name",QString::fromUtf8(clip.name)}});
+        result.append(QVariant(clips));
+    }
+    return result;
+}
+QVariantList Session::selectedClips() const {
+    QVariantList result;for(const auto& track:identities_->tracks)result.append(identityText(trackClip(track.id).value));return result;
+}
+bool Session::selectClip(const QString& clipId) {
+    try {
+        const fl_live::ClipId id{parseIdentity(clipId)};
+        const auto clip=std::find_if(identities_->clips.begin(),identities_->clips.end(),[&](const auto& c){return c.id==id;});
+        if(clip==identities_->clips.end())throw std::invalid_argument("Unknown clip");
+        const bool editing=pattern_clip_.value && std::any_of(identities_->clips.begin(),identities_->clips.end(),
+            [&](const auto& c){return c.id==pattern_clip_ && c.track==clip->track;});
+        selected_clip_[clip->track.value]=id.value;
+        // The step editor follows a selection on the track it is editing.
+        if(editing && pattern_clip_!=id){pattern_clip_=id;selected_step_=0;selected_notes_.clear();emit notesChanged();}
+        emit changed();return true;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
 QVariantList Session::trackKinds() const {
     QVariantList result;for(const auto& track:identities_->tracks)result.append(kindText(track.kind));return result;
 }
 QVariantList Session::trackSources() const {
     QVariantList result;
     for(const auto& track:identities_->tracks) {
-        const auto& clip=clipContent(*content_,firstClip(*identities_,track.id));
+        const auto& clip=clipContent(*content_,trackClip(track.id));
         if(import_ticket_ && track.id==import_track_) { result.append("Importing " + QFileInfo(import_path_).fileName() + "…"); continue; }
         if(track.kind==fl_live::TrackKind::midi) {
             result.append(clip.piano ? QString("Piano roll · %1 note%2").arg(clip.piano->notes.size()).arg(clip.piano->notes.size()==1 ? "" : "s")
@@ -843,7 +884,7 @@ void Session::restorePatternTarget() {
     pattern_clip_={};
     selected_notes_.clear();
     for(const auto& track:identities_->tracks)
-        if(track.kind==fl_live::TrackKind::midi) { pattern_clip_=firstClip(*identities_,track.id); break; }
+        if(track.kind==fl_live::TrackKind::midi) { pattern_clip_=trackClip(track.id); break; }
     selected_step_=0;
 }
 bool Session::editPattern(const QString& trackId) {
@@ -851,9 +892,9 @@ bool Session::editPattern(const QString& trackId) {
         const fl_live::TrackId id{parseIdentity(trackId)};
         const auto track=std::find_if(identities_->tracks.begin(),identities_->tracks.end(),[id](const auto& t){return t.id==id;});
         if(track==identities_->tracks.end() || track->kind!=fl_live::TrackKind::midi)throw std::invalid_argument("Choose a MIDI track to edit its pattern");
-        const bool other=firstClip(*identities_,id)!=pattern_clip_;
+        const bool other=trackClip(id)!=pattern_clip_;
         if(other)selected_notes_.clear();
-        pattern_clip_=firstClip(*identities_,id);selected_step_=0;
+        pattern_clip_=trackClip(id);selected_step_=0;
         if(other)emit notesChanged();
         emit changed();return true;
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
@@ -873,6 +914,77 @@ bool Session::commitStructure(SessionContent next,const fl_live::DocumentSnapsho
     selected_step_=std::min(selected_step_,pattern().step_count-1);
     emit changed();
     return true;
+}
+bool Session::addClip(const QString& trackId) {
+    if(!changeable())return false;
+    try {
+        const fl_live::TrackId track{parseIdentity(trackId)};
+        const auto owner=std::find_if(identities_->tracks.begin(),identities_->tracks.end(),[&](const auto& t){return t.id==track;});
+        if(owner==identities_->tracks.end())throw std::invalid_argument("Unknown track");
+        const auto count=static_cast<std::size_t>(std::count_if(identities_->clips.begin(),identities_->clips.end(),[&](const auto& c){return c.track==track;}));
+        if(count>=desktop_clips_per_track)throw std::invalid_argument("A track holds at most 8 clips");
+        auto snapshot=*identities_;snapshot.next_id=next_identity_;
+        fl_live::SessionDocument candidate(std::move(snapshot));
+        const auto clip=candidate.createClip(track,"Clip "+std::to_string(count+1));
+        auto next=*content_;
+        ClipContent value{clip};
+        if(owner->kind==fl_live::TrackKind::audio)value.audio=AudioSource::empty;
+        else for(auto& step:value.pattern.steps)step.enabled=false;
+        next.clips.push_back(std::move(value));
+        const bool editing=pattern_clip_==trackClip(track);
+        if(!commitStructure(std::move(next),candidate.snapshot(),EditKind::clip_create,static_cast<int>(owner-identities_->tracks.begin())))return false;
+        selectClip(identityText(clip.value));
+        if(editing && pattern_clip_!=clip){pattern_clip_=clip;emit notesChanged();}
+        message_=QString("Added clip %1 to %2").arg(count+1).arg(QString::fromUtf8(owner->name));emit changed();return true;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+bool Session::duplicateClip(const QString& clipId) {
+    if(!changeable())return false;
+    try {
+        const fl_live::ClipId source{parseIdentity(clipId)};
+        const auto original=std::find_if(identities_->clips.begin(),identities_->clips.end(),[&](const auto& c){return c.id==source;});
+        if(original==identities_->clips.end())throw std::invalid_argument("Unknown clip");
+        const auto track=original->track;
+        if(static_cast<std::size_t>(std::count_if(identities_->clips.begin(),identities_->clips.end(),[&](const auto& c){return c.track==track;}))>=desktop_clips_per_track)
+            throw std::invalid_argument("A track holds at most 8 clips");
+        auto snapshot=*identities_;snapshot.next_id=next_identity_;
+        fl_live::SessionDocument candidate(std::move(snapshot));
+        const auto copy=candidate.duplicateClip(source);
+        if(const auto name=original->name+" copy";name.size()<=fl_live::SessionDocument::name_byte_limit)candidate.renameClip(copy,name);
+        auto next=*content_;
+        auto value=clipContent(*content_,source);value.clip=copy; // imported audio stays shared
+        next.clips.push_back(std::move(value));
+        const auto index=static_cast<int>(*prepared_->view().trackIndex(track));
+        if(!commitStructure(std::move(next),candidate.snapshot(),EditKind::clip_duplicate,index))return false;
+        selectClip(identityText(copy.value));
+        message_="Duplicated clip; the copy has a new ID and shares imported audio";emit changed();return true;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+bool Session::deleteClip(const QString& clipId) {
+    if(!changeable())return false;
+    try {
+        const fl_live::ClipId target{parseIdentity(clipId)};
+        const auto clip=std::find_if(identities_->clips.begin(),identities_->clips.end(),[&](const auto& c){return c.id==target;});
+        if(clip==identities_->clips.end())throw std::invalid_argument("Unknown clip");
+        const auto track=clip->track;
+        std::vector<fl_live::ClipId> siblings;
+        for(const auto& c:identities_->clips)if(c.track==track)siblings.push_back(c.id);
+        if(siblings.size()<2)throw std::invalid_argument("A track keeps at least one clip; delete the track instead");
+        // The selection moves to the clip before the deleted one, or the next.
+        const auto at=std::find(siblings.begin(),siblings.end(),target)-siblings.begin();
+        const auto replacement=siblings[at ? static_cast<std::size_t>(at-1) : 1];
+        auto snapshot=*identities_;snapshot.next_id=next_identity_;
+        fl_live::SessionDocument candidate(std::move(snapshot));
+        candidate.deleteClip(target); // also removes its scene slots
+        auto next=*content_;
+        std::erase_if(next.clips,[&](const auto& c){return c.clip==target;});
+        if(pattern_clip_==target)pattern_clip_=replacement;
+        if(trackClip(track)==target)selected_clip_[track.value]=replacement.value;
+        const auto index=static_cast<int>(*prepared_->view().trackIndex(track));
+        if(!commitStructure(std::move(next),candidate.snapshot(),EditKind::clip_delete,index))return false;
+        emit notesChanged();
+        message_="Deleted the clip; scenes that used it stop this track";emit changed();return true;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }
 bool Session::addTrack(const QString& kind) {
     if(!changeable())return false;
@@ -955,7 +1067,7 @@ bool Session::deleteTrack(const QString& id) {
 bool Session::relinkAudio(const QString& trackId,const QString& path) {
     try {
         const fl_live::TrackId id{parseIdentity(trackId)};
-        const auto clip=firstClip(*identities_,id);
+        const auto clip=trackClip(id);
         if(!clip.value || clipContent(*content_,clip).audio!=AudioSource::wav)throw std::invalid_argument("Relink applies to an imported audio clip; use Import for other tracks");
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
     if(!importAudio(trackId,path))return false;
@@ -974,7 +1086,7 @@ bool Session::importAudio(const QString& trackId,const QString& path) {
             importer_=std::make_unique<fl_live::WavImportWorker>(fl_live::WavImportPolicy{48000, fl_live::PreparationBudget::audio_frame_limit/2});
         }
         import_path_=QDir::cleanPath(QFileInfo(path).absoluteFilePath());
-        import_track_=id;import_relink_=false;
+        import_track_=id;import_clip_=trackClip(id);import_relink_=false; // the clip selected when the import started
         import_ticket_=importer_->submit(import_path_.toStdString());
         message_="Importing " + QFileInfo(import_path_).fileName() + " in the background";
         emit changed();return true;
@@ -1002,7 +1114,9 @@ void Session::pollImport() {
     const auto track=std::find_if(identities_->tracks.begin(),identities_->tracks.end(),[&](const auto& t){return t.id==import_track_;});
     if(track==identities_->tracks.end()) { message_="Import finished, but its track was deleted; nothing changed"; emit changed(); return; }
     auto next=*content_;
-    auto& clip=*std::find_if(next.clips.begin(),next.clips.end(),[&](const auto& c){return c.clip==firstClip(*identities_,import_track_);});
+    const auto target=std::find_if(next.clips.begin(),next.clips.end(),[&](const auto& c){return c.clip==import_clip_;});
+    if(target==next.clips.end()){ready_import_.reset();message_="Import discarded: its clip was deleted";emit changed();return;}
+    auto& clip=*target;
     const bool relink=import_relink_;import_relink_=false;
     const auto frames=import.frames;
     if(relink && (clip.audio!=AudioSource::wav || clip.range_start>=frames || clip.range_length>frames-clip.range_start)) {
@@ -1050,13 +1164,13 @@ Session::AssetReport Session::resolveAssets(SessionContent& content,const std::v
 }
 QVariantList Session::clipFrames() const {
     QVariantList result;
-    for(const auto& track:identities_->tracks)result.append(static_cast<double>(mediaFrames(clipContent(*content_,firstClip(*identities_,track.id)))));
+    for(const auto& track:identities_->tracks)result.append(static_cast<double>(mediaFrames(clipContent(*content_,trackClip(track.id)))));
     return result;
 }
 QVariantList Session::clipRanges() const {
     QVariantList result;
     for(const auto& track:identities_->tracks) {
-        const auto& clip=clipContent(*content_,firstClip(*identities_,track.id));
+        const auto& clip=clipContent(*content_,trackClip(track.id));
         const auto frames=mediaFrames(clip);
         const auto end=clip.range_length ? clip.range_start+clip.range_length : frames;
         result.append(QVariant(QVariantList{static_cast<double>(clip.range_start),static_cast<double>(end),clip.loop}));
@@ -1070,7 +1184,7 @@ bool Session::setClipRange(const QString& trackId,double startFrame,double endFr
         const auto index=prepared_->view().trackIndex(id);
         if(!index)throw std::invalid_argument("Unknown track");
         auto next=*content_;
-        auto& clip=*std::find_if(next.clips.begin(),next.clips.end(),[&](const auto& c){return c.clip==firstClip(*identities_,id);});
+        auto& clip=*std::find_if(next.clips.begin(),next.clips.end(),[&](const auto& c){return c.clip==trackClip(id);});
         const auto frames=mediaFrames(clip);
         if(clip.audio!=AudioSource::wav || !frames)throw std::invalid_argument("Import a WAV into this track before setting its range");
         if(!std::isfinite(startFrame) || !std::isfinite(endFrame) || startFrame<0 || endFrame>static_cast<double>(frames) ||
@@ -1087,7 +1201,7 @@ bool Session::setClipRange(const QString& trackId,double startFrame,double endFr
 }
 QVariantList Session::waveform(int track,int bins) const {
     if(track<0 || static_cast<std::size_t>(track)>=identities_->tracks.size() || bins<1 || bins>4096)return {};
-    const auto& clip=clipContent(*content_,firstClip(*identities_,identities_->tracks[static_cast<std::size_t>(track)].id));
+    const auto& clip=clipContent(*content_,trackClip(identities_->tracks[static_cast<std::size_t>(track)].id));
     if(!clip.media)return {};
     const auto key=std::make_pair(clip.media.get(),bins);
     if(const auto found=waveform_cache_.find(key);found!=waveform_cache_.end() && found->second.first.lock()==clip.media)return found->second.second;

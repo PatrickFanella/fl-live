@@ -51,7 +51,9 @@ ExportOutcome exportProjectWav(const QString& path, const SessionContent& conten
     std::array<fl_live::Command, fl_live::Engine::track_capacity> launch{}, halt{};
     const auto tracks = prepared.plan().tracks.size();
     for (std::size_t track = 0; track < tracks; ++track) {
-        launch[track] = {fl_live::CommandKind::launch, 0, track, 0};
+        const auto clip = track < options.clips.size() ? options.clips[track] : 0;
+        if (clip >= prepared.plan().tracks[track].clips.size()) throw std::runtime_error("Export clip does not exist");
+        launch[track] = {fl_live::CommandKind::launch, 0, track, clip};
         halt[track] = {fl_live::CommandKind::stop_track, end, track, 0};
     }
     if (tracks && (engine.scheduleTogether(std::span(launch).first(tracks)) != fl_live::ScheduleResult::accepted ||

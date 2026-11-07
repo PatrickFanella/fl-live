@@ -1,6 +1,6 @@
 # General Session tracks
 
-The desktop no longer stops at the two-track Pulse + Steps template. A project holds up to 64 tracks, each audio or MIDI, each with exactly one clip in this slice. New projects still open as the familiar template: one audio track with the built-in pulse and one MIDI track with the step pattern.
+The desktop no longer stops at the two-track Pulse + Steps template. A project holds up to 64 tracks, each audio or MIDI, each with one to eight [clips](#clips). New projects still open as the familiar template: one audio track with the built-in pulse and one MIDI track with the step pattern.
 
 ## Model and limits
 
@@ -13,7 +13,7 @@ The desktop no longer stops at the two-track Pulse + Steps template. A project h
 | MIDI clip | One 1–16 step pattern (enabled, pitch, velocity, gate per step; hidden steps retained) |
 | Audio clip | `pulse` (built-in decaying 110 Hz pulse), `empty` (silence until a WAV is imported) or `wav` (absolute path to an imported file) |
 
-`validateContent()` requires one content entry per track and clip, matching kinds, one clip per track and at least one scene. The engine and document limits still apply: 64 tracks, 256 scenes, 128-byte names. One clip per track is a limit of this desktop slice, not of the document model; additional clip slots per track remain open under #27/#31.
+`validateContent()` requires one content entry per track and clip, matching kinds, one to eight clips per track and at least one scene. The engine and document limits still apply: 64 tracks, 256 scenes, 128-byte names.
 
 Audio media is never embedded. A `wav` clip stores the absolute path it was imported from. Decoded samples are shared, immutable `AudioClip` copies, so history entries reference rather than copy them. All imported clips together must fit the preparation budget of 2^24 stored samples (about 2.9 minutes of stereo, or 5.8 minutes of mono, at 48 kHz); one import is limited to half of that.
 
@@ -22,6 +22,18 @@ Audio media is never embedded. A `wav` clip stores the absolute path it was impo
 **Add audio track** creates an empty audio track; **Add MIDI track** creates a MIDI track whose four steps start as rests. Both get level 70 percent and are not added to any scene. **Duplicate** copies the track's level, mixer settings, clip content and scene slots under fresh IDs, names it "NAME copy" and shares any imported audio. **Delete** removes the track, its clip and its scene slots. Each is one Undo step and also works while playing (see [playback edits](#playback-edits)); Undo restores the original IDs, and the ID high-water mark keeps retired IDs from being reused. Deleting every track leaves a valid empty project that can be saved, reopened and launched.
 
 Every track column shows its kind, clip source, level, pan, mute, solo, scene inclusion, launch/stop, and Duplicate/Delete. Columns sit in a horizontal strip that scrolls when they do not fit. The step editor below edits one MIDI clip at a time: **Edit pattern** on a MIDI track selects it. Choosing a pattern is view state, not an edit. When the edited track is deleted, the editor moves to the first remaining MIDI track, or shows a hint when there is none.
+
+## Clips
+
+A track holds one to eight clips (#27). The row under a track's clip button holds a selector, **+ Clip**, **Copy** and **Delete clip**.
+
+- The **selected clip** is what the track's controls act on: its launch button, source line, Import, Relink, range and waveform, scene inclusion, and the step editor or piano roll when the track's pattern is being edited. Selecting is view state, so it is not saved or undone. Reopening a project selects each track's first clip.
+- **+ Clip** adds a clip at the end of the track and selects it. A MIDI clip starts as rests, an audio clip empty.
+- **Copy** duplicates the selected clip, content included, under a new ID named "NAME copy". Imported audio is shared.
+- **Delete clip** removes the selected clip and the scene slots that used it, and selects the clip before it. A track keeps at least one clip; delete the track instead. If the deleted clip is playing, the track stops at the next block.
+- Each of these is one Undo step and also works while playing. Undo puts a deleted clip back in its place with its ID.
+- An import goes to the clip selected when it started, even if the selection changes before it finishes.
+- **Include in scene** puts the selected clip in the scene's slot for that track. Export plays each track's selected clip.
 
 ## WAV import
 

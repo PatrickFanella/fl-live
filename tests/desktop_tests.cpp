@@ -1904,6 +1904,74 @@ private slots:
         QVERIFY(reached.size()>=25);
         QVERIFY(ui.window->grabWindow().save("desktop-keyboard-journey.png"));
     }
+    // #27: several clips per track. The selected clip is what the track's
+    // controls act on; clip create, duplicate and delete are Undo steps and
+    // keep references valid.
+    void clipManagement() {
+        QTemporaryDir directory;Session session;
+        const auto pulse=session.trackIds()[0].toString(),steps=session.trackIds()[1].toString();
+        const auto firstSteps=session.clipIds()[1].toString(),firstPulse=session.clipIds()[0].toString();
+        const auto clips=[&](int t){QStringList r;for(const auto& c:session.trackClips()[t].toList())r.append(c.toMap()["id"].toString());return r;};
+        QCOMPARE(clips(1),(QStringList{firstSteps}));
+        // A new MIDI clip starts as rests, is selected, and the step editor follows it.
+        QVERIFY(session.addClip(steps));QCOMPARE(session.undoText(),QString("Undo track 2 new clip"));
+        const auto second=clips(1)[1];QCOMPARE(session.selectedClips()[1].toString(),second);QCOMPARE(session.clipIds()[1].toString(),second);
+        const auto rests=session.stepEnabled();QVERIFY(std::none_of(rests.begin(),rests.end(),[](const QVariant& v){return v.toBool();}));
+        session.setStepEnabled(0,true);session.setPitch(0,72);
+        QVERIFY(session.selectClip(firstSteps));QCOMPARE(session.pitches()[0].toInt(),60);QVERIFY(session.stepEnabled()[0].toBool());
+        QVERIFY(session.selectClip(second));QCOMPARE(session.pitches()[0].toInt(),72);
+        // Duplicate copies the content under a new ID and name.
+        QVERIFY(session.duplicateClip(second));const auto copy=clips(1)[2];
+        QCOMPARE(session.selectedClips()[1].toString(),copy);QCOMPARE(session.clipNames()[1].toString(),QString("Clip 2 copy"));QCOMPARE(session.pitches()[0].toInt(),72);
+        // The scene slot and the launch button use the selected clip.
+        QVERIFY(session.selectClip(second));QVERIFY(session.setSceneIncluded(steps,false));QVERIFY(session.setSceneIncluded(steps,true));
+        QVERIFY(session.launchScene(session.sceneId(),"immediate"));session.play();session.tick();
+        QCOMPARE(session.activeClipIds()[1].toString(),second);
+        // Deleting the playing clip while playing stops the track and drops its scene slot; selection moves to the previous clip.
+        QVERIFY(session.deleteClip(second));session.tick();session.tick();
+        QCOMPARE(session.activeClipIds()[1].toString(),QString{});QCOMPARE(session.selectedClips()[1].toString(),firstSteps);
+        QCOMPARE(session.sceneIncluded()[1].toBool(),false);QCOMPARE(clips(1),(QStringList{firstSteps,copy}));
+        session.undo();session.tick();QCOMPARE(clips(1),(QStringList{firstSteps,second,copy})); // back in its placeQVERIFY(session.selectClip(second));QCOMPARE(session.sceneIncluded()[1].toBool(),true);
+        session.stop();session.tick();
+        // Refusals: the last clip of a track, a ninth clip, unknown IDs.
+        QVERIFY(!session.deleteClip(firstPulse));QVERIFY(session.message().contains("at least one clip"));
+        for(int n=0;n<5;++n)QVERIFY(session.addClip(steps));
+        QVERIFY(!session.addClip(steps));QVERIFY(session.message().contains("8 clips"));QVERIFY(!session.duplicateClip(firstSteps));
+        QVERIFY(!session.deleteClip("999"));QVERIFY(!session.selectClip("999"));
+        for(int n=0;n<5;++n)session.undo();
+        // Audio: a second clip takes its own import; the import stays with the clip it started on.
+        const auto loop=directory.filePath("loop.wav");writeWav(loop,1,48000,std::vector<qint16>(4800,8000));
+        QVERIFY(session.addClip(pulse));const auto audio=clips(0)[1];QCOMPARE(session.trackSources()[0].toString(),QString("Empty · import a WAV"));
+        QVERIFY(session.importAudio(pulse,loop));QVERIFY(session.selectClip(firstPulse));QTRY_VERIFY(!session.importing());session.tick();
+        QCOMPARE(session.trackSources()[0].toString(),QString("Built-in pulse"));
+        QVERIFY(session.selectClip(audio));QVERIFY(session.trackSources()[0].toString().startsWith("loop.wav"));
+        // Export plays each track's selected clip.
+        QVERIFY(session.setMute(steps,true));
+        QVERIFY(session.exportAudio(directory.filePath("loop-clip.wav"),1,1,0,2,"float32"));QTRY_VERIFY(!session.exporting());
+        const auto w=readWav(directory.filePath("loop-clip.wav"));QCOMPARE(w.samples[0],0.7F*(8000.0F/32768.0F));
+        QVERIFY(session.selectClip(firstPulse));
+        QVERIFY(session.exportAudio(directory.filePath("pulse-clip.wav"),1,1,0,2,"float32"));QTRY_VERIFY(!session.exporting());
+        QVERIFY(readWav(directory.filePath("pulse-clip.wav")).samples!=w.samples);
+        // Save/Open keeps every clip and ID; selection is view state and starts at the first clip.
+        const auto path=directory.filePath("clips.json");QVERIFY(session.saveProject(path));
+        Session reopened;QVERIFY(reopened.loadProject(path));
+        QCOMPARE(reopened.trackClips(),session.trackClips());QCOMPARE(reopened.selectedClips()[0].toString(),firstPulse);
+    }
+    void qmlClipManagement() {
+        Session session;QmlUi ui(session);QVERIFY(ui.window && QTest::qWaitForWindowExposed(ui.window));
+        QVERIFY(!ui.item("clipSelector1")->property("enabled").toBool());QVERIFY(!ui.item("deleteClip1")->property("enabled").toBool());
+        ui.click("addClip1");QTRY_COMPARE(session.trackClips()[1].toList().size(),2);
+        QCOMPARE(ui.item("clipSelector1")->property("currentIndex").toInt(),1);QVERIFY(ui.item("deleteClip1")->property("enabled").toBool());
+        ui.keys("clipSelector1",Qt::Key_Up,1);QTRY_COMPARE(session.selectedClips()[1],session.trackClips()[1].toList()[0].toMap()["id"]);
+        QCOMPARE(ui.item("clip1")->property("text").toString().contains("Pattern")||ui.item("clip1")->property("text").toString().contains("Step pattern"),true);
+        ui.click("duplicateClip1");QTRY_COMPARE(session.trackClips()[1].toList().size(),3);
+        ui.click("deleteClip1");QTRY_COMPARE(session.trackClips()[1].toList().size(),2);
+        ui.click("undoButton");QTRY_COMPARE(session.trackClips()[1].toList().size(),3);
+        ui.click("clip1");ui.click("playButton");QTRY_VERIFY(session.running());
+        QTRY_COMPARE(session.activeClipIds()[1],session.selectedClips()[1]); // the launch button plays the selected clip
+        QVERIFY(ui.item("clip1")->property("highlighted").toBool());
+        ui.click("stopButton");QTRY_VERIFY(!session.running());
+    }
     void qmlRelinkMissingAudio() {
         QTemporaryDir root;const auto audio=root.filePath("a.wav"),project=root.filePath("p.json");
         std::vector<qint16> tone(4800);for(std::size_t i=0;i<tone.size();++i)tone[i]=static_cast<qint16>(i%300*50);
