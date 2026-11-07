@@ -23,9 +23,12 @@ private:
     Frame denominator_;
 };
 
+// Source-rate samples; no resampling. One channel, or two interleaved as
+// left/right. Frame count is samples.size() / channels.
 struct AudioClip {
-    std::vector<float> samples; // mono, at the session's rate; no resampling
+    std::vector<float> samples;
     bool loop = true;
+    std::uint32_t channels = 1;
 };
 struct Note {
     Frame start;
@@ -39,9 +42,14 @@ struct MidiClip {
     bool loop = true;
 };
 using Clip = std::variant<AudioClip, MidiClip>;
+// Balance pan law, pan in [-1,1]: the far channel is attenuated linearly and
+// the near channel stays at unity, so center is 0 dB on both channels. Mono
+// sources and the MIDI instrument feed both channels; stereo sources keep
+// their left/right channels.
 struct Track {
     float gain = 1.0F;
     std::vector<Clip> clips;
+    float pan = 0.0F;
 };
 struct SessionPlan {
     std::uint32_t sample_rate = 48000;
@@ -75,6 +83,7 @@ public:
     static constexpr std::size_t clips_per_track_capacity = 64;
     static constexpr std::size_t notes_per_clip_capacity = 1024;
     static constexpr std::size_t voices_per_track = 16;
+    static constexpr std::size_t max_output_channels = 2;
     explicit Engine(const SessionPlan& plan);
     Engine(SessionPlan&&) = delete;
     void start() noexcept;
@@ -84,7 +93,12 @@ public:
     // All commands share one sample. Admission is all-or-nothing, including
     // capacity and validation. Insert before later events, after existing ties.
     [[nodiscard]] ScheduleResult scheduleTogether(std::span<const Command> commands) noexcept;
+    // Mono output is the explicit (left + right) / 2 downmix of the stereo mix.
     void process(std::span<float> mono_output) noexcept;
+    // One channel (mono downmix) or two interleaved left/right channels. Any
+    // other channel count, or a buffer that is not whole frames, is silenced
+    // without advancing the playhead or applying commands; returns false.
+    [[nodiscard]] bool process(std::span<float> output, std::size_t channels) noexcept;
     [[nodiscard]] Frame position() const noexcept { return position_; }
     [[nodiscard]] bool running() const noexcept { return running_; }
     [[nodiscard]] std::size_t active_voices() const noexcept;
@@ -106,7 +120,8 @@ private:
     Frame position_ = 0;
     bool running_ = false;
     void apply(const Command& command) noexcept;
-    [[nodiscard]] float render_track(std::size_t index) noexcept;
+    struct StereoSample { float left = 0; float right = 0; };
+    [[nodiscard]] StereoSample render_track(std::size_t index) noexcept;
 };
 struct CommandBatch {
     std::array<Command, Engine::track_capacity> commands{};

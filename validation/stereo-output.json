@@ -1,0 +1,137 @@
+{
+  "verified_at": "2026-11-07T06:41:35.776316+00:00",
+  "base": "673ee1e73aa2416cb934dd2933ab3f6d9dbfa120",
+  "issues": [
+    32
+  ],
+  "scope": "Stereo engine mix with balance-law pan, explicit mono downmix and mono or FL/FR PipeWire output",
+  "environment": "Kvant, pinned CI image (archlinux base-devel digest 2acfa268, package snapshot 2026-10-20; Qt 6.12.0, PipeWire 1.6.9, libsndfile 1.2.2), docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 17,
+      "total": 17
+    },
+    "release": {
+      "passed": 6,
+      "total": 6
+    },
+    "engine-only": {
+      "passed": 5,
+      "total": 5
+    },
+    "pipewire-sanitize": {
+      "passed": 14,
+      "total": 14
+    },
+    "document-io-sanitize": {
+      "passed": 7,
+      "total": 7
+    }
+  },
+  "other_checks": [
+    "git diff --check passed",
+    "No compiler warnings in desktop or release builds of changed files"
+  ],
+  "verified_behaviors": [
+    "Interleaved stereo source keeps left/right; mono source and MIDI instrument feed both channels",
+    "Balance pan law: center unity on both channels, pan +0.5 halves only the left channel, pan -1/+1 silences only the far channel",
+    "Launch, MIDI replacement and stop land on the same frames at blocks 1/64/128/257/512 frames; output identical across blocks",
+    "Mono output equals (left + right) / 2 of the stereo render, so centered mono projects render as before",
+    "Partial stereo frames and unsupported channel counts render silence, apply no commands and do not advance the playhead; the controller does not drain controls",
+    "Zero intercepted C++ allocations in stereo and mono process paths under test",
+    "Invalid channel counts, partial interleaved frames and out-of-range or NaN pan are rejected at preparation",
+    "Private PipeWire graph: FL/FR ports link to matching capture ports and every captured frame matches the authored distinct left/right values at quanta 257 and 1024",
+    "A three-channel backend request is refused before readiness"
+  ],
+  "private_graph_observations": [
+    {
+      "passed": true,
+      "scope": "private software graph stereo routing; no hardware",
+      "requested_quantum": 257,
+      "channels": 2,
+      "links": [
+        [
+          "fl-live-output:output_FL",
+          "fixture-capture:input_FL"
+        ],
+        [
+          "fl-live-output:output_FR",
+          "fixture-capture:input_FR"
+        ]
+      ],
+      "captured_frames": 24000,
+      "capture_returncode": 1,
+      "silent_prefix": 1028,
+      "link_lag_frames": 514,
+      "first_source_frame": 5,
+      "playback": {
+        "callbacks": 560,
+        "frames": 143920,
+        "bad_buffers": 0,
+        "max_process_ns": 57100,
+        "processing_over_budget": 0,
+        "error": 0,
+        "min_render_frames": 257,
+        "max_render_frames": 257,
+        "position": 143663,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "unsupported_channels_refused": 3,
+      "capture_sha256": "a783c40c51c140460e5b8b0e346340c6f2af42fed252ef0adca431710a86ab65"
+    },
+    {
+      "passed": true,
+      "scope": "private software graph stereo routing; no hardware",
+      "requested_quantum": 1024,
+      "channels": 2,
+      "links": [
+        [
+          "fl-live-output:output_FL",
+          "fixture-capture:input_FL"
+        ],
+        [
+          "fl-live-output:output_FR",
+          "fixture-capture:input_FR"
+        ]
+      ],
+      "captured_frames": 24000,
+      "capture_returncode": 1,
+      "silent_prefix": 2048,
+      "link_lag_frames": 0,
+      "first_source_frame": 0,
+      "playback": {
+        "callbacks": 141,
+        "frames": 144384,
+        "bad_buffers": 0,
+        "max_process_ns": 448822,
+        "processing_over_budget": 0,
+        "error": 0,
+        "min_render_frames": 1024,
+        "max_render_frames": 1024,
+        "position": 143360,
+        "running": false,
+        "handled_serial": 2,
+        "rejected": 0
+      },
+      "unsupported_channels_refused": 3,
+      "capture_sha256": "96bc0f82d24c81cfd1bcb9e17da59c0fdf743a079bc6469ac5a0d07136c36f1d"
+    }
+  ],
+  "findings": [
+    "The two capture links are created sequentially; at quantum 257 the second channel started one quantum (257 frames) after the first in every observed run. At quantum 1024 no lag was observed. The check bounds this at four quanta and requires exact silence before each channel starts.",
+    "The existing mono pipewire-private-graph test failed once with a 128-frame capture gap at the default quantum and passed on rerun without code changes; this is a known bounded capture interruption, not a stereo regression."
+  ],
+  "source_sha256": {
+    "include/fl_live/engine.hpp": "fb1911620ddb627ecf99f5da3e7b9f138ccd6b4ade7e632349958ea749019dd2",
+    "src/engine.cpp": "12fe567ad83537ac9ef47710793daa148010ef480d6674c3f071843429638dc1",
+    "include/fl_live/controller.hpp": "f4b3fba697663a6db18508cc33a35d4fab81dd9da569b817d0ec342b85735f71",
+    "include/fl_live/pipewire_backend.hpp": "d70fb5cb0b7cad1f122978e2011cebe37dddcc1bc25eba46a2ce928e813b9c52",
+    "src/pipewire_backend.cpp": "95427840868325c32d3a891c0790aa3057f24519cb648e5d383ace922e23ab5e",
+    "apps/play.cpp": "205721fa31b639193eefe0fad4e305014755c98a49ea510289bdc50c01daaf06",
+    "tests/engine_tests.cpp": "084deff757a608f626ada9e1465a810faeb17fc7c8cecfe583093d1122afd3db",
+    "tests/pipewire_integration.py": "edec2fc25bb9d1f527d073f9e438ea0db45782194cc42e6ef06571d9cda5dc7c"
+  },
+  "limits": "Offline and private software-graph results only. The desktop still renders the mono downmix; desktop pan controls are #34. Hardware output, physical channel order, latency, xruns and native Wayland remain unqualified."
+}

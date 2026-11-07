@@ -102,7 +102,11 @@ parser.add_argument("--live-probe")
 parser.add_argument("--no-quantum-changes", action="store_true")
 parser.add_argument("--reference-producer", action="store_true")
 parser.add_argument("--pause-capture-during-changes", action="store_true")
+parser.add_argument("--channels", type=int, default=1, choices=[1, 2])
 args = parser.parse_args()
+if args.channels == 2 and (args.live_probe or args.desktop_probe or args.quantum > 8192):
+    parser.error("stereo routing check uses fl-live-play only, at a renderable quantum")
+CHANNEL_MAP = "FL,FR" if args.channels == 2 else "MONO"
 if args.live_probe and (args.quantum != 257 or args.desktop_probe):
     parser.error("live probe requires --quantum 257 and no desktop probe")
 if args.no_quantum_changes and not args.live_probe:
@@ -180,7 +184,8 @@ context.objects = [
             server = subprocess.Popen(["pipewire", "-c", str(configuration)], env=env,
                                       stdout=server_log, stderr=server_log)
             until(lambda: (root / remote).exists() if server.poll() is None else False)
-            command = [args.live_probe, remote] if args.live_probe else [binary, "--remote", remote, "--group", "pipewire.test", "--duration-ms", "3000"]
+            command = [args.live_probe, remote] if args.live_probe else [binary, "--remote", remote, "--group", "pipewire.test", "--duration-ms", "3000",
+                                                                       "--channels", str(args.channels)]
             if args.no_quantum_changes:
                 command.append("--fixed")
             player = subprocess.Popen(command, env=env, stdin=subprocess.PIPE,
@@ -200,12 +205,12 @@ context.objects = [
                     "{ node.name = fixture-reference node.group = pipewire.test node.always-process = true }",
                     str(source)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             capture = subprocess.Popen(["pw-cat", "--remote", remote, "--record", "--raw", "--format", "f32",
-                "--rate", "48000", "--channels", "1", "--channel-map", "MONO", "--target", "0",
+                "--rate", "48000", "--channels", str(args.channels), "--channel-map", CHANNEL_MAP, "--target", "0",
                 "--sample-count", "72000" if args.live_probe else "24000", "--properties",
                 "{ node.name = fixture-capture node.group = pipewire.test node.always-process = true }", "-"],
                 env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-            def configure_node(name, direction):
+            def configure_node(name, direction, channels=1):
                 snapshot = subprocess.run(["pw-dump", "--remote", remote], env=env,
                                           capture_output=True, text=True, timeout=2)
                 assert snapshot.returncode == 0, snapshot.stderr
@@ -216,16 +221,17 @@ context.objects = [
                 # Explicitly perform the port setup normally supplied by a
                 # session manager. Only nodes in this private daemon are touched.
                 parameter = ("{ direction = " + direction + " mode = dsp format = { mediaType = audio "
-                             "mediaSubtype = raw format = F32 rate = 48000 channels = 1 position = [ MONO ] } }")
+                             f"mediaSubtype = raw format = F32 rate = 48000 channels = {channels} "
+                             f"position = [ {'FL FR' if channels == 2 else 'MONO'} ] }} }}")
                 result = subprocess.run(["pw-cli", "--remote", remote, "set-param", str(node["id"]),
                                          "PortConfig", parameter], env=env, capture_output=True, text=True, timeout=2)
                 assert result.returncode == 0, result.stderr
                 return True
 
-            until(lambda: configure_node("fl-live-output", "Output"))
+            until(lambda: configure_node("fl-live-output", "Output", args.channels))
             if args.reference_producer:
                 until(lambda: configure_node("fixture-reference", "Output"))
-            until(lambda: configure_node("fixture-capture", "Input"))
+            until(lambda: configure_node("fixture-capture", "Input", args.channels))
 
             def port(direction, prefix):
                 command = subprocess.run(["pw-link", "--remote", remote, direction], env=env,
@@ -233,10 +239,21 @@ context.objects = [
                 assert command.returncode == 0, command.stderr
                 return next((line.strip() for line in command.stdout.splitlines() if line.startswith(prefix)), None)
 
-            output_port = until(lambda: port("--output", "fixture-reference:" if args.reference_producer else "fl-live-output:"))
-            input_port = until(lambda: port("--input", "fixture-capture:"))
-            subprocess.run(["pw-link", "--remote", remote, output_port, input_port], env=env,
-                           check=True, capture_output=True, timeout=2)
+            if args.channels == 2:
+                # Link each named channel to the same capture channel; a swap
+                # or a missing link changes the independently checked samples.
+                stereo_links = []
+                for channel in ("FL", "FR"):
+                    output_port = until(lambda: port("--output", f"fl-live-output:output_{channel}"))
+                    input_port = until(lambda: port("--input", f"fixture-capture:input_{channel}"))
+                    subprocess.run(["pw-link", "--remote", remote, output_port, input_port], env=env,
+                                   check=True, capture_output=True, timeout=2)
+                    stereo_links.append([output_port, input_port])
+            else:
+                output_port = until(lambda: port("--output", "fixture-reference:" if args.reference_producer else "fl-live-output:"))
+                input_port = until(lambda: port("--input", "fixture-capture:"))
+                subprocess.run(["pw-link", "--remote", remote, output_port, input_port], env=env,
+                               check=True, capture_output=True, timeout=2)
             transitions = []
             prefix = b""
             capture_result = None
@@ -284,6 +301,44 @@ context.objects = [
             # https://github.com/PipeWire/pipewire/blob/1.6.9/src/tools/pw-cat.c
             assert capture.returncode in (0, 1) and not errors, (capture.returncode, len(data), errors.decode())
             capture_code = capture.returncode
+            if args.channels == 2:
+                # pw-cat counts frames; each stereo frame is FL then FR.
+                assert len(data) == 24000 * 2 * 4, (len(data), errors.decode())
+                frames = struct.unpack("<48000f", data)
+                left, right = frames[0::2], frames[1::2]
+                expected_left = (0.0625, 0.125, 0.1875, 0.25, -0.0625, -0.125, -0.1875, -0.25)
+                expected_right = (0.03125, -0.03125, 0.09375, -0.09375, 0.15625, -0.15625, 0.21875, -0.21875)
+                # The FL and FR links are created one after the other, so the
+                # later link may start a few quanta late. Before its start that
+                # channel must be exactly silent; afterwards both channels must
+                # match the authored frames at one shared offset.
+                left_start = next(i for i, value in enumerate(left) if value != 0)
+                right_start = next(i for i, value in enumerate(right) if value != 0)
+                link_lag = abs(right_start - left_start)
+                assert link_lag <= 4 * args.quantum, (left_start, right_start)
+                first = max(left_start, right_start)
+                offset = expected_left.index(left[first])
+                assert len(left) - first >= 20000, "insufficient engine audio captured"
+                assert all(value == 0 for value in left[:left_start] + right[:right_start]), "unexpected pre-link samples"
+                mismatches = [(i + first, l, r) for i, (l, r) in enumerate(zip(left[first:], right[first:]))
+                              if l != expected_left[(i + offset) % 8] or r != expected_right[(i + offset) % 8]]
+                assert not mismatches, ("stereo capture differs from authored channels", len(mismatches), mismatches[:8])
+                remaining, errors = player.communicate(timeout=4)
+                assert player.returncode == 0, (remaining, errors)
+                stats = json.loads(remaining.strip())
+                assert stats["callbacks"] > 0 and stats["frames"] >= 24000 and stats["error"] == 0, stats
+                assert stats["bad_buffers"] == stats["rejected"] == 0 and stats["handled_serial"] == 2 and not stats["running"], stats
+                assert stats["min_render_frames"] == stats["max_render_frames"] == args.quantum, stats
+                refused = subprocess.run([binary, "--remote", remote, "--channels", "3", "--duration-ms", "100"], env=env,
+                                         capture_output=True, text=True, timeout=5)
+                assert refused.returncode != 0 and "ready" not in refused.stdout, (refused.stdout, refused.stderr)
+                assert "one (MONO) or two (FL/FR)" in refused.stderr, refused.stderr
+                print(json.dumps(dict(passed=True, scope="private software graph stereo routing; no hardware",
+                                      requested_quantum=args.quantum, channels=2, links=stereo_links,
+                                      captured_frames=len(left), capture_returncode=capture_code, silent_prefix=first, link_lag_frames=link_lag,
+                                      first_source_frame=offset, playback=stats, unsupported_channels_refused=3,
+                                      capture_sha256=hashlib.sha256(data).hexdigest())))
+                sys.exit(0)  # finally reaps the owned capture/player/server
             sample_count = 72000 if args.live_probe else 24000
             assert len(data) == sample_count * 4, (len(data), errors.decode())
             values = struct.unpack(f"<{sample_count}f", data)

@@ -10,7 +10,9 @@ struct PipeWireConfig {
     std::string node_group;
     bool autoconnect = false;
     std::uint32_t sample_rate = 48000;
+    std::uint32_t channels = 1; // 1 = MONO downmix, 2 = interleaved FL/FR; others are refused
 };
+// Frame counts are per channel: one stereo frame is two samples.
 struct BackendStatus {
     int state;
     int error;

@@ -17,16 +17,26 @@ int main(int argc, char** argv) {
             if (option == "--remote") config.remote = value;
             else if (option == "--target") { config.target = value; config.autoconnect = true; }
             else if (option == "--group") config.node_group = value;
+            else if (option == "--channels") {
+                // Parse any small count; the backend owns the supported-layout refusal.
+                const auto parsed = std::from_chars(value.data(), value.data() + value.size(), config.channels);
+                if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || config.channels > 64)
+                    throw std::invalid_argument("channels must be a number up to 64");
+            }
             else if (option == "--duration-ms") {
                 const auto parsed = std::from_chars(value.data(), value.data() + value.size(), duration_ms);
                 if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || duration_ms < 100 || duration_ms > 60000)
                     throw std::invalid_argument("duration must be 100..60000 milliseconds");
             } else throw std::invalid_argument("unknown option");
         }
-        if (config.remote.empty()) throw std::invalid_argument("usage: fl-live-play --remote NAME [--target NODE] [--duration-ms N] [--group NAME]");
+        if (config.remote.empty()) throw std::invalid_argument("usage: fl-live-play --remote NAME [--target NODE] [--duration-ms N] [--group NAME] [--channels 1|2]");
         // Quiet, deterministic authored fixture; no file decoding on RT thread.
-        const fl_live::SessionPlan plan{48000, 120000,
-            {{1, {fl_live::AudioClip{{0.0625F, 0.125F, 0.1875F, 0.25F, -0.0625F, -0.125F, -0.1875F, -0.25F}, true}}}}};
+        // Mono output keeps the original eight-frame loop. Stereo uses the same
+        // left channel and a distinct right channel, so a swap is detectable.
+        const fl_live::AudioClip mono{{0.0625F, 0.125F, 0.1875F, 0.25F, -0.0625F, -0.125F, -0.1875F, -0.25F}, true};
+        const fl_live::AudioClip stereo{{0.0625F, 0.03125F, 0.125F, -0.03125F, 0.1875F, 0.09375F, 0.25F, -0.09375F,
+            -0.0625F, 0.15625F, -0.125F, -0.15625F, -0.1875F, 0.21875F, -0.25F, -0.21875F}, true, 2};
+        const fl_live::SessionPlan plan{48000, 120000, {{1, {config.channels == 2 ? stereo : mono}}}};
         fl_live::RenderController controller(plan);
         if (!controller.submit({fl_live::ControlKind::start, {}, 1}) ||
             !controller.submit({fl_live::ControlKind::schedule, {fl_live::CommandKind::launch, 0, 0, 0}, 2}))

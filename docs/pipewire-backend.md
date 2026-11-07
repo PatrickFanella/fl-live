@@ -1,6 +1,6 @@
 # PipeWire output and control handoff
 
-This is an optional Linux backend for the prepared mono engine. The initial qualification baseline is PipeWire 1.6.9. It is not a complete audio-device manager or a usable DAW interface.
+This is an optional Linux backend for the prepared engine, with mono or stereo output. The initial qualification baseline is PipeWire 1.6.9. It is not a complete audio-device manager or a usable DAW interface.
 
 ## Ownership and bounded commands
 
@@ -16,7 +16,7 @@ The backend owns the PipeWire control loop, context/core and stream. Shutdown st
 
 The remote name is explicit. There is no silent fallback to the desktop server. A named target enables autoconnection; otherwise port setup/linking belongs to a session manager or explicit host/test configuration. The optional group property is used by the isolated test driver, not imposed on all production streams.
 
-The stream requests mono native-endian F32 at the prepared plan's sample rate. A mismatched configured/negotiated rate or format fails rather than changing playback speed. The backend does not implement transparent live sample-rate adaptation. Quantum changes up to 8,192 frames are accepted by the engine API; larger buffers are rejected with an empty chunk/error rather than an unbounded buffer clear. This maximum is a policy, not evidence that every smaller quantum/rate transition has been measured.
+The stream requests native-endian F32 at the prepared plan's sample rate, with either one `MONO` channel (the engine's downmix) or two interleaved `FL`/`FR` channels selected by `PipeWireConfig::channels`. Other channel counts are refused before connecting. A mismatched configured/negotiated rate, format or channel count fails rather than changing playback speed. The backend does not implement transparent live sample-rate adaptation. Quantum changes up to 8,192 frames (per channel) are accepted by the engine API; larger buffers are rejected with an empty chunk/error rather than an unbounded buffer clear. This maximum is a policy, not evidence that every smaller quantum/rate transition has been measured.
 
 The data callback dequeues mapped buffers, invokes the controller, sets chunk size/stride and returns the buffer. Error counters, callback/frame counts, maximum measured process duration and duration-over-budget count are exposed. Those duration counts are not PipeWire graph xrun counters and do not establish end-to-end latency. No user logging, file I/O, asset destruction or unbounded command draining occurs there.
 
@@ -25,6 +25,8 @@ Backend errors now stay latched until teardown/reconnect. Oversized callbacks re
 ## Qualification
 
 The private integration test starts its own server with a dummy driver and no hardware/session-manager modules. It explicitly configures and links only owned nodes. An independent pw-cat capture receives 24,000 frames and checks every sample of the authored repeating waveform after a measured startup-silence prefix. The test requires at least 20,000 non-silent samples. The prefix is retained as a finding, not treated as measured physical latency.
+
+The stereo variant (`pipewire-stereo-257` and `pipewire-stereo-1024`) links `output_FL`/`output_FR` to the matching capture ports and checks every captured frame of a two-channel authored source with distinct left and right values, so a channel swap or missing link fails. The links are created one after the other; the later channel may start up to four quanta late (257 frames observed at quantum 257), must be exactly silent before it starts, and both channels must then match at one shared source offset. The same test checks that a three-channel request is refused before readiness.
 
 A second client processes actual samples before that owned server is terminated. The app reports server loss, exits nonzero and publishes stopped state. Missing-server startup also fails without readiness. Every owned process is reaped; no pre-existing server is stopped or reconfigured.
 

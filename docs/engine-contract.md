@@ -4,11 +4,17 @@ This is an original product policy for the first implementation, not an assertio
 
 ## Scope and validation
 
-The prepared SessionPlan contains mono audio at the session sample rate and/or MIDI note clips. Construction validates the plan before rendering. Supported sample rates are 8,000–384,000 Hz and tempos 20–300 BPM in thousandths of a BPM. The meter is 4/4. There are at most 64 tracks and 64 clips per track in this slice. These are explicit implementation limits, not a fixed final product scope.
+The prepared SessionPlan contains mono or interleaved stereo audio at the session sample rate and/or MIDI note clips. Construction validates the plan before rendering. Supported sample rates are 8,000–384,000 Hz and tempos 20–300 BPM in thousandths of a BPM. The meter is 4/4. There are at most 64 tracks and 64 clips per track in this slice. These are explicit implementation limits, not a fixed final product scope.
 
-Audio clips contain nonempty finite sample arrays. MIDI clips have positive length, at most 1,024 sorted notes and no more than 16 simultaneous notes. Durations are positive and half-open, contained within the clip. Velocity is finite in [0,1]. Gain is finite in [0,4]. Track mixing is floating-point and unclipped in the core. The PCM16 example enables clipping in its file writer.
+Audio clips have one or two channels and contain nonempty arrays of whole frames of finite samples; stereo samples are interleaved left/right. MIDI clips have positive length, at most 1,024 sorted notes and no more than 16 simultaneous notes. Durations are positive and half-open, contained within the clip. Velocity is finite in [0,1]. Gain is finite in [0,4] and pan finite in [-1,1]. Track mixing is floating-point and unclipped in the core. The PCM16 example enables clipping in its file writer.
 
-There is no decoding, resampling, warping, stereo routing, dynamic tempo change, plugin, external MIDI output or envelope smoothing in this slice. The sine instrument is a testable authored sound source, not a production synth. It has no anti-aliasing or amplitude envelope.
+There is no decoding, resampling, warping, surround or arbitrary channel routing, dynamic tempo change, plugin, external MIDI output or envelope smoothing in this slice. The sine instrument is a testable authored sound source, not a production synth. It has no anti-aliasing or amplitude envelope.
+
+## Channels and pan
+
+The engine mixes two channels internally. Each track uses a balance pan law: the far channel is attenuated linearly with `|pan|` and the near channel stays at unity, so center pan is 0 dB on both channels and pan ±1 silences only the far channel. A mono source and the MIDI instrument feed both channels before pan. A stereo source keeps its left and right channels. This is a declared product policy, not a constant-power law and not a claim about any reference product.
+
+`process(output, 2)` writes interleaved left/right frames. `process(output, 1)` and the original `process(output)` write the explicit `(left + right) / 2` downmix, which is identical to the previous mono output for centered mono sources. Any other channel count, or a buffer that is not a whole number of frames, is filled with silence, applies no commands, does not advance the playhead and returns false. RenderController applies the same refusal before draining controls.
 
 ## Timing
 
@@ -30,7 +36,7 @@ All engine operations belong to one rendering owner and occur at block boundarie
 
 ## Acceptance evidence
 
-`engine-contracts` checks 120,000 rational bar-boundary examples with an independent closed-form oracle, audio scheduling with block sizes 1/64/128/257/512/4096, MIDI duration/loop/replacement/stop, queue overflow/order/wrap and invalid plans. It remains active in optimized builds; it does not depend on disabled C assert macros.
+`engine-contracts` checks 120,000 rational bar-boundary examples with an independent closed-form oracle, audio scheduling with block sizes 1/64/128/257/512/4096, stereo source routing, the balance pan law, MIDI pan and the mono downmix at frame blocks 1/64/128/257/512, refused channel layouts, MIDI duration/loop/replacement/stop, queue overflow/order/wrap and invalid plans. It remains active in optimized builds; it does not depend on disabled C assert macros.
 
 `render-roundtrip` invokes the real command, opens each WAV independently with Python's standard wave reader, checks format/frame count/silent boundaries, compares decoded PCM across five block sizes and verifies existing output is preserved. This qualifies a finite offline output journey on the recorded machine, not live audio or GUI operation.
 

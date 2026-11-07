@@ -176,6 +176,95 @@ void validation_contract() {
     invalid([&] { Engine engine(plan); });
     plan.tracks[0].clips[0] = AudioClip{};
     invalid([&] { Engine engine(plan); });
+    plan.tracks[0].clips[0] = AudioClip{{1, 2, 3}, true, 2};
+    invalid([&] { Engine engine(plan); });
+    for (auto channels : {0U, 3U}) {
+        plan.tracks[0].clips[0] = AudioClip{{1, 2, 3, 4, 5, 6}, true, channels};
+        invalid([&] { Engine engine(plan); });
+    }
+    plan.tracks[0].clips[0] = AudioClip{{1}, true};
+    for (auto pan : {-1.01F, 1.01F, std::numeric_limits<float>::quiet_NaN()}) {
+        plan.tracks[0].pan = pan;
+        invalid([&] { Engine engine(plan); });
+    }
+}
+std::vector<float> render_channels(const SessionPlan& plan, std::span<const Command> commands,
+                                   std::size_t block_frames, std::size_t frames, std::size_t channels) {
+    Engine engine(plan);
+    for (auto c : commands) require(engine.schedule(c) == ScheduleResult::accepted, "schedule failed");
+    std::vector<float> output(frames * channels);
+    engine.start();
+    for (std::size_t at = 0; at < frames; at += block_frames) {
+        const auto count = std::min(block_frames, frames - at);
+        const auto before = render_allocations;
+        watch_allocations = true;
+        const bool rendered = engine.process(std::span(output).subspan(at * channels, count * channels), channels);
+        watch_allocations = false;
+        require(rendered, "supported layout refused");
+        require(render_allocations == before, "allocation in multichannel process");
+    }
+    require(engine.position() == frames, "multichannel playhead must advance by frames");
+    return output;
+}
+void stereo_contract() {
+    // Track 0: interleaved stereo source at center. Track 1: mono source panned
+    // half right, so only its left channel is attenuated (balance law).
+    SessionPlan plan;
+    plan.tracks.push_back(Track{0.5F, {AudioClip{{1, -1, 2, -2, 3, -3}, true, 2}}});
+    plan.tracks.push_back(Track{0.25F, {AudioClip{{4, 8}, true}, MidiClip{96, {{0, 48, 69, 1}}, true}}, 0.5F});
+    const std::array commands{Command{CommandKind::launch, 7, 0, 0}, Command{CommandKind::launch, 7, 1, 0},
+        Command{CommandKind::launch, 300, 1, 1}, Command{CommandKind::stop_track, 401, 0}, Command{CommandKind::stop_track, 401, 1}};
+    constexpr std::size_t frames = 512;
+    const auto baseline = render_channels(plan, commands, 1, frames, 2);
+    for (std::size_t i = 0; i < 300; ++i) {
+        const auto age = i - 7;
+        const float left = i < 7 ? 0 : 0.5F * static_cast<float>(age % 3 + 1) + 0.125F * (age % 2 ? 8.0F : 4.0F);
+        const float right = i < 7 ? 0 : -0.5F * static_cast<float>(age % 3 + 1) + 0.25F * (age % 2 ? 8.0F : 4.0F);
+        require(baseline[2 * i] == left && baseline[2 * i + 1] == right, "stereo routing or pan law wrong");
+    }
+    for (std::size_t i = 300; i < 401; ++i) {
+        // MIDI replacement on track 1: both channels carry the instrument, the
+        // left one at half level; track 0 keeps its stereo source.
+        const auto age = i - 7;
+        const float source_left = 0.5F * static_cast<float>(age % 3 + 1), source_right = -source_left;
+        const float midi_left = baseline[2 * i] - source_left, midi_right = baseline[2 * i + 1] - source_right;
+        require(std::abs(midi_left - midi_right / 2) < 1e-6F, "MIDI instrument pan mismatch");
+        if (i - 300 >= 1 && i - 300 < 48) require(midi_right != 0, "MIDI note missing from right channel");
+        if (i - 300 >= 48 && i - 300 < 96) require(std::abs(midi_right) < 1e-6F, "MIDI note outlived its duration");
+    }
+    require(std::all_of(baseline.begin() + 2 * 401, baseline.end(), [](float x) { return x == 0; }), "stereo stop left output");
+    for (auto block : {64U, 128U, 257U, 512U})
+        require(render_channels(plan, commands, block, frames, 2) == baseline, "stereo output differs by block size");
+    for (auto block : {1U, 257U}) {
+        const auto mono = render_channels(plan, commands, block, frames, 1);
+        for (std::size_t i = 0; i < frames; ++i)
+            require(mono[i] == (baseline[2 * i] + baseline[2 * i + 1]) / 2, "mono is not the declared downmix");
+    }
+    auto hard = plan;
+    hard.tracks[0].pan = -1;
+    hard.tracks[1].pan = 1;
+    const auto extremes = render_channels(hard, std::span(commands).first(2), 257, 64, 2);
+    for (std::size_t i = 7; i < 64; ++i) {
+        const auto age = i - 7;
+        require(extremes[2 * i] == 0.5F * static_cast<float>(age % 3 + 1) && extremes[2 * i + 1] == 0.25F * (age % 2 ? 8.0F : 4.0F),
+                "hard pan must silence only the far channel");
+    }
+    // Unsupported layouts fail safely: silence, no command application, no advance.
+    Engine engine(plan);
+    require(engine.schedule(commands[0]) == ScheduleResult::accepted, "schedule failed");
+    engine.start();
+    std::array<float, 9> odd{};
+    odd.fill(7);
+    require(!engine.process(std::span(odd).first(5), 2) && engine.position() == 0, "partial stereo frame accepted");
+    require(!engine.process(odd, 3) && engine.position() == 0, "unsupported channel count accepted");
+    require(std::all_of(odd.begin(), odd.end(), [](float x) { return x == 0; }), "refused layout must be silent");
+    RenderController controller(plan);
+    (void)controller.submit({ControlKind::start, {}, 1});
+    std::array<float, 6> out{};
+    controller.process(out, 3);
+    require(controller.status().handled_serial == 0 && !controller.status().running, "refused layout consumed controls");
+    controller.process(out, 2);
+    require(controller.status().handled_serial == 1 && controller.status().position == 3, "stereo controller frames");
 }
 void controller_allocation_contract() {
     const auto plan = audio_plan();
@@ -205,8 +294,9 @@ void controller_allocation_contract() {
 }
 int main() {
     try {
-        grid_contract(); audio_contract(); midi_contract(); queue_contract(); validation_contract(); controller_allocation_contract();
-        std::cout << "PASS: grid, audio, MIDI, command bounds, validation; process allocations=" << render_allocations << '\n';
+        grid_contract(); audio_contract(); midi_contract(); stereo_contract(); queue_contract(); validation_contract();
+        controller_allocation_contract();
+        std::cout << "PASS: grid, audio, MIDI, stereo/pan, command bounds, validation; process allocations=" << render_allocations << '\n';
         return 0;
     } catch (const std::exception& e) {
         watch_allocations = false;

@@ -57,8 +57,15 @@ public:
     [[nodiscard]] std::uint32_t sample_rate() const noexcept { return sample_rate_; }
     bool submit(Control control) noexcept { return queue_.push(control); }
     void panic() noexcept { panic_.store(true); } // out-of-band, even when queue is full
-    void process(std::span<float> output) noexcept {
+    // channels is 1 (mono downmix) or 2 (interleaved left/right). Unsupported
+    // layouts render silence and apply no commands; see Engine::process.
+    void process(std::span<float> output, std::size_t channels = 1) noexcept {
         Control control{};
+        if (channels < 1 || channels > Engine::max_output_channels || output.size() % channels != 0) {
+            std::fill(output.begin(), output.end(), 0);
+            publish();
+            return;
+        }
         if (panic_.exchange(false)) {
             engine_.stop();
             for (std::size_t i = 0; i < Engine::command_capacity && queue_.pop(control); ++i)
@@ -103,7 +110,7 @@ public:
                 }
                 handled_ = control.serial;
             }
-            engine_.process(output);
+            (void)engine_.process(output, channels);
         }
         publish();
     }
