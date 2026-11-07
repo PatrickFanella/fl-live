@@ -168,6 +168,10 @@ public:
     QVariantList selectedNotes() const;
     Q_INVOKABLE void selectNote(const QString& id, bool additive);
     Q_INVOKABLE void clearNoteSelection();
+    // Keyboard selection: selects the note after (+1) or before (-1) the
+    // first selected note in start order, or the first/last note when none is
+    // selected. Returns false when there is no such note.
+    Q_INVOKABLE bool selectAdjacentNote(int direction);
     Q_INVOKABLE bool setSynth(const QString& field, int value);
     // WAV decoding runs on a worker; the result is applied as one Undo step
     // once transport is stopped. One import at a time.

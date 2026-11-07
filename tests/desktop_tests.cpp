@@ -77,6 +77,17 @@ static DecodedWav readWav(const QString& path) {
     return w;
 }
 
+// The editor pane scrolls; a pointer user scrolls a control into view
+// before clicking it, so tests do the same through Main.qml's reveal().
+static void revealItem(QQuickItem* item) {
+    if(!item || !item->window())return;
+    // Layouts settle during polish before a frame; let one run, then reveal
+    // again so the click maps against current geometry.
+    for(int pass=0;pass<2;++pass) {
+        QMetaObject::invokeMethod(item->window(),"reveal",Q_ARG(QVariant,QVariant::fromValue<QObject*>(item)));
+        item->window()->update();QTest::qWait(15);
+    }
+}
 // Drives the production QML with synthetic pointer and keyboard input.
 struct QmlUi {
     QQmlApplicationEngine engine;QQuickWindow* window=nullptr;
@@ -84,7 +95,7 @@ struct QmlUi {
         window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());}
     QQuickItem* find(QQuickItem* r,const QString& name){if(r->objectName()==name && r->isVisible())return r;
         for(auto* c:r->childItems())if(auto* m=find(c,name))return m;return nullptr;}
-    QQuickItem* item(const QString& name){auto* i=find(window->contentItem(),name);if(!i)throw std::runtime_error(name.toStdString());return i;}
+    QQuickItem* item(const QString& name){auto* i=find(window->contentItem(),name);if(!i)throw std::runtime_error(name.toStdString());revealItem(i);return i;}
     void click(const QString& name){auto* i=item(name);QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,i->mapToScene(QPointF(i->width()/2,i->height()/2)).toPoint());}
     void type(const QString& name,const QString& text,bool enter=false){item(name)->forceActiveFocus();QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier);
         for(const QChar c:text)QTest::keyClick(window,c.toLatin1());if(enter)QTest::keyClick(window,Qt::Key_Return);}
@@ -166,7 +177,7 @@ private slots:
             if(item->objectName()==name && item->isVisible())return item;
             for(auto* child:item->childItems())if(auto* result=find(child,name))return result;return nullptr;
         };
-        auto click=[&](const char* name){auto* item=find(window->contentItem(),name);QVERIFY(item);QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());};
+        auto click=[&](const char* name){auto* item=find(window->contentItem(),name);QVERIFY(item);revealItem(item);QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());};
         click("createScene");QCOMPARE(session.sceneIds().size(),2);const auto second=session.sceneId();
         QCOMPARE(session.sceneIncluded(),(QVariantList{false,false}));click("sceneIncluded1");
         auto* selector=find(window->contentItem(),"sceneSelector");QVERIFY(selector);
@@ -361,7 +372,7 @@ private slots:
             if(item->objectName()==name && item->isVisible())return item;
             for(auto* child:item->childItems())if(auto* result=find(child,name))return result;return nullptr;
         };
-        auto click=[&](const char* name){auto* item=find(window->contentItem(),QString::fromUtf8(name));QVERIFY(item);QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());};
+        auto click=[&](const char* name){auto* item=find(window->contentItem(),QString::fromUtf8(name));QVERIFY(item);revealItem(item);QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());};
         auto type=[&](const char* text){for(auto c:QByteArray(text))QTest::keyClick(window,c);};
         auto* dialog=window->findChild<QObject*>("renameDialog");QVERIFY(dialog);
         click("renameTrack0");QTRY_VERIFY(dialog->property("visible").toBool());
@@ -611,7 +622,7 @@ private slots:
         };
         auto click=[&](const char* name) {
             auto* item=findItem(window->contentItem(),QString::fromUtf8(name));QVERIFY2(item,name);
-            QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());
+            revealItem(item);QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());
         };
         findItem(window->contentItem(),"exportFile")->setProperty("text",dest);
         findItem(window->contentItem(),"exportBars")->setProperty("value",16);
@@ -787,7 +798,7 @@ private slots:
                     flick->setProperty("contentX",std::max(0.0,flick->property("contentX").toReal()+inStrip.x()-20));
                 QTest::qWait(20);
             }
-            QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());
+            revealItem(item);QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());
         };
         click("addAudioTrack");QTRY_COMPARE(session.trackCount(),3);
         click("addMidiTrack");QTRY_COMPARE(session.trackCount(),4);
@@ -915,6 +926,7 @@ private slots:
                 return nullptr;
             };
             auto show=[&](QQuickItem* item) {
+                revealItem(item);
                 auto* scroll=findItem(window->contentItem(),"trackScroll");if(!scroll)return;
                 auto* flick=scroll->property("contentItem").value<QQuickItem*>();if(!flick)return;
                 const auto at=item->mapToItem(flick,QPointF(0,0));
@@ -924,7 +936,7 @@ private slots:
             };
             auto click=[&](const QString& name) {
                 auto* item=findItem(window->contentItem(),name);QVERIFY2(item,qPrintable(name));show(item);
-                QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());
+                revealItem(item);QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());
             };
             auto focus=[&](const QString& name) {
                 auto* item=findItem(window->contentItem(),name);QVERIFY2(item,qPrintable(name));show(item);item->forceActiveFocus();
@@ -990,7 +1002,7 @@ private slots:
             const auto at=item->mapToItem(flick,QPointF(0,0));
             if(item->isAncestorOf(flick) || !flick->isAncestorOf(item)){} else if(at.x()<0 || at.x()+item->width()>flick->width())
                 {flick->setProperty("contentX",std::max(0.0,flick->property("contentX").toReal()+at.x()-20));QTest::qWait(20);}
-            QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());
+            revealItem(item);QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());
         };
         auto type=[&](const QString& name,const QString& text) {
             auto* item=findItem(window->contentItem(),name);QVERIFY2(item,qPrintable(name));item->forceActiveFocus();
@@ -1256,7 +1268,7 @@ private slots:
         QVERIFY(roll->mapToScene(QPointF(0,roll->height())).y()<=ui.window->height());
         QVERIFY(ui.item("addNoteButton")->mapToScene(QPointF(0,ui.item("addNoteButton")->height())).y()<=ui.window->height());
         const auto at=[&](int tick,int pitch){
-            const int base=roll->property("base").toInt(),rows=roll->property("rows").toInt();const double row=roll->property("rowHeight").toDouble();
+            revealItem(roll);const int base=roll->property("base").toInt(),rows=roll->property("rows").toInt();const double row=roll->property("rowHeight").toDouble();
             return roll->mapToScene(QPointF((tick+0.5)*roll->width()/session.pianoLength(),(base+rows-1-pitch+0.5)*row)).toPoint();};
         QTest::mouseClick(ui.window,Qt::LeftButton,Qt::NoModifier,at(200,62)); // snaps to tick 192
         QTRY_COMPARE(session.pianoNotes().size(),5);
@@ -1317,7 +1329,7 @@ private slots:
         ui.click("pianoMode");QTRY_VERIFY(session.pianoMode());
         auto* roll=ui.item("pianoRoll");
         const auto at=[&](double tick,int pitch){
-            const int base=roll->property("base").toInt(),rows=roll->property("rows").toInt();const double row=roll->property("rowHeight").toDouble();
+            revealItem(roll);const int base=roll->property("base").toInt(),rows=roll->property("rows").toInt();const double row=roll->property("rowHeight").toDouble();
             return roll->mapToScene(QPointF(tick*roll->width()/session.pianoLength(),(base+rows-1-pitch+0.5)*row)).toPoint();};
         const auto rowPixels=roll->property("rowHeight").toDouble();
         const auto drag=[&](QPoint from,QPoint to){
@@ -1421,7 +1433,7 @@ private slots:
         }
         auto* roll_=ui.item("pianoRoll");
         const auto at=[&](double tick,int pitch){
-            const int base=roll_->property("base").toInt(),rows=roll_->property("rows").toInt();const double row=roll_->property("rowHeight").toDouble();
+            revealItem(roll_);const int base=roll_->property("base").toInt(),rows=roll_->property("rows").toInt();const double row=roll_->property("rowHeight").toDouble();
             return roll_->mapToScene(QPointF(tick*roll_->width()/session.pianoLength(),(base+rows-1-pitch+0.5)*row)).toPoint();};
         for(int i=0;i<20;++i) {
             // Note k starts at 6k with pitch 48 + 7k mod 24; aim at the middle of a note nobody else covers at that pitch.
@@ -1512,7 +1524,7 @@ private slots:
             ui.click("pianoMode");QTRY_VERIFY(session.pianoMode());
             auto* roll=ui.item("pianoRoll");
             const auto at=[&](double tick,int pitch){
-                const int base=roll->property("base").toInt(),rows=roll->property("rows").toInt();const double row=roll->property("rowHeight").toDouble();
+                revealItem(roll);const int base=roll->property("base").toInt(),rows=roll->property("rows").toInt();const double row=roll->property("rowHeight").toDouble();
                 return roll->mapToScene(QPointF(tick*roll->width()/session.pianoLength(),(base+rows-1-pitch+0.5)*row)).toPoint();};
             // Remove the converted notes with the pointer and the Delete key.
             ui.click("pianoOctaveUp");QTRY_COMPARE(roll->property("base").toInt(),60);
@@ -1779,7 +1791,9 @@ private slots:
             ui.type("automationAt1","4",true);ui.type("automationValue1","0",true);ui.click("automationAdd1");
             QTRY_COMPARE(session.automationPoints(1,"device:2").size(),2);
             // Play, edit the transpose live, undo it live.
-            ui.click("clip1");ui.click("playButton");QTRY_VERIFY(session.running());QTRY_VERIFY_WITH_TIMEOUT(session.activeVoices()>0,5000);
+            ui.click("clip1");ui.click("playButton");QTRY_VERIFY(session.running());
+            QTRY_VERIFY2_WITH_TIMEOUT(session.activeVoices()>0,qPrintable(QString("active %1, clips %2, message %3").arg(session.activeVoices())
+                .arg(session.activeClips()[1].toInt()).arg(session.message())),5000);
             ui.type("deviceValue1_0","7",true);QTRY_COMPARE(session.trackDevices(1)[0].toMap()["value"].toDouble(),7.0);QVERIFY(session.running());
             ui.click("undoButton");QTRY_COMPARE(session.trackDevices(1)[0].toMap()["value"].toDouble(),12.0);QVERIFY(session.running());
             ui.click("stopButton");QTRY_VERIFY(!session.running());QTRY_COMPARE(session.activeVoices(),0);
@@ -1877,6 +1891,73 @@ private slots:
         QVERIFY(reopened.message().contains("loop.wav") && reopened.message().contains("relink or import"));
         QVERIFY(reopened.relinkAudio(reopened.trackIds()[0].toString(),directory.filePath("moved-away.wav")));QTRY_VERIFY(!reopened.importing());reopened.tick();
         QVERIFY(reopened.trackSources()[0].toString().startsWith("moved-away.wav"));
+    }
+    // #83: the musical workflow with the keyboard only. Every control is
+    // reached by Tab from wherever focus is, must show visible focus inside
+    // the window, and the resulting document and export are checked.
+    void qmlKeyboardOnlyJourney() {
+        QTemporaryDir directory;Session session;QmlUi ui(session);QVERIFY(ui.window && QTest::qWaitForWindowExposed(ui.window));
+        ui.window->requestActivate();QVERIFY(QTest::qWaitForWindowActive(ui.window));
+        QStringList reached;
+        const auto owner=[&](const QString& name)->QQuickItem*{
+            for(auto* item=ui.window->activeFocusItem();item;item=item->parentItem())if(item->objectName()==name)return item;return nullptr;};
+        const auto tabTo=[&](const QString& name)->QQuickItem*{
+            for(int presses=0;presses<800;++presses) {
+                if(auto* item=owner(name)) {
+                    // Visible focus: a focus indicator and the control inside the window.
+                    const bool indicated=item->property("visualFocus").isValid() ? item->property("visualFocus").toBool() : item->hasActiveFocus();
+                    const auto box=item->mapRectToScene(QRectF(0,0,item->width(),item->height()));
+                    if(!indicated || box.left()<0 || box.right()>ui.window->width() || box.bottom()>ui.window->height())
+                        throw std::runtime_error(QString("focus not visible on %1 (indicator %2, box %3,%4 %5x%6)").arg(name).arg(indicated)
+                            .arg(box.left()).arg(box.top()).arg(box.width()).arg(box.height()).toStdString());
+                    reached.append(name);return item;
+                }
+                QTest::keyClick(ui.window,Qt::Key_Tab);
+            }
+            throw std::runtime_error(("not reachable by Tab: "+name).toStdString());
+        };
+        const auto press=[&](const QString& name){tabTo(name);QTest::keyClick(ui.window,Qt::Key_Space);};
+        const auto type=[&](const QString& name,const QString& text){tabTo(name);QTest::keyClick(ui.window,Qt::Key_A,Qt::ControlModifier);
+            for(const QChar c:text)QTest::keyClick(ui.window,c.toLatin1());QTest::keyClick(ui.window,Qt::Key_Return);};
+        // A new MIDI track with piano-roll notes, entered and edited from the keyboard.
+        QTest::keyClick(ui.window,Qt::Key_M,Qt::ControlModifier|Qt::ShiftModifier);QTRY_COMPARE(session.trackCount(),3);
+        press("editPattern2");QTRY_COMPARE(session.patternTrackIndex(),2);
+        press("pianoMode");QTRY_VERIFY(session.pianoMode());
+        type("noteStart","0");type("noteLength","4");type("notePitch","64");type("noteVelocity","90");press("addNoteButton");
+        type("noteStart","8");type("notePitch","67");press("addNoteButton");QTRY_COMPARE(session.pianoNotes().size(),2);
+        tabTo("pianoRoll");QTest::keyClick(ui.window,Qt::Key_Right);                         // moves the second (selected) note a sixteenth
+        QTest::keyClick(ui.window,Qt::Key_Left,Qt::AltModifier);QTRY_COMPARE(session.selectedNotes(),(QVariantList{"1"}));
+        QTest::keyClick(ui.window,Qt::Key_Right,Qt::ShiftModifier);QTest::keyClick(ui.window,Qt::Key_Up);
+        QTRY_COMPARE(session.pianoNotes()[0].toMap()["length"].toInt(),120);QCOMPARE(session.pianoNotes()[0].toMap()["pitch"].toInt(),65);
+        QCOMPARE(session.pianoNotes()[1].toMap()["start"].toInt(),216);
+        // A transpose device, the level, scene membership and an automation point.
+        press("addTranspose2");QTRY_COMPARE(session.trackDevices(2).size(),1);type("deviceValue2_0","12");
+        QTRY_COMPARE(session.trackDevices(2)[0].toMap()["value"].toDouble(),12.0);
+        tabTo("level2");for(int i=0;i<5;++i)QTest::keyClick(ui.window,Qt::Key_Up);QTRY_COMPARE(session.levels()[2].toInt(),75);
+        press("sceneIncluded2");QTRY_COMPARE(session.sceneIncluded()[2].toBool(),true);
+        press("automationToggle2");type("automationAt2","0");type("automationValue2","80");press("automationAdd2");
+        QTRY_COMPARE(session.automationPoints(2,"level").size(),1);
+        // Launch, play and stop with buttons reached by Tab, then Undo with the keyboard shortcut.
+        tabTo("sceneTiming");QTest::keyClick(ui.window,Qt::Key_Up);QTRY_COMPARE(ui.item("sceneTiming")->property("currentIndex").toInt(),0);
+        press("launchScene");press("playButton");QTRY_VERIFY(session.running());QTRY_VERIFY_WITH_TIMEOUT(session.activeVoices()>0,5000);
+        press("stopButton");QTRY_VERIFY(!session.running());QTRY_COMPARE(session.activeVoices(),0);
+        tabTo("level2");QTest::keyClick(ui.window,Qt::Key_Up);QTRY_COMPARE(session.levels()[2].toInt(),76);
+        tabTo("pianoRoll");QTest::keyClick(ui.window,Qt::Key_Z,Qt::ControlModifier);QTRY_COMPARE(session.levels()[2].toInt(),75);
+        // Save with Ctrl+S, export with Ctrl+E.
+        const auto project=directory.filePath("keyboard.json"),audio=directory.filePath("keyboard.wav");
+        tabTo("projectFile");QTest::keyClick(ui.window,Qt::Key_A,Qt::ControlModifier);for(const QChar c:project)QTest::keyClick(ui.window,c.toLatin1());
+        QTest::keyClick(ui.window,Qt::Key_S,Qt::ControlModifier);QTRY_VERIFY(!session.dirty());
+        tabTo("exportFormat");QTest::keyClick(ui.window,Qt::Key_Down);QTest::keyClick(ui.window,Qt::Key_Down);
+        tabTo("exportFile");QTest::keyClick(ui.window,Qt::Key_A,Qt::ControlModifier);for(const QChar c:audio)QTest::keyClick(ui.window,c.toLatin1());
+        type("exportBars","1");QTest::keyClick(ui.window,Qt::Key_E,Qt::ControlModifier);QTRY_VERIFY(session.exporting() || QFile::exists(audio));
+        QTRY_VERIFY(!session.exporting());
+        // The saved document and the export carry the keyboard edits.
+        const auto saved=readAuthoredProject(project);QCOMPARE(saved.content.devices.size(),std::size_t(1));QCOMPARE(saved.content.tracks[2].level,75);
+        const auto w=readWav(audio);QCOMPARE(w.format,3);
+        // The third track's first note (C4+1 and an octave up) sounds from frame 0 for 120 ticks (30000 frames) at 80 % level.
+        QVERIFY(std::any_of(w.samples.begin(),w.samples.begin()+2*30000,[](float v){return v!=0;}));
+        QVERIFY(reached.size()>=25);
+        QVERIFY(ui.window->grabWindow().save("desktop-keyboard-journey.png"));
     }
     void qmlRelinkMissingAudio() {
         QTemporaryDir root;const auto audio=root.filePath("a.wav"),project=root.filePath("p.json");
@@ -2315,7 +2396,7 @@ private slots:
             for(auto* c:r->childItems())if(auto* m=findItem(c,name))return m;
             return nullptr;
         };
-        auto clickAt=[&](QQuickItem* item,QPointF local){QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(local).toPoint());};
+        auto clickAt=[&](QQuickItem* item,QPointF local){revealItem(item);QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(local).toPoint());};
         auto click=[&](const char* name){auto* item=findItem(window->contentItem(),name);QVERIFY2(item,name);clickAt(item,{item->width()/2,item->height()/2});};
         QVERIFY(!findItem(window->contentItem(),"automationLane0"));
         click("automationToggle0");
@@ -2414,7 +2495,7 @@ private slots:
         };
         auto click=[&](const char* name) {
             auto* item=findItem(window->contentItem(),QString::fromUtf8(name));QVERIFY(item);
-            QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());
+            revealItem(item);QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());
         };
         auto* pan=findItem(window->contentItem(),"pan1");QVERIFY(pan);
         QCOMPARE(pan->property("displayText").toString(),QString("C"));

@@ -1424,6 +1424,21 @@ void Session::selectNote(const QString& id,bool additive) {
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();}
 }
 void Session::clearNoteSelection(){selected_notes_.clear();emit changed();}
+bool Session::selectAdjacentNote(int direction) {
+    const auto* roll=piano();
+    if(!roll || roll->notes.empty() || (direction!=1 && direction!=-1))return false;
+    const auto& notes=roll->notes;
+    std::ptrdiff_t at=direction>0 ? 0 : static_cast<std::ptrdiff_t>(notes.size())-1;
+    if(!selected_notes_.empty()) {
+        const auto current=std::find_if(notes.begin(),notes.end(),[&](const auto& n){return n.id==selected_notes_.front();});
+        if(current==notes.end())return false;
+        at=(current-notes.begin())+direction;
+        if(at<0 || at>=static_cast<std::ptrdiff_t>(notes.size()))return false;
+    }
+    selected_notes_.assign(1,notes[static_cast<std::size_t>(at)].id);
+    emit changed();
+    return true;
+}
 bool Session::editPiano(EditKind kind,const std::function<void(PianoRoll&)>& change) {
     if(!changeable())return false;
     try {
