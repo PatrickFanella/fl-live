@@ -224,7 +224,7 @@ ApplicationWindow {
             Button { id: addAudioButton; objectName: "addAudioTrack"; text: "Add audio track"; enabled: session.canChange && session.trackCount < 64; onClicked: session.addTrack("audio") }
             Button { objectName: "addMidiTrack"; text: "Add MIDI track"; enabled: session.canChange && session.trackCount < 64; onClicked: session.addTrack("midi") }
             Item { Layout.fillWidth: true }
-            Label { text: session.trackCount + (session.trackCount === 1 ? " track" : " tracks") + " · one clip each"; color: "#9daabd" }
+            Label { text: session.trackCount + (session.trackCount === 1 ? " track" : " tracks"); color: "#9daabd" }
         }
         Rectangle {
             color: "#242c37"; radius: 8
@@ -261,6 +261,9 @@ ApplicationWindow {
                                 required property int index
                                 readonly property string trackId: session.trackIds[index] || ""
                                 readonly property bool midi: session.trackKinds[index] === "midi"
+                                // The track's clips and the selected one, which the controls below act on.
+                                readonly property var clips: session.trackClips[index] || []
+                                readonly property int selectedIndex: Math.max(0, clips.findIndex(c => c.id === session.selectedClips[index]))
                                 // Wide enough for the range row; every row must fit so columns never overlap.
                                 Layout.preferredWidth: 340; Layout.maximumWidth: 340; Layout.alignment: Qt.AlignTop
                                 spacing: 8
@@ -276,14 +279,27 @@ ApplicationWindow {
                                         id: clipButton
                                         objectName: "clip" + index
                                         Layout.fillWidth: true; Layout.preferredHeight: 64
-                                        highlighted: session.activeClips[index] === 0
-                                        text: (session.activeClips[index] === 0 ? "●  " : "▶  ") + session.clipNames[index] + "\n" + session.trackSources[index]
+                                        highlighted: session.activeClips[index] === trackColumn.selectedIndex
+                                        text: (session.activeClips[index] === trackColumn.selectedIndex ? "●  " : "▶  ") + session.clipNames[index] + "\n" + session.trackSources[index]
                                         contentItem: Text { text: clipButton.text; textFormat: Text.PlainText; color: clipButton.palette.buttonText; font: clipButton.font; wrapMode: Text.Wrap; elide: Text.ElideRight; maximumLineCount: 2; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                         onClicked: session.launchClip(session.clipIds[index])
                                         Accessible.name: "Launch " + session.clipNames[index] + " on track " + (index + 1)
                                         Accessible.description: session.clipStates[index]
                                     }
                                     ToolButton { id: clipRename; objectName: "renameClip" + index; text: "Rename"; enabled: session.canChange; Accessible.name: "Rename clip " + (index + 1); onClicked: renameDialog.edit(false, session.clipIds[index], session.clipNames[index], clipRename) }
+                                }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    ComboBox {
+                                        objectName: "clipSelector" + index; Layout.fillWidth: true
+                                        model: trackColumn.clips.map(c => c.name); currentIndex: trackColumn.selectedIndex
+                                        enabled: trackColumn.clips.length > 1
+                                        onActivated: function(i) { session.selectClip(trackColumn.clips[i].id) }
+                                        Accessible.name: "Selected clip of track " + (index + 1)
+                                    }
+                                    Button { objectName: "addClip" + index; text: "+ Clip"; enabled: session.canChange && trackColumn.clips.length < 8; onClicked: session.addClip(trackColumn.trackId); Accessible.name: "Add a clip to track " + (index + 1) }
+                                    Button { objectName: "duplicateClip" + index; text: "Copy"; enabled: session.canChange && trackColumn.clips.length < 8; onClicked: session.duplicateClip(session.clipIds[index]); Accessible.name: "Duplicate the selected clip of track " + (index + 1) }
+                                    Button { objectName: "deleteClip" + index; text: "Delete clip"; enabled: session.canChange && trackColumn.clips.length > 1; onClicked: session.deleteClip(session.clipIds[index]); Accessible.name: "Delete the selected clip of track " + (index + 1) }
                                 }
                                 RowLayout {
                                     Layout.fillWidth: true
