@@ -23,11 +23,41 @@ static ProjectSettings readAuthoredSettings(const QString& path) { const auto p 
 // output in the parent fixture. This is not native input or hardware QA.
 int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
-    if (argc != 2 && argc != 3 && !(argc == 4 && (std::string_view(argv[2]) == "--record" || std::string_view(argv[2]) == "--record-loss"))) return 2;
+    if (argc != 2 && argc != 3 && !(argc == 4 && (std::string_view(argv[2]) == "--record" || std::string_view(argv[2]) == "--record-loss" || std::string_view(argv[2]) == "--record-midi"))) return 2;
     try {
         fl_live::PipeWireConfig config;
         config.remote = argv[1]; config.node_group = "pipewire.test";
         Session session(config);
+        if (argc == 4 && std::string_view(argv[2]) == "--record-midi") {
+            // Desktop MIDI recording through fl-live-midi-input (#43/#47):
+            // arming the MIDI track opens the input; "record" records until
+            // "stop", which turns the take into a piano-roll clip.
+            const auto track = session.trackIds()[1].toString();
+            if (session.trackKinds()[1].toString() != "midi" || !session.setArmed(track, true)) return 1;
+            const auto before = session.trackClips()[1].toList().size();
+            std::cout << "{\"ready\": true}" << std::endl;
+            std::string line;
+            while (std::getline(std::cin, line) && line != "record") {}
+            if (!session.record()) { std::cerr << session.message().toStdString() << '\n'; return 1; }
+            std::cout << "{\"recording\": true}" << std::endl;
+            while (std::getline(std::cin, line) && line != "stop") {}
+            session.stop();
+            const auto clips = session.trackClips()[1].toList();
+            QJsonObject result{{"clips", static_cast<int>(clips.size())}, {"before", static_cast<int>(before)}, {"message", session.message()}};
+            if (clips.size() == before + 1) {
+                const auto take = clips.last().toMap()["id"].toString();
+                result["selected_last"] = session.selectedClips()[1].toString() == take;
+                session.selectClip(take);
+                QJsonArray notes;
+                for (const auto& n : session.pianoNotes()) {
+                    const auto m = n.toMap();
+                    notes.append(QJsonArray{m["start"].toInt(), m["length"].toInt(), m["pitch"].toInt(), m["velocity"].toInt()});
+                }
+                result["notes"] = notes; result["length"] = session.pianoLength();
+            }
+            std::cout << QJsonDocument(result).toJson(QJsonDocument::Compact).toStdString() << std::endl;
+            return 0;
+        }
         if (argc == 4 && std::string_view(argv[2]) == "--record-loss") {
             // Loss while recording (#46): records until the fixture kills the
             // server or destroys the input node, reports, and on "retry"

@@ -3,6 +3,8 @@
 #include <QString>
 #include <QByteArray>
 #include <array>
+#include <vector>
+#include <cstdint>
 
 struct MidiStep {
     bool enabled = false;
@@ -78,6 +80,20 @@ struct PianoRoll {
 void validatePiano(const PianoRoll& roll);
 // Sorts notes into the canonical order (start, then ID).
 void sortPiano(PianoRoll& roll);
+// A recorded MIDI take as a piano roll (docs/recording.md). Frames become
+// ticks at `tempo` BPM, rounded to the nearest tick; lengths are at least one
+// tick; MIDI velocity 1..127 becomes 1..100 percent, rounded. The roll is the
+// take rounded up to whole bars, from one bar to 16, and loops. Notes that
+// start past 16 bars, would make more than 16 sound at once or exceed 1024
+// are left out, and notes crossing 16 bars are cut there; the report counts
+// each so the caller can say what was changed.
+struct RecordingReport { int beyond_limit = 0, cut = 0, over_polyphony = 0, over_count = 0; };
+struct RecordedTakeNotes {
+    std::uint64_t frames = 0;
+    struct Note { std::uint64_t start, length; int pitch, velocity; };
+    std::vector<Note> notes; // ordered by start
+};
+PianoRoll pianoFromTake(const RecordedTakeNotes& take, int tempo, std::uint32_t rate, RecordingReport& report);
 fl_live::MidiClip pianoClip(const PianoRoll& roll, int tempo, const SynthSettings& synth);
 fl_live::SessionPlan prepareProject(const ProjectSettings& settings);
 ProjectSettings readProject(const QString& path);

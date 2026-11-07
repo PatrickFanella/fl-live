@@ -1,0 +1,64 @@
+{
+  "verified_at": "2026-11-07T13:48:44.851424+00:00",
+  "base": "feat/recording-device-loss (PR #156) head",
+  "issues": [
+    43,
+    44,
+    47
+  ],
+  "scope": "MIDI recording: PipeWire MIDI input, MidiTake note pairing, and desktop MIDI takes as piano-roll clips",
+  "environment": "Kvant, pinned CI image (Qt 6.12, PipeWire 1.6.9), docker --network none, QT_QPA_PLATFORM=offscreen, owned private PipeWire server at quantum 256, pw-midiplay as the independent source",
+  "gates": {
+    "ci/verify.sh": {
+      "desktop": "31/31",
+      "release": "11/11",
+      "engine-only": "8/8",
+      "pipewire-sanitize": "21/21",
+      "document-io-sanitize": "11/11"
+    },
+    "pipewire-midi-capture repeats": {
+      "passed": 8,
+      "total": 8
+    },
+    "pipewire-desktop-midi-recording repeats": {
+      "passed": 8,
+      "total": 8
+    }
+  },
+  "measurements": {
+    "reference file": "8 notes at 120 BPM, 96 PPQ (250 frames per tick): chord, overlaps, adjacent repeats, velocities 1..127",
+    "midi input": {
+      "notes": 8,
+      "events": 16,
+      "worst_offset_frames": 0
+    },
+    "desktop clip": {
+      "notes": 8,
+      "tick_offsets": 0
+    }
+  },
+  "verified_behaviors": [
+    "fl-live-midi-input receives every note of an independently authored SMF with exact frame timing relative to the first note",
+    "MidiTake pairs notes, treats velocity 0 as note-off, closes a held note on a repeated note-on and at the end, ignores other messages, counts overflow, and its callback neither allocates nor touches files",
+    "An armed MIDI track's take becomes the selected piano-roll clip with every note at its exact tick, length, pitch and mapped velocity",
+    "Recorded MIDI clips survive Undo/Redo and save/reopen and play when launched; a take without notes adds no clip; audio plus MIDI is one Undo step"
+  ],
+  "source_sha256": {
+    "include/fl_live/capture.hpp": "62a819c693c893891c09ffe9f85b5535726323ab42d13bc96a969f200f562f7b",
+    "src/capture.cpp": "290d56e6f70c54acee4548063331bf902128b17e3db75831eb8aabe6b32daf54",
+    "include/fl_live/pipewire_backend.hpp": "f4fce7fc4d6b7ec1cd506eac293309c326ccae49d52a4f72965d80bf5e3de097",
+    "src/pipewire_backend.cpp": "8b4ce5e337035080e5aedcc93495aa84927699f20216105d737b9223f1ec72de",
+    "apps/desktop/project.hpp": "3569f917f3604207071bef4c11a7a26aa245fb5f86de423c9f8dd0c41400260d",
+    "apps/desktop/project.cpp": "12b015fbfd01904f6213f129d0030860add6fcf49518ad961891a6cf42a91a1e",
+    "apps/desktop/session.hpp": "025e4a5faa25b65842757bc2f666de18e4f98eaa3270a8eff1762075d2dfaa8e",
+    "apps/desktop/session.cpp": "7f9203b44cb448274df3e5ce021c1bd3b292c0deab01f4baadfa6d264ffeda43",
+    "apps/desktop/Main.qml": "c8733d51389cc896d3faeebbffd11335b87a88e3c663370e54caad4711882ece",
+    "apps/desktop/main.cpp": "d943c7396f68b474e323a4cbe48e64c901e99dc832c004a3759cda010258aaea",
+    "tests/capture_tests.cpp": "f4782b770f1274b14bdcac3a726a1b4d38d3ab77c4b7e791d88682aed93d4275",
+    "tests/desktop_tests.cpp": "6f57514e2a75f567af4a2534a8b28b43ff7d36365e1429a08eba53ed13072b05",
+    "tests/desktop_backend_probe.cpp": "1bb147781c0e9fe0c19cd855a6bd5d350334ec027ee12c60cb0eceb6d89ca240",
+    "tests/midi_capture_probe.cpp": "aa944e4d79efcd95786069aefd498722a297b366e91506e8c1fe0c5662bb3108",
+    "tests/pipewire_midi_capture.py": "8c4f49c7037812bc79e00cd4fed289422de606dfae0e4fbc9ad21907e7d121f0"
+  },
+  "limits": "Private software graph and offscreen QML; no hardware MIDI controller, input monitoring, in-app input choice or latency compensation (#45). MIDI takes are held in memory and are not recoverable after a crash. Tick quantization at the session tempo is the stated policy, not a measured placement against the transport."
+}

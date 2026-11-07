@@ -318,7 +318,7 @@ ApplicationWindow {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     Label { objectName: "clipState" + index; text: session.clipStates[index]; Layout.fillWidth: true; color: session.activeClips[index] >= 0 ? "#68d9a4" : "#b7c5d8" }
-                                    CheckBox { objectName: "arm" + index; text: "Arm"; visible: !trackColumn.midi; checked: session.armed[index] === true; enabled: !session.recording; onClicked: session.setArmed(trackColumn.trackId, checked); Accessible.name: "Arm track " + (index + 1) + " for recording" }
+                                    CheckBox { objectName: "arm" + index; text: "Arm"; checked: session.armed[index] === true; enabled: !session.recording; onClicked: session.setArmed(trackColumn.trackId, checked); Accessible.name: "Arm track " + (index + 1) + " for recording" }
                                     CheckBox { objectName: "sceneIncluded" + index; text: "Include in scene"; checked: session.sceneIncluded[index]; enabled: session.canChange; onClicked: session.setSceneIncluded(trackColumn.trackId, checked); Accessible.name: "Include track " + (index+1) + " in scene"; ToolTip.visible: hovered; ToolTip.text: "An excluded track stops when this scene launches." }
                                 }
                                 Button { objectName: "stopTrack" + index; text: "Stop track on next bar"; Accessible.name: "Stop track " + (index + 1) + " on next bar"; Layout.fillWidth: true; onClicked: session.stopTrackId(trackColumn.trackId) }

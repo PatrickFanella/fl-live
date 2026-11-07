@@ -1969,8 +1969,8 @@ private slots:
         const auto audio=session.trackIds()[0].toString(),midi=session.trackIds()[1].toString();
         QCOMPARE(session.trackKinds()[0].toString(),QString("audio"));QCOMPARE(session.trackKinds()[1].toString(),QString("midi"));
         const auto clips=[&](Session& s){QStringList r;for(const auto& c:s.trackClips()[0].toList())r.append(c.toMap()["id"].toString());return r;};
-        QVERIFY(!session.record());QVERIFY(session.message().contains("Arm an audio track"));QVERIFY(session.message().contains("Nothing was recorded"));
-        QVERIFY(!session.setArmed(midi,true));QVERIFY(session.message().contains("MIDI recording"));
+        QVERIFY(!session.record());QVERIFY(session.message().contains("Arm a track"));QVERIFY(session.message().contains("Nothing was recorded"));
+        Q_UNUSED(midi);
         QVERIFY(session.setArmed(audio,true));QCOMPARE(session.armed(),(QVariantList{true,false}));QVERIFY(!session.dirty());
         QVERIFY(!session.record());QVERIFY(session.message().contains("Save the project first"));QVERIFY(!session.recording());
         const auto path=directory.filePath("takes.json");QVERIFY(session.saveProject(path));
@@ -2009,9 +2009,9 @@ private slots:
         QVERIFY(session.record());for(int i=0;i<4;++i)session.tick();session.stop();session.tick();
         QVERIFY(QFile::exists(folder.filePath(QString(files[0]).replace(" take 1.wav"," take 2.wav"))));
         QCOMPARE(clips(session).size(),after.size()+1);
-        // The QML controls: Arm shows only on audio tracks, Record needs an armed track.
+        // The QML controls: Arm on every track, Record needs an armed track.
         QmlUi ui(session);QVERIFY(QTest::qWaitForWindowExposed(ui.window));
-        QVERIFY(ui.find(ui.window->contentItem(),"arm1")==nullptr);
+        QVERIFY(ui.find(ui.window->contentItem(),"arm1")!=nullptr);
         QVERIFY(ui.item("recordButton")->isEnabled());
         ui.click("arm0");QTRY_COMPARE(session.armed()[0].toBool(),false);QVERIFY(!ui.item("recordButton")->isEnabled());
         ui.click("arm0");QTRY_COMPARE(session.armed()[0].toBool(),true);
@@ -2019,6 +2019,58 @@ private slots:
         for(int i=0;i<4;++i)session.tick();
         ui.click("stopButton");QTRY_VERIFY(!session.recording());session.tick();
         QCOMPARE(clips(session).size(),after.size()+2);QCOMPARE(folder.entryList({"*.wav"},QDir::Files).size(),3);
+    }
+    // MIDI recording (#43, #47): an armed MIDI track records note messages
+    // into a new piano-roll clip, quantized to 96 ticks per beat at the
+    // session tempo. Preview stands in for the MIDI input with previewMidi()
+    // at the simulated clock (480 frames per tick; 25 ticks are 48 piano
+    // ticks at 120 BPM).
+    void midiRecording() {
+        QTemporaryDir directory;Session session;
+        const auto audio=session.trackIds()[0].toString(),midi=session.trackIds()[1].toString();
+        QCOMPARE(session.tempo(),120);
+        const auto clips=[&](int t){QStringList r;for(const auto& c:session.trackClips()[t].toList())r.append(c.toMap()["id"].toString());return r;};
+        QVERIFY(!session.previewMidi(0x90,60,100)); // not recording
+        // A MIDI-only take needs no saved project: it becomes notes, not a file.
+        QVERIFY(session.setArmed(midi,true));QCOMPARE(session.armed(),(QVariantList{false,true}));
+        const auto before=clips(1);
+        QVERIFY(session.record());QVERIFY(session.recording());QVERIFY(!session.setArmed(midi,false));
+        session.tick();QVERIFY(session.running()); // the take starts at this cycle
+        const auto wait=[&](int ticks){for(int i=0;i<ticks;++i)session.tick();};
+        wait(24);QVERIFY(session.previewMidi(0x90,60,127));                              // 48: C4, full velocity
+        wait(25);QVERIFY(session.previewMidi(0x91,64,64));QVERIFY(session.previewMidi(0x80,60,0)); // 96: E4 on channel 2; C4 off
+        QVERIFY(session.previewMidi(0xB0,7,100));                                        // a controller: ignored
+        wait(25);QVERIFY(session.previewMidi(0x90,64,0));                                // 144: E4 off as velocity 0
+        wait(25);QVERIFY(session.previewMidi(0x90,67,1));                                // 192: G4 held to the end
+        wait(25);session.stop();session.tick();                                          // the take is 240 ticks
+        QVERIFY(!session.recording());
+        QVERIFY(session.message().startsWith("Recorded 1 take as new clips"));QVERIFY(session.message().contains("1 note still held"));
+        QCOMPARE(session.undoText(),QString("Undo recorded take"));
+        const auto after=clips(1);QCOMPARE(after.size(),before.size()+1);const auto take=after.last();
+        QCOMPARE(session.selectedClips()[1].toString(),take);QCOMPARE(session.clipNames()[1].toString(),QString("Take %1").arg(after.size()));
+        QVERIFY(session.selectClip(take));QVERIFY(session.pianoMode());QCOMPARE(session.pianoLength(),384);QVERIFY(session.pianoLoop());
+        const auto notes=[&]{QList<QList<int>> r;for(const auto& n:session.pianoNotes()){const auto m=n.toMap();
+            r.append({m["start"].toInt(),m["length"].toInt(),m["pitch"].toInt(),m["velocity"].toInt()});}return r;};
+        // Velocity 127/64/1 is 100/50/1 percent; offsets are whole ticks.
+        const QList<QList<int>> expected{{48,48,60,100},{96,48,64,50},{192,48,67,1}};
+        QCOMPARE(notes(),expected);
+        session.undo();QCOMPARE(clips(1),before);session.redo();QCOMPARE(clips(1),after);
+        const auto path=directory.filePath("midi.json");QVERIFY(session.saveProject(path));
+        {Session reopened;QVERIFY(reopened.loadProject(path));QVERIFY(reopened.selectClip(take));QCOMPARE(reopened.pianoLength(),384);
+         QList<QList<int>> r;for(const auto& n:reopened.pianoNotes()){const auto m=n.toMap();r.append({m["start"].toInt(),m["length"].toInt(),m["pitch"].toInt(),m["velocity"].toInt()});}
+         QCOMPARE(r,expected);}
+        // The recorded clip plays: launching it sounds its notes.
+        QVERIFY(session.launchClip(take));session.play();session.tick();session.tick();QCOMPARE(session.activeClipIds()[1].toString(),take);
+        session.stop();session.tick();
+        // No notes: no clip, and the message says so.
+        QVERIFY(session.record());wait(5);session.stop();session.tick();
+        QVERIFY(session.message().contains("No notes were played on"));QCOMPARE(clips(1),after);
+        // Audio and MIDI together are one Undo step.
+        QVERIFY(session.setArmed(audio,true));
+        QVERIFY(session.record());session.tick();QVERIFY(session.previewMidi(0x90,72,90));wait(10);session.stop();session.tick();
+        QVERIFY(session.message().startsWith("Recorded 2 takes as new clips"));QCOMPARE(session.undoText(),QString("Undo recorded takes"));
+        QCOMPARE(clips(1).size(),after.size()+1);
+        session.undo();QCOMPARE(clips(1),after);
     }
     // #48: a crash while recording leaves the take as a .part file with an
     // unfinished header and a journal naming its track. Opening the project

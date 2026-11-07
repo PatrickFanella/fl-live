@@ -9,6 +9,7 @@ struct PipeWireConfig {
     std::string remote; // explicit remote; never silently choose a desktop server
     std::string target;
     std::string input_target; // the desktop's capture stream links here when set
+    std::string midi_input_target; // and its MIDI input here
     std::string node_group;
     bool autoconnect = false;
     std::uint32_t sample_rate = 48000;
@@ -59,6 +60,32 @@ public:
     // previous sink, so that sink may be finished or destroyed afterwards.
     void setSink(CaptureSink* sink) noexcept;
     [[nodiscard]] CaptureStreamStatus status() const noexcept;
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+// MIDI input node "fl-live-midi-input" (docs/recording.md). Note messages go
+// to the current MidiSink, stamped with the graph clock position of their
+// cycle plus their offset in it. Raw MIDI and UMP controls are both accepted;
+// UMP is converted to MIDI 1.0 bytes on the data thread without allocation.
+// It links where told, like the audio input: config.input_target with
+// autoconnect, or an external link.
+struct MidiStreamStatus {
+    int state;
+    int error;
+    std::uint64_t callbacks;
+    std::uint64_t events;
+    std::uint64_t bad_buffers;
+};
+class PipeWireMidiCapture {
+public:
+    explicit PipeWireMidiCapture(PipeWireConfig config);
+    ~PipeWireMidiCapture();
+    PipeWireMidiCapture(const PipeWireMidiCapture&) = delete;
+    PipeWireMidiCapture& operator=(const PipeWireMidiCapture&) = delete;
+    // As PipeWireCapture::setSink: returns once the data thread has left the previous sink.
+    void setSink(MidiSink* sink) noexcept;
+    [[nodiscard]] MidiStreamStatus status() const noexcept;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

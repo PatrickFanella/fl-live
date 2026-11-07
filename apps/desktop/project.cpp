@@ -109,6 +109,37 @@ void validatePiano(const PianoRoll& roll) {
         if (ends.size() > fl_live::Engine::voices_per_track) throw std::invalid_argument("At most 16 notes can sound at once");
     }
 }
+PianoRoll pianoFromTake(const RecordedTakeNotes& take, int tempo, std::uint32_t rate, RecordingReport& report) {
+    if (tempo < 1 || rate == 0) throw std::invalid_argument("Recording needs a tempo and rate");
+    // ticks = frames * tempo * 96 / (rate * 60), rounded to nearest; 128-bit
+    // so a long take at a high tempo cannot overflow.
+    const auto ticks = [&](std::uint64_t frames) {
+        const unsigned __int128 numerator = static_cast<unsigned __int128>(frames) * static_cast<unsigned>(tempo) * piano_ticks_per_beat;
+        const unsigned __int128 denominator = static_cast<unsigned __int128>(rate) * 60;
+        const auto value = (numerator + denominator / 2) / denominator;
+        return value > static_cast<unsigned __int128>(piano_length_limit) * 4 ? piano_length_limit * 4 : static_cast<int>(value);
+    };
+    constexpr int bar = 4 * piano_ticks_per_beat;
+    PianoRoll roll;
+    roll.length = std::clamp((ticks(take.frames) + bar - 1) / bar * bar, bar, piano_length_limit);
+    roll.loop = true;
+    std::priority_queue<int, std::vector<int>, std::greater<>> ends;
+    for (const auto& n : take.notes) {
+        const int start = ticks(n.start);
+        if (start >= piano_length_limit) { ++report.beyond_limit; continue; }
+        int length = std::max(1, ticks(n.start + n.length) - start);
+        if (length > piano_length_limit - start) { length = piano_length_limit - start; ++report.cut; }
+        while (!ends.empty() && ends.top() <= start) ends.pop();
+        if (ends.size() >= fl_live::Engine::voices_per_track) { ++report.over_polyphony; continue; }
+        if (roll.notes.size() >= fl_live::Engine::notes_per_clip_capacity) { ++report.over_count; continue; }
+        ends.push(start + length);
+        const int velocity = std::clamp((std::clamp(n.velocity, 1, 127) * 100 + 63) / 127, 1, 100);
+        roll.notes.push_back({roll.next_id++, start, length, std::clamp(n.pitch, 0, 127), velocity});
+    }
+    sortPiano(roll);
+    validatePiano(roll);
+    return roll;
+}
 fl_live::MidiClip pianoClip(const PianoRoll& roll, int tempo, const SynthSettings& synth) {
     validatePiano(roll);
     validateSynth(synth);
