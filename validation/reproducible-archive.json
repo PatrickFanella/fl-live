@@ -1,0 +1,25 @@
+{
+  "verified_at": "2026-11-07T15:09:27.460114+00:00",
+  "base": "main after PR #161",
+  "issues": [
+    85
+  ],
+  "scope": "Byte-reproducible Linux archive from packaging/reproducible_archive.py",
+  "environment": "Kvant, pinned CI image (CMake 4.4.4, Qt 6.12, PipeWire 1.6.9), docker --network none, build directory /tmp/repro, SOURCE_DATE_EPOCH=1778112000",
+  "method": "Two clean builds (rm -rf, configure with the desktop preset, build), each archived with the script",
+  "result": {
+    "sha256_build_1": "6e84e07717ae6f7bb7ae31a465ef0621237df407427016927d8796a156b67e52",
+    "sha256_build_2": "6e84e07717ae6f7bb7ae31a465ef0621237df407427016927d8796a156b67e52",
+    "identical": true
+  },
+  "cpack_comparison": "CPack 4.4 with SOURCE_DATE_EPOCH also gave identical archives in one account, but it records the build account's owner names, so archives from different accounts differ; the script records none.",
+  "gates": {
+    "reproducible-archive CTest": "two archives of one build byte-identical; entries sorted, 0/0 without names, dated SOURCE_DATE_EPOCH; unset SOURCE_DATE_EPOCH refused"
+  },
+  "source_sha256": {
+    "packaging/reproducible_archive.py": "26a68b48fe71f208a7efd2342dd24d941fd16c0290db20fd247014de08ae16fb",
+    "tests/reproducible_archive.py": "6775ea86c5a63c41c8023f3b6f43c8f92814397c09f37b05398251c076057338",
+    "docs/install.md": "a7305e0f506779df3980235333f8c8e5e0469fca900ec827f1bb99dc3077981b"
+  },
+  "limits": "Same toolchain image and build directory; a different compiler or path can change the binaries. The revision recorded inside the container build was 'unknown' because the container cannot read the worktree's git metadata; CI passes CI_SOURCE_SHA. License notices for fl-live itself still wait on #84."
+}

@@ -26,6 +26,16 @@ cpack --config build/desktop/CPackConfig.cmake -B build/package
 
 This writes `build/package/fl-live-VERSION-REVISION-linux-x86_64.tar.gz`. In CI the revision comes from `CI_SOURCE_SHA`; a build without one records `unknown`.
 
+### Reproducible archive
+
+The CPack archive records file times and the build account, so two builds differ. For an archive whose bytes depend only on the source, use the packaging script instead:
+
+```bash
+SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) python3 packaging/reproducible_archive.py build/desktop build/package
+```
+
+It installs the build into a temporary prefix and writes `build/package/fl-live-VERSION-REVISION-linux-x86_64.tar.gz`. Entries are in sorted order, owned by uid/gid 0 with no owner names, and dated `SOURCE_DATE_EPOCH`. The gzip stream carries no timestamp or file name, and the script prints the SHA-256. Two clean builds of the same revision, with the same toolchain image and build directory, give the same bytes. A different build directory or compiler can change the binaries. Without `SOURCE_DATE_EPOCH` the script refuses to run.
+
 The archive holds `bin/fl-live` (desktop), `bin/fl-live-play` (headless PipeWire test player) and `bin/fl-live-render` (offline demo renderer). It also holds `share/applications/fl-live.desktop`, the example projects in `share/fl-live/examples/`, and the README, limitations matrix, keyboard reference, this page and the notices in `share/doc/fl_live/`. The programs link the runtime libraries dynamically; nothing else is bundled.
 
 ## Install on a clean system

@@ -10,7 +10,7 @@
     "file": "fl-live-0.1.0-05236b1d57fd-linux-x86_64.tar.gz",
     "bytes": 3644046,
     "sha256": "1a3929cc58be22ec6d739b9a21f9e9a70a7683916f61a8da09bad2ba2d31a525",
-    "note": "Not reproducible byte for byte: archive timestamps vary between builds"
+    "note": "The CPack archive is not reproducible byte for byte (file times, build account); packaging/reproducible_archive.py is, see validation/reproducible-archive.json"
   },
   "gates": {
     "desktop": {
@@ -45,5 +45,5 @@
   "verified_behaviors": [
     "staged-install CTest: file list, no installed binary references the build tree (readelf -d), --version reports the configured revision, installed renderer output, installed desktop launch"
   ],
-  "limits": "No license chosen (#84): the package grants no redistribution rights and is not a release. No native Wayland, physical audio or other distributions; archive is not byte-reproducible."
+  "limits": "No license chosen (#84): the package grants no redistribution rights and is not a release. No native Wayland, physical audio or other distributions; the CPack archive is not byte-reproducible (the packaging script's archive is)."
 }
