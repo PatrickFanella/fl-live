@@ -281,6 +281,37 @@ float expected_automation(std::initializer_list<std::pair<Frame, float>> points,
         }
     return v.back().second;
 }
+// Device lanes: a device-gain lane replaces device_gain; a transpose lane is
+// read once per note-on, rounded, and a note it pushes out of range is silent.
+void device_automation_contract() {
+    SessionPlan gain_plan{48000, 120000, {{1, {AudioClip{{0.5F}, true}}}}};
+    gain_plan.tracks[0].device_gain = 3;                                   // replaced by the lane
+    gain_plan.tracks[0].device_gain_automation = {{100, 0.0F}, {1100, 2.0F}};
+    gain_plan.tracks[0].gain_automation = {{0, 0.5F}};
+    const std::array<Command, 1> launch{{{CommandKind::launch, 0, 0, 0}}};
+    const auto gained = render_channels(gain_plan, launch, 64, 2000, 1);
+    for (auto block : {1U, 257U, 512U}) require(render_channels(gain_plan, launch, block, 2000, 1) == gained, "device-gain lane block invariance");
+    for (Frame f = 0; f < 2000; ++f) {
+        const float device = expected_automation({{100, 0.0F}, {1100, 2.0F}}, f);
+        require(gained[f] == (0.5F * device) * 0.5F, "device-gain lane replaces device_gain and multiplies the level");
+    }
+    // Square notes: A4 at frame 0 (lane 0), A4 at 24000 (lane +12 -> A5), 120 at 48000 (+12 -> 132: silent).
+    MidiClip clip{96000, {{0, 12000, 69, 1}, {24000, 12000, 69, 1}, {48000, 12000, 120, 1}}, false};
+    clip.instrument.waveform = Waveform::square;
+    SessionPlan midi{48000, 120000, {{1, {clip}}}};
+    midi.tracks[0].transpose_automation = {{0, 0.0F}, {23999, 0.0F}, {24000, 11.6F}}; // rounded to 12 at note-on
+    const auto played = render_channels(midi, launch, 64, 60000, 1);
+    for (auto block : {1U, 257U, 4096U}) require(render_channels(midi, launch, block, 60000, 1) == played, "transpose lane block invariance");
+    const auto changes = [&](std::size_t from, std::size_t to) {
+        int n = 0; for (std::size_t f = from + 1; f < to; ++f) if ((played[f] > 0) != (played[f - 1] > 0)) ++n; return n; };
+    require(std::abs(changes(0, 12000) - 220) <= 2 && std::abs(changes(24000, 36000) - 440) <= 2, "transpose lane read at note-on");
+    require(played[23999] == 0 && played[24000] != 0 && played[35999] != 0 && played[36000] == 0, "transposed note keeps its on/off frames");
+    require(std::all_of(played.begin() + 48000, played.end(), [](float v) { return v == 0; }), "a note pushed out of range gets no voice");
+    SessionPlan bad = midi; bad.tracks[0].transpose_automation = {{0, 49.0F}};
+    invalid([&] { Engine e(bad); });
+    bad = gain_plan; bad.tracks[0].device_gain_automation = {{0, 17.0F}};
+    invalid([&] { Engine e(bad); });
+}
 void automation_contract() {
     SessionPlan plan;
     plan.tracks.push_back(Track{1, {AudioClip{{1}, true}}});
@@ -404,7 +435,7 @@ void controller_allocation_contract() {
 }
 int main() {
     try {
-        grid_contract(); audio_contract(); midi_contract(); stereo_contract(); automation_contract(); instrument_contract(); queue_contract(); validation_contract();
+        grid_contract(); audio_contract(); midi_contract(); stereo_contract(); automation_contract(); device_automation_contract(); instrument_contract(); queue_contract(); validation_contract();
         controller_allocation_contract();
         std::cout << "PASS: grid, audio, MIDI, stereo/pan, automation, instrument envelopes and voice stealing, command bounds, validation; process allocations=" << render_allocations << '\n';
         return 0;

@@ -11,7 +11,9 @@ struct DocumentClipSource {
 struct DocumentTrackGain { TrackId id; float gain; float device_gain = 1.0F; };
 // Automatable track parameters. A lane replaces the static gain or pan of
 // its track; mute/solo still win (an inaudible track prepares silent).
-enum class AutomationTarget { gain, pan };
+// device_gain replaces the track's compiled device gain (factor 0..16);
+// transpose adds rounded semitones at each note-on (MIDI tracks).
+enum class AutomationTarget { gain, pan, device_gain, transpose };
 struct DocumentAutomation {
     TrackId track;
     AutomationTarget target;

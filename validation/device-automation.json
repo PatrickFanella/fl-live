@@ -1,0 +1,30 @@
+{
+  "verified_at": "2026-11-07T11:30:56.350105+00:00",
+  "base": "feat/devices-ui (PR #144) head",
+  "issues": [
+    77
+  ],
+  "scope": "Automation lanes for device parameters, their compilation, persistence and integration with device edits and Undo",
+  "environment": "Kvant, pinned CI image, docker --network none, Qt offscreen platform",
+  "verified_behaviors": [
+    "Engine: a device-gain lane replaces device_gain sample for sample with the level lane; a transpose lane is read at note-on and rounded (11.6 -> 12 turns A4 into A5) with unchanged on/off frames; a note pushed past 127 is silent; identical across block sizes; out-of-range lanes are refused",
+    "Content: gain lanes compile to factor lanes scaled by the other gain devices; the automated transpose leaves the static note compile; device-automation-v1 round trips; refusals for an unknown device, a second automated gain, non-integer or out-of-range transpose, out-of-range gain, +25 dB against other gains, a device ID on a level lane, and device lanes without the feature",
+    "Desktop: a -60 -> 0 dB lane over bar 1 matches (0.7*factor)*source with the factor linear between 10^-3 and 1; a transpose lane from beat 3 doubles the zero crossings of beats 3-4 only; Save/reopen exports identical audio",
+    "Duplicating a track remaps its device lane to the new device ID; removing a device removes its lane; Undo restores it; a second automated transpose is refused",
+    "QML: the parameter box lists Gain 1 after Level and Pan, the value box spans -60..12, lane clicks at the top and bottom add +12 and -60 dB, a typed point is added, and Undo removes it"
+  ],
+  "source_sha256": {
+    "include/fl_live/engine.hpp": "73da11083401facd73035b947d8b65a250bf80b48ade9c6654b8e3196e3c433d",
+    "src/engine.cpp": "b8295436bb739748908a4939da536605824dd0a42b7ebc8af7c259602d543293",
+    "include/fl_live/document_render.hpp": "0e71e6f1cc2ce1cee4b23d9426d267c7ab6ba95bb58918b6cac5362a61e9cc9e",
+    "src/document_render.cpp": "3e79989d5e3bd0a5ed2b36a279e34bd5aa6a4e8aafbd16f4cb8b461fdbf5d56b",
+    "apps/desktop/authored_project.hpp": "805fad813981562b99badd74077c04b7ffde01f33e62921f0ccb236a9d8630fc",
+    "apps/desktop/authored_project.cpp": "03b116fe68ebc0cf1260795832233045f4580b716417005c38afa1bbeb3f2b80",
+    "apps/desktop/session.cpp": "16ac4723756496f62838c779f634c45655c79db1aba45028fbd1082f468f6f7e",
+    "apps/desktop/Main.qml": "6a22156f0b5656babeb9a7dfa0bcd796b73291a5a94db83257c6a0bf72c1fcc4",
+    "tests/engine_tests.cpp": "38359f704be279f34281f9ba653ac02afead525d16fa23f6c81853e6c1689d17",
+    "tests/authored_project_tests.cpp": "c8e555bb74d313d38cb4857361d4d6c6ed15aa582bb1fb138e2c6dbf3fd54da4",
+    "tests/desktop_tests.cpp": "f4ff698ee220c331e3f1296a5fae1ced9b6b087a25b5451ae21b650da8fa2385"
+  },
+  "limits": "One automated gain and one automated transpose device per track; offscreen platform; no physical audio."
+}

@@ -39,7 +39,8 @@ SessionPlan prepare(const DocumentSnapshot& document, std::span<const DocumentCl
         const auto& lane = automation[i];
         if (std::none_of(document.tracks.begin(), document.tracks.end(), [&](const auto& t) { return t.id == lane.track; }))
             throw std::invalid_argument("Automation for an unknown track");
-        if (lane.target != AutomationTarget::gain && lane.target != AutomationTarget::pan) throw std::invalid_argument("Unknown automation target");
+        if (lane.target != AutomationTarget::gain && lane.target != AutomationTarget::pan && lane.target != AutomationTarget::device_gain &&
+            lane.target != AutomationTarget::transpose) throw std::invalid_argument("Unknown automation target");
         for (std::size_t j = 0; j < i; ++j)
             if (automation[j].track == lane.track && automation[j].target == lane.target) throw std::invalid_argument("Duplicate automation lane");
     }
@@ -63,8 +64,11 @@ SessionPlan prepare(const DocumentSnapshot& document, std::span<const DocumentCl
         // Mute/solo resolve to zero gain at preparation; pan maps percent to
         // the engine's balance law. Edits rebuild the plan.
         prepared.pan = static_cast<float>(track.mix.pan) / static_cast<float>(TrackMix::pan_limit);
-        for (const auto& lane : automation) if (lane.track == track.id)
-            (lane.target == AutomationTarget::gain ? prepared.gain_automation : prepared.pan_automation) = lane.points;
+        for (const auto& lane : automation) if (lane.track == track.id) {
+            auto& target = lane.target == AutomationTarget::gain ? prepared.gain_automation : lane.target == AutomationTarget::pan ? prepared.pan_automation
+                : lane.target == AutomationTarget::device_gain ? prepared.device_gain_automation : prepared.transpose_automation;
+            target = lane.points;
+        }
         if (!SessionDocument::audible(document, track.id)) { prepared.gain = 0; prepared.gain_automation.clear(); }
         for (const auto& clip : document.clips) if (clip.track == track.id)
             prepared.clips.push_back(*content.at(clip.id.value));

@@ -40,7 +40,9 @@ struct TrackContent {
 // same units as the static controls: level 0-100 percent, pan -100..100.
 // Points sit at hundredths of a beat from the song start (up to 256 bars)
 // and must strictly increase; values are linear between points in frames.
-enum class AutomatedParameter { level, pan };
+// device: the parameter of the device with that ID on the lane's track
+// (gain in dB, transpose in whole semitones); see docs/devices.md.
+enum class AutomatedParameter { level, pan, device };
 struct LanePoint {
     std::int64_t at = 0;
     double value = 0;
@@ -50,6 +52,7 @@ struct AutomationLane {
     fl_live::TrackId track;
     AutomatedParameter parameter = AutomatedParameter::level;
     std::vector<LanePoint> points;
+    std::uint64_t device = 0; // device lanes only
     bool operator==(const AutomationLane&) const = default;
 };
 inline constexpr std::int64_t automation_position_limit = 256LL * 4 * 100;

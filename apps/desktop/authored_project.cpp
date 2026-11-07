@@ -289,17 +289,40 @@ void validateContent(const SessionContent& content,const fl_live::DocumentSnapsh
         const auto& lane=content.automation[i];
         if(std::none_of(identities.tracks.begin(),identities.tracks.end(),[&](const auto& t){return t.id==lane.track;}))
             throw std::invalid_argument("Automation lane for an unknown track");
-        if(lane.parameter!=AutomatedParameter::level && lane.parameter!=AutomatedParameter::pan)throw std::invalid_argument("Unknown automated parameter");
-        for(std::size_t j=0;j<i;++j)if(content.automation[j].track==lane.track && content.automation[j].parameter==lane.parameter)
+        if(lane.parameter!=AutomatedParameter::level && lane.parameter!=AutomatedParameter::pan && lane.parameter!=AutomatedParameter::device)
+            throw std::invalid_argument("Unknown automated parameter");
+        for(std::size_t j=0;j<i;++j)if(content.automation[j].track==lane.track && content.automation[j].parameter==lane.parameter && content.automation[j].device==lane.device)
             throw std::invalid_argument("A parameter has at most one automation lane");
         if(lane.points.empty() || lane.points.size()>fl_live::Engine::automation_points_capacity)
             throw std::invalid_argument("An automation lane holds 1 to 4096 points");
-        const double low=lane.parameter==AutomatedParameter::level ? 0 : -100;
+        double low=lane.parameter==AutomatedParameter::level ? 0 : -100,high=100;
+        if(lane.parameter!=AutomatedParameter::device && lane.device)throw std::invalid_argument("Only device lanes name a device");
+        if(lane.parameter==AutomatedParameter::device) {
+            const auto entry=std::find_if(content.devices.begin(),content.devices.end(),[&](const auto& e){return e.track==lane.track;});
+            const Device* device=nullptr;
+            if(entry!=content.devices.end())for(const auto& d:entry->devices)if(d.id==lane.device)device=&d;
+            if(!device)throw std::invalid_argument("A device lane must name a device on its track");
+            // The engine holds one lane of each kind per track.
+            for(std::size_t j=0;j<content.automation.size();++j) {
+                const auto& other=content.automation[j];
+                if(j==i || other.track!=lane.track || other.parameter!=AutomatedParameter::device)continue;
+                for(const auto& d:entry->devices)if(d.id==other.device && d.kind==device->kind)
+                    throw std::invalid_argument("A track can automate at most one gain device and one transpose device");
+            }
+            if(device->kind==DeviceKind::gain) {
+                low=-60;high=12;
+                double others=0;for(const auto& d:entry->devices)if(d.kind==DeviceKind::gain && d.id!=device->id)others+=d.value;
+                for(const auto& point:lane.points)if(point.value+others>combined_device_gain_limit_db)throw std::invalid_argument("Combined device gain exceeds +24 dB");
+            } else {
+                low=-48;high=48;
+                for(const auto& point:lane.points)if(point.value!=std::floor(point.value))throw std::invalid_argument("Transpose automation uses whole semitones");
+            }
+        }
         for(std::size_t k=0;k<lane.points.size();++k) {
             const auto& point=lane.points[k];
             if(point.at<0 || point.at>automation_position_limit || (k && point.at<=lane.points[k-1].at))
                 throw std::invalid_argument("Automation points must strictly increase within 256 bars");
-            if(!std::isfinite(point.value) || point.value<low || point.value>100)
+            if(!std::isfinite(point.value) || point.value<low || point.value>high)
                 throw std::invalid_argument("Automation value is outside the parameter's range");
         }
     }
@@ -345,7 +368,13 @@ std::vector<fl_live::DocumentClipSource> contentSources(const SessionContent& co
         if(kind==fl_live::TrackKind::midi) {
             auto midi=value.piano ? pianoClip(*value.piano,content.tempo,value.synth) : patternClip(value.pattern,content.tempo,value.synth);
             const auto entry=std::find_if(content.devices.begin(),content.devices.end(),[&](const auto& e){return e.track==clip.track;});
-            if(entry!=content.devices.end())midi=transposed(std::move(midi),deviceChain(*entry,kind).midi);
+            if(entry!=content.devices.end()) {
+                // An automated transpose is applied at note-on instead.
+                auto stage=deviceChain(*entry,kind).midi;
+                std::erase_if(stage,[&](const auto& d){return std::any_of(content.automation.begin(),content.automation.end(),[&](const auto& l){
+                    return l.parameter==AutomatedParameter::device && l.device==d.id;});});
+                midi=transposed(std::move(midi),stage);
+            }
             result.push_back({clip.id,std::move(midi)});
         }
         else if(value.audio==AudioSource::pulse)result.push_back({clip.id,pulseClip(content.tempo)});
@@ -367,11 +396,24 @@ std::vector<fl_live::DocumentAutomation> contentAutomation(const SessionContent&
     std::vector<fl_live::DocumentAutomation> result;
     for(const auto& lane:content.automation) {
         fl_live::DocumentAutomation prepared{lane.track,lane.parameter==AutomatedParameter::level ? fl_live::AutomationTarget::gain : fl_live::AutomationTarget::pan,{}};
+        // A gain-device lane becomes a factor lane scaled by the track's other
+        // gain devices; a transpose lane stays in semitones.
+        std::optional<DeviceKind> device;double others=1;
+        if(lane.parameter==AutomatedParameter::device) {
+            const auto& entry=*std::find_if(content.devices.begin(),content.devices.end(),[&](const auto& e){return e.track==lane.track;});
+            for(const auto& d:entry.devices) {
+                if(d.id==lane.device)device=d.kind;
+                else if(d.kind==DeviceKind::gain)others*=static_cast<double>(static_cast<float>(std::pow(10.0,d.value/20)));
+            }
+            prepared.target=*device==DeviceKind::gain ? fl_live::AutomationTarget::device_gain : fl_live::AutomationTarget::transpose;
+        }
         for(const auto& point:lane.points) {
             // Same upward rounding as every other musical boundary.
             const auto numerator=48000ULL*60*static_cast<std::uint64_t>(point.at);
             const auto denominator=static_cast<std::uint64_t>(content.tempo)*100;
-            prepared.points.push_back({(numerator+denominator-1)/denominator,static_cast<float>(point.value/100.0)});
+            const float value=!device ? static_cast<float>(point.value/100.0)
+                : *device==DeviceKind::gain ? static_cast<float>(others*std::pow(10.0,point.value/20)) : static_cast<float>(point.value);
+            prepared.points.push_back({(numerator+denominator-1)/denominator,value});
         }
         result.push_back(std::move(prepared));
     }
@@ -437,9 +479,10 @@ QByteArray encodeAuthoredProject(const AuthoredProject& project,const QString& b
     const bool synths=std::any_of(project.content.clips.begin(),project.content.clips.end(),[](const auto& c){return c.synth!=SynthSettings{};});
     const bool pianos=std::any_of(project.content.clips.begin(),project.content.clips.end(),[](const auto& c){return c.piano.has_value();});
     const bool devices=!project.content.devices.empty();
+    const bool deviceLanes=std::any_of(project.content.automation.begin(),project.content.automation.end(),[](const auto& l){return l.parameter==AutomatedParameter::device;});
     QJsonObject root{{"format","fl-live-project"},{"version",4},
         {"required_features",[&]{QJsonArray f{"general-session-v1"};if(ranges)f.append("clip-ranges-v1");if(relative)f.append("asset-relative-v1");
-            if(automated)f.append("automation-v1");if(synths)f.append("synth-v1");if(pianos)f.append("piano-roll-v1");if(devices)f.append("devices-v1");return f;}()},
+            if(automated)f.append("automation-v1");if(synths)f.append("synth-v1");if(pianos)f.append("piano-roll-v1");if(devices)f.append("devices-v1");if(deviceLanes)f.append("device-automation-v1");return f;}()},
         {"tempo",project.content.tempo},
         {"session",session},{"tracks",tracks},{"clips",clips}};
     if(automated) {
@@ -447,7 +490,9 @@ QByteArray encodeAuthoredProject(const AuthoredProject& project,const QString& b
         for(const auto& lane:project.content.automation) {
             QJsonArray points;
             for(const auto& point:lane.points)points.append(QJsonObject{{"at",static_cast<double>(point.at)},{"value",point.value}});
-            lanes.append(QJsonObject{{"track",idText(lane.track.value)},{"parameter",lane.parameter==AutomatedParameter::level ? "level" : "pan"},{"points",points}});
+            QJsonObject object{{"track",idText(lane.track.value)},{"parameter",lane.parameter==AutomatedParameter::level ? "level" : lane.parameter==AutomatedParameter::pan ? "pan" : "device"},{"points",points}};
+            if(lane.parameter==AutomatedParameter::device)object.insert("device",idText(lane.device));
+            lanes.append(object);
         }
         root.insert("automation",lanes);
     }
@@ -489,6 +534,8 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
     if(synths)canonical.append("synth-v1");
     if(pianos)canonical.append("piano-roll-v1");
     if(devices)canonical.append("devices-v1");
+    const bool deviceLanes=features.contains("device-automation-v1");
+    if(deviceLanes)canonical.append("device-automation-v1");
     if(features!=canonical)throw std::invalid_argument("Unsupported required project feature");
     if(!v4["session"].isObject())throw std::invalid_argument("Project requires a session object");
     AuthoredProject project;
@@ -574,10 +621,12 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
         if(!v4["automation"].isArray() || v4["automation"].toArray().size()>2*static_cast<qsizetype>(fl_live::SessionDocument::track_limit))
             throw std::invalid_argument("Invalid automation array");
         for(const auto& value:v4["automation"].toArray()) {
-            const auto lane=exact(value,{"track","parameter","points"});
+            const bool deviceLane=deviceLanes && value.toObject().value("parameter")=="device";
+            const auto lane=deviceLane ? exact(value,{"track","parameter","device","points"}) : exact(value,{"track","parameter","points"});
             AutomationLane decoded{fl_live::TrackId{idValue(lane["track"])}};
             if(lane["parameter"]=="level")decoded.parameter=AutomatedParameter::level;
             else if(lane["parameter"]=="pan")decoded.parameter=AutomatedParameter::pan;
+            else if(deviceLane){decoded.parameter=AutomatedParameter::device;decoded.device=idValue(lane["device"]);}
             else throw std::invalid_argument("Unsupported automated parameter");
             if(!lane["points"].isArray() || lane["points"].toArray().size()>static_cast<qsizetype>(fl_live::Engine::automation_points_capacity))
                 throw std::invalid_argument("Invalid automation points");

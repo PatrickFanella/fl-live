@@ -1699,6 +1699,67 @@ private slots:
         ui.type("deviceValue1_0","7",true);QTRY_COMPARE(session.trackDevices(1)[0].toMap()["value"].toDouble(),7.0);QVERIFY(session.running());
         QVERIFY(ui.window->grabWindow().save("desktop-devices.png"));
     }
+    // #77: device parameters automate like level and pan, follow device
+    // removal and track duplication, and render against independent oracles.
+    void deviceAutomationInSession() {
+        QTemporaryDir directory;
+        const auto exported=[&](Session& s,const QString& name,int bars){const auto path=directory.filePath(name);
+            if(!s.exportAudio(path,1,bars,0,2,"float32"))throw std::runtime_error("export refused");
+            for(int i=0;i<1000 && s.exporting();++i)QTest::qWait(10);return readWav(path).samples;};
+        Session session;const auto pulse=session.trackIds()[0].toString(),steps=session.trackIds()[1].toString();
+        QVERIFY(session.setMute(steps,true));QVERIFY(session.addDevice(pulse,"gain"));
+        // Gain lane from -60 dB to 0 dB over bar 1: the factor is linear between 10^-3 and 1.
+        QVERIFY(session.setAutomationPoint(pulse,"device:1",0,-60));QVERIFY(session.setAutomationPoint(pulse,"device:1",400,0));
+        QCOMPARE(session.undoText(),QString("Undo track 1 automation"));QCOMPARE(session.automationPoints(0,"device:1").size(),2);
+        const auto out=exported(session,"gain-lane.wav",2);const auto source=pulseClip(120);
+        const float low=static_cast<float>(std::pow(10.0,-60.0/20));
+        for(std::size_t f=0;f<192000;f+=4999) {
+            const float factor=f>=96000 ? 1.0F : static_cast<float>(low+(1.0-static_cast<double>(low))*static_cast<double>(f)/96000.0);
+            QCOMPARE(out[2*f],(0.7F*factor)*source.samples[f%source.samples.size()]);
+        }
+        QVERIFY(!session.setAutomationPoint(pulse,"device:1",800,13));QVERIFY(!session.setAutomationPoint(pulse,"device:9",0,0));
+        QVERIFY(!session.setAutomationPoint(pulse,"device:x",0,0));
+        // Transpose lane on the steps track: the template's notes at beats 1-4; +12 from beat 3.
+        QVERIFY(session.setMute(steps,false));QVERIFY(session.setMute(pulse,true));QVERIFY(session.setSynth("waveform",2));
+        QVERIFY(session.addDevice(steps,"transpose"));
+        const auto plain=exported(session,"plain.wav",1);
+        QVERIFY(session.setAutomationPoint(steps,"device:2",0,0));QVERIFY(session.setAutomationPoint(steps,"device:2",199,0));QVERIFY(session.setAutomationPoint(steps,"device:2",200,12));
+        QVERIFY(!session.setAutomationPoint(steps,"device:2",300,0.5));
+        const auto lifted=exported(session,"lifted.wav",1);
+        const auto changes=[](const std::vector<float>& s,std::size_t from,std::size_t to){int n=0;for(std::size_t f=from+1;f<to;++f)if((s[2*f]>0)!=(s[2*(f-1)]>0))++n;return n;};
+        for(std::size_t beat=0;beat<4;++beat) { // notes 60, 64, 67, 72 for 18000 frames each
+            const auto from=beat*24000,to=from+18000;
+            if(beat<2)QCOMPARE(changes(lifted,from,to),changes(plain,from,to));
+            else QVERIFY(std::abs(changes(lifted,from,to)-2*changes(plain,from,to))<=2); // an octave up
+            QCOMPARE(lifted[2*(to-1)]!=0,true);QCOMPARE(lifted[2*to],0.0F);
+        }
+        // Save/reopen keeps lanes bound to the same device IDs.
+        const auto path=directory.filePath("lanes.json");QVERIFY(session.saveProject(path));
+        Session reopened;QVERIFY(reopened.loadProject(path));
+        QCOMPARE(reopened.automationPoints(1,"device:2"),session.automationPoints(1,"device:2"));QVERIFY(exported(reopened,"reopened.wav",1)==lifted);
+        // Duplicating remaps the lane to the copy's device; removing a device removes its lane; Undo restores both.
+        QVERIFY(session.duplicateTrack(steps));QCOMPARE(session.automationPoints(2,"device:3"),session.automationPoints(1,"device:2"));
+        QVERIFY(session.automationPoints(2,"device:2").isEmpty());
+        QVERIFY(session.removeDevice("2"));QVERIFY(session.automationPoints(1,"device:2").isEmpty());
+        session.undo();QCOMPARE(session.automationPoints(1,"device:2").size(),3);
+        // A second automated transpose on one track is refused.
+        QVERIFY(session.addDevice(steps,"transpose"));QVERIFY(!session.setAutomationPoint(steps,"device:4",0,1));QVERIFY(session.message().contains("at most one"));
+    }
+    void qmlDeviceAutomation() {
+        Session session;QmlUi ui(session);QVERIFY(ui.window && QTest::qWaitForWindowExposed(ui.window));
+        ui.click("addGain0");QTRY_COMPARE(session.trackDevices(0).size(),1);
+        ui.click("automationToggle0");ui.keys("automationParameter0",Qt::Key_Down,2);
+        QCOMPARE(ui.item("automationParameter0")->property("currentText").toString(),QString("Gain 1"));
+        QCOMPARE(ui.item("automationValue0")->property("from").toInt(),-60);QCOMPARE(ui.item("automationValue0")->property("to").toInt(),12);
+        auto* lane=ui.item("automationLane0");
+        QTest::mouseClick(ui.window,Qt::LeftButton,Qt::NoModifier,lane->mapToScene(QPointF(1,0)).toPoint()); // top row: +12 dB
+        QTRY_COMPARE(session.automationPoints(0,"device:1").size(),1);QCOMPARE(session.automationPoints(0,"device:1")[0].toList()[1].toDouble(),12.0);
+        QTest::mouseClick(ui.window,Qt::LeftButton,Qt::NoModifier,lane->mapToScene(QPointF(lane->width()*400/1600,lane->height()-1)).toPoint()); // bottom: -60 dB
+        QTRY_COMPARE(session.automationPoints(0,"device:1").size(),2);QCOMPARE(session.automationPoints(0,"device:1")[1].toList()[1].toDouble(),-60.0);
+        ui.type("automationAt0","2",true);ui.type("automationValue0","-6",true);ui.click("automationAdd0");
+        QTRY_COMPARE(session.automationPoints(0,"device:1").size(),3);QCOMPARE(session.automationPoints(0,"device:1")[1].toList(),(QVariantList{200.0,-6.0}));
+        ui.click("undoButton");QTRY_COMPARE(session.automationPoints(0,"device:1").size(),2);
+    }
     void qmlRelinkMissingAudio() {
         QTemporaryDir root;const auto audio=root.filePath("a.wav"),project=root.filePath("p.json");
         std::vector<qint16> tone(4800);for(std::size_t i=0;i<tone.size();++i)tone[i]=static_cast<qint16>(i%300*50);
