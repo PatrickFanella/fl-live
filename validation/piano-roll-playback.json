@@ -1,0 +1,50 @@
+{
+  "verified_at": "2026-11-07T10:52:51.080246+00:00",
+  "base": "feat/piano-roll-history (PR #140) head",
+  "issues": [
+    42
+  ],
+  "scope": "Piano-roll UI-to-audio journey and voice cleanup on every termination path",
+  "environment": "Kvant, pinned CI image, docker --network none, Qt offscreen platform, silent preview clock",
+  "gates": {
+    "desktop": {
+      "passed": 24,
+      "total": 24
+    },
+    "release": {
+      "passed": 10,
+      "total": 10
+    },
+    "engine-only": {
+      "passed": 8,
+      "total": 8
+    },
+    "pipewire-sanitize": {
+      "passed": 18,
+      "total": 18
+    },
+    "document-io-sanitize": {
+      "passed": 11,
+      "total": 11
+    },
+    "qmlPianoRollPlaybackJourney repeats": {
+      "passed": 4,
+      "total": 4
+    }
+  },
+  "verified_behaviors": [
+    "QML-built clip: converted notes deleted by Shift-click and Delete, square wave chosen, three notes typed, one dragged a sixteenth later",
+    "Float export: note A sounds from frame 30000 to 41999 at 0.25*0.09; B and C overlap from 48000 at the summed level, C ends at 60000, B at 72000; zero-crossing counts match 440 Hz and 220 Hz within 2",
+    "Undo moves A's onset to frame 24000, Redo restores 30000; Save and reopening in a fresh window export sample-identical audio",
+    "Voices reach zero after Silence now; after deleting every note while playing (and stay zero for 2.5 s); after a shorter loop's cut notes end; after Loop off ends the clip and stops the track; and after Stop",
+    "RenderStatus publishes the engine's active voice count with each render acknowledgement"
+  ],
+  "source_sha256": {
+    "include/fl_live/controller.hpp": "7a5fe0867242b12b04a4315d33afab34dec6a8ea44764b120188d79beeb11265",
+    "apps/desktop/session.hpp": "69f4d60087366613121dc1b807d89ead1c3d62c90aa92a257d91ebd0f55522ea",
+    "tests/desktop_tests.cpp": "1ff9c3a36ac2362aaa4d1179c6e7c97e2369f356d014fa26ad8957e05f3c39be",
+    "src/engine.cpp": "19cf16efa761f23ace007637eaa6e3444c0b1603aae67f94b9913ab88b38b741",
+    "apps/desktop/project.cpp": "3fdbbe0266a89065c156e1a118413a8b999dd7085ad8773dcaff7512381ae850"
+  },
+  "limits": "Rendered export and preview-clock acknowledgements, not a PipeWire capture; offscreen platform; no physical audio."
+}

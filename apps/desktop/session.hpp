@@ -254,6 +254,8 @@ public:
     bool running() const { return status_.running; }
     // Plan replacements the render owner has activated in this runtime.
     std::uint64_t playbackEdits() const { return status_.generation; }
+    // Sounding MIDI voices as of the last render acknowledgement.
+    int activeVoices() const { return static_cast<int>(status_.active_voices); }
     bool pending() const { return status_.handled_serial < serial_; }
     QString position() const;
     QString message() const { return message_; }

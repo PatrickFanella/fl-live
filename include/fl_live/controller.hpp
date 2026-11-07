@@ -75,6 +75,7 @@ struct RenderStatus {
     std::size_t track_count = 0;
     std::uint64_t generation = 0;       // plan replacements activated
     std::uint64_t dropped_commands = 0; // queued commands removed by replacements
+    std::size_t active_voices = 0;      // sounding MIDI voices on all tracks
     std::array<TrackStatus, Engine::track_capacity> tracks{};
 };
 
@@ -208,6 +209,7 @@ public:
             value.track_count = published_tracks_.load();
             value.generation = generation_count_.load();
             value.dropped_commands = dropped_count_.load();
+            value.active_voices = voices_.load();
             for (std::size_t i = 0; i < value.track_count; ++i)
                 value.tracks[i] = {tracks_[i].active.load(), static_cast<PendingAction>(tracks_[i].pending.load()),
                     tracks_[i].clip.load(), tracks_[i].at.load()};
@@ -281,7 +283,7 @@ private:
     std::atomic<bool> panic_{false};
     std::uint64_t handled_ = 0, rejected_ = 0;
     std::atomic<std::uint64_t> sequence_{0}, serial_{0}, rejected_count_{0}, position_{0}, generation_count_{0}, dropped_count_{0};
-    std::atomic<std::size_t> published_tracks_{0};
+    std::atomic<std::size_t> published_tracks_{0}, voices_{0};
     std::atomic<bool> running_{false};
     void publish() noexcept {
         // All fields are atomic; seq_cst order gives a coherent snapshot.
@@ -294,6 +296,7 @@ private:
         generation_count_.store(generation_);
         dropped_count_.store(dropped_);
         published_tracks_.store(track_count_);
+        voices_.store(engine_.active_voices());
         const auto tracks = engine_.track_statuses();
         for (std::size_t i = 0; i < track_count_; ++i) {
             tracks_[i].active.store(tracks[i].active_clip);
