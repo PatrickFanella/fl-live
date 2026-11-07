@@ -1316,6 +1316,42 @@ private slots:
         QTRY_VERIFY(QAccessible::queryAccessibleInterface(findItem(window->contentItem(),"mute0"))->state().checked);
         QAccessible::setActive(false);
     }
+    void generalDirtyAndHistoryBoundaries() {
+        QTemporaryDir directory;const auto path=directory.filePath("bounds.json");
+        Session session;QVERIFY(session.addTrack("audio"));QVERIFY(session.addTrack("midi"));
+        QVERIFY(session.saveProject(path));QVERIFY(!session.dirty());
+        // Selection, pattern choice, scene choice and export are not document edits.
+        const auto undo=session.undoText();
+        QVERIFY(session.editPattern(session.trackIds()[3].toString()));session.selectStep(2);
+        QVERIFY(session.createScene());session.undo(); // structure edit then back
+        QVERIFY(!session.dirty());QCOMPARE(session.undoText(),undo);
+        QVERIFY(session.selectScene(session.sceneIds()[0].toString()));
+        QVERIFY(session.exportWav(directory.filePath("x.wav"),1));QTRY_VERIFY(!session.exporting());
+        QVERIFY(!session.dirty());QCOMPARE(session.undoText(),undo);
+        // Returning to saved content clears dirty across structure edits.
+        const auto ids=session.trackIds();
+        QVERIFY(session.deleteTrack(ids[2].toString()));QVERIFY(session.dirty());
+        QVERIFY(session.duplicateTrack(ids[0].toString()));session.undo();session.undo();QVERIFY(!session.dirty());
+        QCOMPARE(session.trackIds(),ids);
+        // Failed operations add no history and keep the document.
+        QVERIFY(!session.deleteTrack("999"));QVERIFY(!session.duplicateTrack("0"));QVERIFY(!session.addTrack("bus"));
+        QVERIFY(!session.setClipRange(ids[1].toString(),0,10,true));QVERIFY(!session.relinkAudio(ids[1].toString(),"/nope.wav"));
+        QCOMPARE(session.undoText(),undo);QVERIFY(!session.dirty());
+        // History stays bounded at 128 across mixed structure and content edits.
+        for(int n=0;n<70;++n){QVERIFY(session.addTrack(n%2 ? "midi" : "audio"));QVERIFY(session.deleteTrack(session.trackIds().last().toString()));}
+        int undos=0;while(session.canUndo() && undos<200){session.undo();++undos;}
+        QCOMPARE(undos,128);QVERIFY(!session.canUndo());QVERIFY(!session.dirty()); // add/delete pairs: equal content is clean
+        int redos=0;while(session.canRedo() && redos<200){session.redo();++redos;}
+        QCOMPARE(redos,128);QCOMPARE(session.trackIds(),ids);QVERIFY(!session.dirty());
+        // New is refused while dirty, then resets path, history and checkpoint.
+        session.setTempo(99);QVERIFY(!session.newProject());QVERIFY(session.message().contains("Save your changes"));QCOMPARE(session.trackCount(),4);
+        session.undo();QVERIFY(session.newProject());
+        QCOMPARE(session.trackCount(),2);QVERIFY(!session.dirty());QVERIFY(!session.canUndo());QCOMPARE(session.tempo(),120);
+        QVERIFY(session.projectPath()!=path);
+        // The new project cannot silently overwrite the file it replaced.
+        QVERIFY(!session.saveProject(path));QVERIFY(session.message().contains("already exists"));
+        QCOMPARE(readAuthoredProject(path).identities.tracks.size(),4u);
+    }
     void qmlMixerInput() {
         Session session;
         QQmlApplicationEngine engine;

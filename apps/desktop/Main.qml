@@ -138,6 +138,7 @@ ApplicationWindow {
         RowLayout {
             Layout.fillWidth: true
             TextField { id: projectFile; objectName: "projectFile"; Layout.fillWidth: true; text: session.projectPath; placeholderText: "Project file path"; Accessible.name: "Project file path" }
+            Button { objectName: "newProjectButton"; text: "New"; enabled: session.canEdit && !session.dirty; onClicked: session.newProject(); Accessible.name: "New project"; ToolTip.visible: hovered; ToolTip.text: "Start the default project. Save or undo your edits first." }
             Button { objectName: "saveProjectButton"; text: "Save"; onClicked: session.saveProject(projectFile.text) }
             Button { objectName: "collectAssets"; text: "Collect audio"; enabled: session.canEdit; onClicked: session.collectAssets(); ToolTip.visible: hovered; ToolTip.text: "Copy imported WAVs from outside the project folder into a folder beside the saved project. Nothing is overwritten." }
             Button { objectName: "openProjectButton"; text: "Open"; enabled: session.canEdit; onClicked: session.loadProject(projectFile.text) }

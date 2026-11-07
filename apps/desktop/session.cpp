@@ -1143,3 +1143,26 @@ bool Session::discardRecovery(const QString& file) {
     emit changed();
     return true;
 }
+bool Session::newProject() {
+    if (dirty()) { message_ = "Save your changes before starting a new project."; emit changed(); return false; }
+    if (!editable()) return false;
+    try {
+        const auto project = defaultProject();
+        auto identities = std::make_shared<const fl_live::DocumentSnapshot>(project.identities);
+        pattern_clip_ = {};
+        if (!replace(std::make_shared<const SessionContent>(project.content), identities)) return false;
+        next_identity_ = project.identities.next_id;
+        restoreSceneSelection(project.identities.scenes[0].id);
+        project_path_ = QDir::home().filePath("fl-live-project.json");
+        owned_path_.clear(); // a new project may not overwrite an existing file by accident
+        saved_content_ = content_;
+        saved_identities_ = identities_;
+        selected_step_ = 0;
+        history_[0] = {content_, identities_, EditKind::none, -1, selected_scene_};
+        history_cursor_ = 0; history_size_ = 1;
+        message_ = "New project. Launch clips, then press Play.";
+        emit projectPathChanged();
+        emit changed();
+        return true;
+    } catch (const std::exception& error) { message_ = QString::fromUtf8(error.what()); emit changed(); return false; }
+}

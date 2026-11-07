@@ -31,3 +31,11 @@ Project-path notifications are separate from render/status notifications. A path
 Rename dialogs reset their text-undo baseline when opened, including repeated edits of the same name. Offscreen input tests cover modal text Undo, invalid names, Cancel, return focus, step selection, saved-name equality and v3 Save/Open/playback with full-width string IDs.
 
 History now retains scene selection context. Undoing creation selects its prior scene; undoing deletion selects the restored scene; Redo restores the original result selection. Standalone scene selection remains outside document history. See [scene management](scene-controls.md#creating-selecting-and-deleting-scenes).
+
+## General projects (#64)
+
+The history holds immutable snapshots of both the general content (tracks, clips, patterns, sources, ranges, levels) and the identity document, so structure edits (add, duplicate and delete tracks, imports, relinks, ranges, collected audio) undo like any other edit. Dirty state compares content and identities with the last save or open: returning to saved content by Undo/Redo is clean even through structure edits. Selection (scene, step, the pattern being edited) and export never create edits. Failed operations add nothing to history.
+
+**New** starts the default template project with an empty history and a fresh checkpoint. Like Open, it is refused while there are unsaved edits. A new project does not take over the previous project's file: saving it to that path is refused as an existing file.
+
+`generalDirtyAndHistoryBoundaries` checks all of the above, including 140 mixed structure edits against the 128-entry bound.

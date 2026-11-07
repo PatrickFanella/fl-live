@@ -189,6 +189,9 @@ public:
     double exportProgress() const;
     Q_INVOKABLE bool saveProject(const QString& path);
     Q_INVOKABLE bool loadProject(const QString& path);
+    // Starts the default template project, unsaved and with empty history.
+    // Refused while there are unsaved edits, like Open.
+    Q_INVOKABLE bool newProject();
     bool running() const { return status_.running; }
     bool pending() const { return status_.handled_serial < serial_; }
     QString position() const;
