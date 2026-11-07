@@ -8,9 +8,11 @@
 int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
     QCoreApplication::setApplicationName("fl-live");
+    QCoreApplication::setApplicationVersion(QStringLiteral(FL_LIVE_VERSION " (source " FL_LIVE_SOURCE_REVISION ")"));
     QCommandLineParser parser;
     parser.setApplicationDescription("Linux session prototype. Defaults to silent preview.");
     parser.addHelpOption();
+    parser.addVersionOption();
     parser.addOption({"remote", "Explicit PipeWire remote", "name"});
     parser.addOption({"target", "Explicit output target (requires remote)", "node"});
     parser.process(app);

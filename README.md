@@ -4,7 +4,7 @@ Original source for a Linux-first open-source music workstation, working toward 
 
 The private reference-product research remains in a separate workspace. No captured executable code, factory assets or research binaries are part of this source tree. Project licensing is still undecided; no release has been published. The canonical product repository is [subculture-collective/fl-live](https://git.subcult.tv/subculture-collective/fl-live), initially private.
 
-Keyboard shortcuts, focus rules and accessible names are in [keyboard and accessibility](docs/keyboard.md). See [support and limitations](docs/limitations.md) for what is measured and what is not, and [examples](examples/README.md) for two original example projects.
+To build a development package and install it, see [install](docs/install.md). Keyboard shortcuts, focus rules and accessible names are in [keyboard and accessibility](docs/keyboard.md). See [support and limitations](docs/limitations.md) for what is measured and what is not, and [examples](examples/README.md) for two original example projects.
 
 ## Build and test
 

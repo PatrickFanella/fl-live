@@ -1,0 +1,49 @@
+{
+  "verified_at": "2026-11-07T09:16:09.939467+00:00",
+  "base": "PR #128 head",
+  "issues": [
+    85
+  ],
+  "scope": "Development package (CPack TGZ), install rules, package identity, notices and a clean-install procedure",
+  "environment": "Built in the pinned CI image; clean check in archlinux base-devel (same digest and 2026-10-20 snapshot) with only qt6-base, qt6-declarative, pipewire, libsndfile and ttf-dejavu added; no cmake or ninja",
+  "package": {
+    "file": "fl-live-0.1.0-05236b1d57fd-linux-x86_64.tar.gz",
+    "bytes": 3644046,
+    "sha256": "1a3929cc58be22ec6d739b9a21f9e9a70a7683916f61a8da09bad2ba2d31a525",
+    "note": "Not reproducible byte for byte: archive timestamps vary between builds"
+  },
+  "gates": {
+    "desktop": {
+      "passed": 21,
+      "total": 21
+    },
+    "release": {
+      "passed": 7,
+      "total": 7
+    },
+    "engine-only": {
+      "passed": 5,
+      "total": 5
+    },
+    "pipewire-sanitize": {
+      "passed": 15,
+      "total": 15
+    },
+    "document-io-sanitize": {
+      "passed": 8,
+      "total": 8
+    }
+  },
+  "clean_install": [
+    "which cmake/ninja: absent",
+    "tar -xzf ... -C ~/.local --strip-components=1",
+    "fl-live --version -> 'fl-live 0.1.0 (source 05236b1d57fd)'",
+    "fl-live-render /tmp/demo.wav 257 -> 384000 frames at 48000 Hz",
+    "fl-live (offscreen, no PipeWire server) still running after 3 s",
+    "examples and docs present under ~/.local/share"
+  ],
+  "verified_behaviors": [
+    "staged-install CTest: file list, no installed binary references the build tree (readelf -d), --version reports the configured revision, installed renderer output, installed desktop launch"
+  ],
+  "limits": "No license chosen (#84): the package grants no redistribution rights and is not a release. No native Wayland, physical audio or other distributions; archive is not byte-reproducible."
+}

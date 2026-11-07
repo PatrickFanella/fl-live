@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=fl-live
+Comment=Linux session music workstation (development build)
+Exec=fl-live
+Terminal=false
+Categories=AudioVideo;Audio;Music;

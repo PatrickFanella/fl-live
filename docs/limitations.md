@@ -31,7 +31,7 @@ This page separates what has been measured from what is planned or unqualified. 
 | Recording | None | — | Audio/MIDI recording (#43–#50) |
 | Automation | [Level and pan lanes](automation.md) with stable IDs, linear interpolation, persistence and a pointer/keyboard lane editor | Offline and offscreen UI: [automation](../validation/parameter-automation.json) | Dragging points, playback edits (#53–#55), other parameters |
 | Devices, plugins | None | — | Typed devices (#73–#78), plugin hosting (#66–#72) |
-| Platforms | Linux with Qt 6.12 and PipeWire 1.6.9 in the pinned container | Hosted CI | Packaging and clean install (#85), macOS (#96) |
+| Platforms | Linux with Qt 6.12 and PipeWire 1.6.9 in the pinned container; a [development package](install.md) installs and launches in a clean runtime-only container | Hosted CI; [packaging](../validation/linux-packaging.json) | A licensed release (#84), other distributions, macOS (#96) |
 
 ## Known gaps that affect everyday use
 
