@@ -78,6 +78,12 @@ struct Track {
     std::vector<AutomationPoint> gain_automation;
     std::vector<AutomationPoint> pan_automation;
     float device_gain = 1.0F;
+    // Device automation (docs/devices.md). A non-empty gain lane replaces
+    // device_gain (factor 0..16). A transpose lane (semitones -48..48) is read
+    // at each note-on, rounded to the nearest semitone and added to the note's
+    // pitch; a note it pushes outside 0..127 gets no voice.
+    std::vector<AutomationPoint> device_gain_automation;
+    std::vector<AutomationPoint> transpose_automation;
 };
 struct SessionPlan {
     std::uint32_t sample_rate = 48000;
@@ -188,7 +194,7 @@ private:
     // entries past the plan's track count stay idle.
     std::vector<Runtime> runtime_;
     std::vector<Runtime> spare_;
-    std::vector<std::array<std::size_t, 2>> automation_cursor_; // per track: gain, pan
+    std::vector<std::array<std::size_t, 4>> automation_cursor_; // per track: gain, pan, device gain, transpose
     std::array<double, 128> steps_{};
     std::array<Command, command_capacity> commands_{};
     std::size_t head_ = 0;

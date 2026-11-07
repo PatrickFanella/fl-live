@@ -495,7 +495,60 @@ void deviceGraph() {
     std::vector<float> out(5);CHECK(engine.process(out,1));
     CHECK(out[0]==0.5F*0.25F && out[4]==0.5F*(0.5F*0.25F));
 }
+// Device automation lanes (#77): validation, compilation and persistence.
+void deviceAutomation() {
+    auto project=general();
+    const auto midiTrack=project.identities.tracks[3].id;
+    const std::vector<Device> chain{{1,DeviceKind::transpose,5},{2,DeviceKind::gain,-6},{3,DeviceKind::gain,3}};
+    project.content.devices={{midiTrack,chain,chainConnections(chain,fl_live::TrackKind::midi)}};project.content.next_device_id=4;
+    project.content.automation.push_back({midiTrack,AutomatedParameter::device,{{0,-60},{400,0}},2});
+    project.content.automation.push_back({midiTrack,AutomatedParameter::device,{{0,0},{400,12}},1});
+    validateContent(project.content,project.identities);
+    const auto lanes=contentAutomation(project.content,project.identities);
+    const auto gainLane=std::find_if(lanes.begin(),lanes.end(),[](const auto& l){return l.target==fl_live::AutomationTarget::device_gain;});
+    const auto transposeLane=std::find_if(lanes.begin(),lanes.end(),[](const auto& l){return l.target==fl_live::AutomationTarget::transpose;});
+    CHECK(gainLane!=lanes.end() && transposeLane!=lanes.end() && gainLane->track==midiTrack);
+    const double others=static_cast<double>(static_cast<float>(std::pow(10.0,3.0/20)));
+    CHECK(gainLane->points[0].value==static_cast<float>(others*std::pow(10.0,-60.0/20)) && gainLane->points[1].value==static_cast<float>(others));
+    const auto tempo=static_cast<std::uint64_t>(project.content.tempo)*100;
+    CHECK(gainLane->points[1].at==(2880000ULL*400+tempo-1)/tempo && transposeLane->points[1].value==12.0F);
+    // The automated transpose leaves the static note compile.
+    auto plain=project;plain.content.devices.clear();plain.content.automation.clear();
+    const auto clip=project.identities.clips[3].id;
+    const auto find=[&](const auto& sources){return std::get<fl_live::MidiClip>(std::find_if(sources.begin(),sources.end(),[&](const auto& x){return x.id==clip;})->content);};
+    const auto automated=find(contentSources(project.content,project.identities)),untouched=find(contentSources(plain.content,plain.identities));
+    CHECK(automated.notes.size()==untouched.notes.size());
+    for(std::size_t i=0;i<automated.notes.size();++i)CHECK(automated.notes[i].pitch==untouched.notes[i].pitch && automated.notes[i].start==untouched.notes[i].start);
+    const fl_live::DocumentRenderPlan prepared(project.identities,contentSources(project.content,project.identities),48000,120000,{},
+        contentGains(project.content,project.identities),lanes);
+    CHECK(prepared.plan().tracks[3].device_gain_automation.size()==2 && prepared.plan().tracks[3].transpose_automation.size()==2);
+    // Persistence behind device-automation-v1.
+    const auto bytes=encodeAuthoredProject(project);
+    const auto root=QJsonDocument::fromJson(bytes).object();
+    CHECK(root["required_features"].toArray().last()=="device-automation-v1");
+    CHECK(root["automation"].toArray()[0].toObject()["device"]=="2" && root["automation"].toArray()[0].toObject()["parameter"]=="device");
+    CHECK(decodeAuthoredProject(bytes).content==project.content);
+    auto noFeature=root;{auto f=noFeature["required_features"].toArray();f.removeLast();noFeature["required_features"]=f;}
+    rejects([&]{decodeAuthoredProject(QJsonDocument(noFeature).toJson());});
+    auto levelDevice=root;{auto a=levelDevice["automation"].toArray();auto l=a[0].toObject();l["parameter"]="level";a[0]=l;levelDevice["automation"]=a;}
+    rejects([&]{decodeAuthoredProject(QJsonDocument(levelDevice).toJson());});
+    // Refusals.
+    const auto refused=[&](auto edit){auto c=project.content;edit(c);rejects([&]{validateContent(c,project.identities);});};
+    refused([](SessionContent& c){c.automation[0].device=9;});                                   // no such device
+    refused([](SessionContent& c){c.automation.push_back({c.automation[0].track,AutomatedParameter::device,{{0,0}},3});}); // a second automated gain
+    refused([](SessionContent& c){c.automation[1].points[1].value=0.5;});                        // whole semitones
+    refused([](SessionContent& c){c.automation[1].points[1].value=49;});
+    refused([](SessionContent& c){c.automation[0].points[1].value=13;});
+    // The combined limit counts the lane against the other gain devices: +1 dB with two others at +12 is +25.
+    const auto twoLoud=[](SessionContent& c,double point){c.devices[0].devices[2].value=12;c.devices[0].devices.push_back({4,DeviceKind::gain,12});c.next_device_id=5;
+        c.devices[0].connections=chainConnections(c.devices[0].devices,fl_live::TrackKind::midi);c.automation[0].points[1].value=point;};
+    refused([&](SessionContent& c){twoLoud(c,1);});
+    {auto c=project.content;twoLoud(c,0);validateContent(c,project.identities);} // exactly +24
+    refused([](SessionContent& c){c.automation.push_back({c.automation[0].track,AutomatedParameter::level,{{0,50}},2});}); // a device ID on a level lane
+    auto ok=project.content;ok.devices[0].devices[2].value=12;ok.automation[0].points[1].value=12;validateContent(ok,project.identities); // exactly +24
+}
 int main(){try{
+    deviceAutomation();
     deviceGraph();
     pianoLoopTiming();
     movedNoteVoices();

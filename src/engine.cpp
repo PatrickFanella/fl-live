@@ -43,6 +43,8 @@ void validatePlan(const SessionPlan& plan) {
         };
         lane(track.gain_automation, 0, 4);
         lane(track.pan_automation, -1, 1);
+        lane(track.device_gain_automation, 0, 16);
+        lane(track.transpose_automation, -48, 48);
         if (track.clips.size() > Engine::clips_per_track_capacity) throw std::invalid_argument("at most 64 clips per track");
         for (const auto& clip : track.clips) {
             if (const auto* audio = std::get_if<AudioClip>(&clip)) {
@@ -225,7 +227,7 @@ ReplaceResult Engine::replace(const SessionPlan& next, const PlanMapping& mappin
     result.dropped_commands = count_ - kept;
     count_ = kept;
     runtime_.swap(spare_);
-    for (auto& cursor : automation_cursor_) cursor = {0, 0};
+    for (auto& cursor : automation_cursor_) cursor = {0, 0, 0, 0};
     plan_ = &next;
     return result;
 }
@@ -255,7 +257,8 @@ Engine::StereoSample Engine::render_track(std::size_t index) noexcept {
     const auto& clip = track.clips[*state.clip];
     const auto age = position_ - state.launched;
     auto& cursor = automation_cursor_[index];
-    const float gain = (track.gain_automation.empty() ? track.gain : automationValue(track.gain_automation, position_, cursor[0])) * track.device_gain;
+    const float device = track.device_gain_automation.empty() ? track.device_gain : automationValue(track.device_gain_automation, position_, cursor[2]);
+    const float gain = (track.gain_automation.empty() ? track.gain : automationValue(track.gain_automation, position_, cursor[0])) * device;
     const float pan = track.pan_automation.empty() ? track.pan : automationValue(track.pan_automation, position_, cursor[1]);
     const float left_gain = gain * (pan > 0 ? 1 - pan : 1.0F);
     const float right_gain = gain * (pan < 0 ? 1 + pan : 1.0F);
@@ -276,6 +279,11 @@ Engine::StereoSample Engine::render_track(std::size_t index) noexcept {
     if (local == 0) state.next_note = 0;
     while (state.next_note < midi.notes.size() && midi.notes[state.next_note].start == local) {
         const auto& note = midi.notes[state.next_note++];
+        int pitch = note.pitch;
+        if (!track.transpose_automation.empty()) {
+            pitch += static_cast<int>(std::lround(automationValue(track.transpose_automation, position_, cursor[3])));
+            if (pitch < 0 || pitch > 127) continue; // pushed out of range: no voice
+        }
         // Overload policy: a free voice; else the quietest releasing voice;
         // else the oldest voice. Ties take the lowest index.
         auto it = std::find_if(state.voices.begin(), state.voices.end(), [](const Voice& v) { return !v.active; });
@@ -289,7 +297,7 @@ Engine::StereoSample Engine::render_track(std::size_t index) noexcept {
         }
         if (it == state.voices.end())
             it = std::max_element(state.voices.begin(), state.voices.end(), [](const Voice& a, const Voice& b) { return a.age < b.age; });
-        *it = Voice{note.duration, 0, steps_[note.pitch], note.velocity * 0.1F, 0, 0, 0, false, true};
+        *it = Voice{note.duration, 0, steps_[static_cast<std::size_t>(pitch)], note.velocity * 0.1F, 0, 0, 0, false, true};
     }
     float value = 0;
     for (auto& voice : state.voices) {

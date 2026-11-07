@@ -399,14 +399,18 @@ ApplicationWindow {
                                 ColumnLayout {
                                     id: automationEditor
                                     visible: automationToggle.checked; Layout.fillWidth: true; spacing: 4
-                                    readonly property string parameter: automationParameter.currentIndex === 0 ? "level" : "pan"
-                                    readonly property real low: parameter === "level" ? 0 : -100
+                                    // Level, Pan, then the track's devices in chain order.
+                                    readonly property var devices: session.devices[index] || []
+                                    readonly property var device: automationParameter.currentIndex >= 2 ? devices[automationParameter.currentIndex - 2] || null : null
+                                    readonly property string parameter: automationParameter.currentIndex === 1 ? "pan" : device ? "device:" + device.id : "level"
+                                    readonly property real low: parameter === "level" ? 0 : parameter === "pan" ? -100 : device.kind === "gain" ? -60 : -48
+                                    readonly property real high: device ? (device.kind === "gain" ? 12 : 48) : 100
                                     // Re-read on every document change; the canvas repaints only when the points differ.
                                     readonly property var points: { session.undoText; session.dirty; return session.automationPoints(index, parameter) }
                                     readonly property real span: Math.max(1600, points.length ? points[points.length - 1][0] + 400 : 0)
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        ComboBox { id: automationParameter; objectName: "automationParameter" + index; model: ["Level", "Pan"]; Layout.preferredWidth: 96; Accessible.name: "Automated parameter of track " + (index + 1) }
+                                        ComboBox { id: automationParameter; objectName: "automationParameter" + index; model: ["Level", "Pan"].concat(automationEditor.devices.map((d, i) => (d.kind === "gain" ? "Gain " : "Transpose ") + (i + 1))); Layout.preferredWidth: 120; Accessible.name: "Automated parameter of track " + (index + 1) }
                                         Label { text: automationEditor.points.length + (automationEditor.points.length === 1 ? " point" : " points"); color: "#9daabd"; Layout.fillWidth: true }
                                         Button { objectName: "clearAutomation" + index; text: "Clear"; enabled: session.canChange && automationEditor.points.length > 0; onClicked: session.clearAutomation(trackColumn.trackId, automationEditor.parameter); Accessible.name: "Clear automation of track " + (index + 1) }
                                     }
@@ -417,8 +421,8 @@ ApplicationWindow {
                                         readonly property string paintKey: JSON.stringify(automationEditor.points) + automationEditor.parameter + width
                                         onPaintKeyChanged: requestPaint()
                                         function xAt(at) { return at / automationEditor.span * width }
-                                        // The top pixel row is 100 percent, the bottom row the parameter's minimum.
-                                        function yAt(value) { return (height - 1) - (value - automationEditor.low) / (100 - automationEditor.low) * (height - 1) }
+                                        // The top pixel row is the parameter's maximum, the bottom row its minimum.
+                                        function yAt(value) { return (height - 1) - (value - automationEditor.low) / (automationEditor.high - automationEditor.low) * (height - 1) }
                                         Accessible.role: Accessible.Graphic
                                         Accessible.name: "Automation lane of track " + (index + 1) + ", " + automationEditor.points.length + " points. Click to add a point, click a point to remove it."
                                         onPaint: {
@@ -443,10 +447,10 @@ ApplicationWindow {
                                                     if (Math.abs(lane.xAt(p[0]) - mouse.x) <= 6 && Math.abs(lane.yAt(p[1]) - mouse.y) <= 10) {
                                                         session.removeAutomationPoint(trackColumn.trackId, editor.parameter, p[0]); return
                                                     }
-                                                // Snap to a sixteenth note (25 hundredths of a beat) and a whole percent.
+                                                // Snap to a sixteenth note (25 hundredths of a beat) and a whole unit (percent, dB or semitone).
                                                 const at = Math.round(mouse.x / lane.width * editor.span / 25) * 25
-                                                const value = Math.round(editor.low + (lane.height - 1 - mouse.y) / (lane.height - 1) * (100 - editor.low))
-                                                session.setAutomationPoint(trackColumn.trackId, editor.parameter, at, Math.max(editor.low, Math.min(100, value)))
+                                                const value = Math.round(editor.low + (lane.height - 1 - mouse.y) / (lane.height - 1) * (editor.high - editor.low))
+                                                session.setAutomationPoint(trackColumn.trackId, editor.parameter, at, Math.max(editor.low, Math.min(editor.high, value)))
                                             }
                                         }
                                     }
@@ -459,7 +463,7 @@ ApplicationWindow {
                                             validator: RegularExpressionValidator { regularExpression: /^\s*\d{0,4}(\.\d{0,2})?\s*$/ }
                                             Accessible.name: "Automation point position in beats, track " + (index + 1) }
                                         Label { text: "Value"; color: "#9daabd" }
-                                        SpinBox { id: automationValue; objectName: "automationValue" + index; from: automationEditor.low; to: 100; value: automationEditor.parameter === "level" ? 70 : 0; editable: true; Layout.preferredWidth: 84; Accessible.name: "Automation point value in percent, track " + (index + 1) }
+                                        SpinBox { id: automationValue; objectName: "automationValue" + index; from: automationEditor.low; to: automationEditor.high; value: automationEditor.parameter === "level" ? 70 : 0; editable: true; Layout.preferredWidth: 84; Accessible.name: "Automation point value in " + (!automationEditor.device ? "percent" : automationEditor.device.kind === "gain" ? "decibels" : "semitones") + ", track " + (index + 1) }
                                         Button { objectName: "automationAdd" + index; text: "Add point"; enabled: session.canChange; onClicked: session.setAutomationPoint(trackColumn.trackId, automationEditor.parameter, automationAt.value * 25, automationValue.value); Accessible.name: "Add automation point to track " + (index + 1) }
                                     }
                                 }

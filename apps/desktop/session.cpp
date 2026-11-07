@@ -910,16 +910,21 @@ bool Session::duplicateTrack(const QString& id) {
         auto next=*content_;
         next.tracks.push_back({copy,trackContent(*content_,source).level});
         // The copy gets its own lanes for the same parameters.
-        for(const auto& lane:content_->automation)if(lane.track==source){auto own=lane;own.track=copy;next.automation.push_back(std::move(own));}
+        std::map<std::uint64_t,std::uint64_t> renamed;
         for(const auto& entry:content_->devices)if(entry.track==source) {
-            // The copy's devices get fresh IDs; its connections follow them.
+            // The copy's devices get fresh IDs; its connections and lanes follow them.
             auto own=entry;own.track=copy;
             for(auto& d:own.devices) {
                 const auto fresh=next.next_device_id++;
                 for(auto& c:own.connections){if(c.from.device==d.id)c.from.device=fresh;if(c.to.device==d.id)c.to.device=fresh;}
-                d.id=fresh;
+                renamed[d.id]=fresh;d.id=fresh;
             }
             next.devices.push_back(std::move(own));
+        }
+        for(const auto& lane:content_->automation)if(lane.track==source) {
+            auto own=lane;own.track=copy;
+            if(own.parameter==AutomatedParameter::device)own.device=renamed.at(own.device);
+            next.automation.push_back(std::move(own));
         }
         // duplicateTrack appends the new clips in the source track's order.
         std::size_t n=before;
@@ -1282,10 +1287,20 @@ bool Session::newProject() {
     } catch (const std::exception& error) { message_ = QString::fromUtf8(error.what()); emit changed(); return false; }
 }
 namespace {
-std::optional<AutomatedParameter> parameterNamed(const QString& name) {
-    if (name == "level") return AutomatedParameter::level;
-    if (name == "pan") return AutomatedParameter::pan;
+// "level", "pan" or "device:<id>".
+struct ParameterName { AutomatedParameter kind; std::uint64_t device = 0; };
+std::optional<ParameterName> parameterNamed(const QString& name) {
+    if (name == "level") return ParameterName{AutomatedParameter::level};
+    if (name == "pan") return ParameterName{AutomatedParameter::pan};
+    if (name.startsWith("device:")) {
+        bool ok = false;
+        const auto id = name.mid(7).toULongLong(&ok);
+        if (ok && id && QString::number(id) == name.mid(7)) return ParameterName{AutomatedParameter::device, id};
+    }
     return std::nullopt;
+}
+bool matches(const AutomationLane& lane, fl_live::TrackId track, const ParameterName& name) {
+    return lane.track == track && lane.parameter == name.kind && lane.device == name.device;
 }
 }
 QVariantList Session::automationPoints(int track, const QString& parameter) const {
@@ -1294,7 +1309,7 @@ QVariantList Session::automationPoints(int track, const QString& parameter) cons
     const auto id = identities_->tracks[static_cast<std::size_t>(track)].id;
     QVariantList result;
     for (const auto& lane : content_->automation)
-        if (lane.track == id && lane.parameter == *kind)
+        if (matches(lane, id, *kind))
             for (const auto& point : lane.points) result.append(QVariant(QVariantList{static_cast<double>(point.at), point.value}));
     return result;
 }
@@ -1302,14 +1317,14 @@ bool Session::setAutomationPoint(const QString& trackId, const QString& paramete
     if (!changeable()) return false;
     try {
         const auto kind = parameterNamed(parameter);
-        if (!kind) throw std::invalid_argument("Automation parameter must be level or pan");
+        if (!kind) throw std::invalid_argument("Automation parameter must be level, pan or a device");
         const fl_live::TrackId id{parseIdentity(trackId)};
         const auto index = prepared_->view().trackIndex(id);
         if (!index) throw std::invalid_argument("Unknown track");
         if (!std::isfinite(at) || at != std::floor(at)) throw std::invalid_argument("Automation position must be whole hundredths of a beat");
         auto next = *content_;
-        auto lane = std::find_if(next.automation.begin(), next.automation.end(), [&](const auto& l) { return l.track == id && l.parameter == *kind; });
-        if (lane == next.automation.end()) { next.automation.push_back({id, *kind, {}}); lane = next.automation.end() - 1; }
+        auto lane = std::find_if(next.automation.begin(), next.automation.end(), [&](const auto& l) { return matches(l, id, *kind); });
+        if (lane == next.automation.end()) { next.automation.push_back({id, kind->kind, {}, kind->device}); lane = next.automation.end() - 1; }
         const LanePoint point{static_cast<std::int64_t>(at), value};
         const auto place = std::lower_bound(lane->points.begin(), lane->points.end(), point.at, [](const auto& p, std::int64_t a) { return p.at < a; });
         if (place != lane->points.end() && place->at == point.at) place->value = value; else lane->points.insert(place, point);
@@ -1326,7 +1341,7 @@ bool Session::removeAutomationPoint(const QString& trackId, const QString& param
         const fl_live::TrackId id{parseIdentity(trackId)};
         const auto index = prepared_->view().trackIndex(id);
         auto next = *content_;
-        const auto lane = std::find_if(next.automation.begin(), next.automation.end(), [&](const auto& l) { return kind && l.track == id && l.parameter == *kind; });
+        const auto lane = std::find_if(next.automation.begin(), next.automation.end(), [&](const auto& l) { return kind && matches(l, id, *kind); });
         if (!index || lane == next.automation.end()) throw std::invalid_argument("No such automation lane");
         const auto removed = std::erase_if(lane->points, [&](const auto& p) { return static_cast<double>(p.at) == at; });
         if (!removed) throw std::invalid_argument("No automation point at that position");
@@ -1343,7 +1358,7 @@ bool Session::clearAutomation(const QString& trackId, const QString& parameter) 
         const auto index = prepared_->view().trackIndex(id);
         if (!kind || !index) throw std::invalid_argument("Unknown track or parameter");
         auto next = *content_;
-        std::erase_if(next.automation, [&](const auto& l) { return l.track == id && l.parameter == *kind; });
+        std::erase_if(next.automation, [&](const auto& l) { return matches(l, id, *kind); });
         if (next == *content_) return true;
         edit(next, EditKind::automation, static_cast<int>(*index));
         return true;
@@ -1533,6 +1548,9 @@ bool Session::editDevices(EditKind kind,fl_live::TrackId track,const std::functi
         std::vector<Device> devices;
         if(entry!=next.devices.end()){const auto chain=deviceChain(*entry,owner->kind);devices=chain.midi;devices.insert(devices.end(),chain.audio.begin(),chain.audio.end());}
         change(devices,next);
+        // A removed device takes its automation lane with it.
+        std::erase_if(next.automation,[&](const auto& l){return l.track==track && l.parameter==AutomatedParameter::device &&
+            std::none_of(devices.begin(),devices.end(),[&](const auto& d){return d.id==l.device;});});
         entry=std::find_if(next.devices.begin(),next.devices.end(),[&](const auto& e){return e.track==track;});
         if(devices.empty()){if(entry!=next.devices.end())next.devices.erase(entry);}
         else {
