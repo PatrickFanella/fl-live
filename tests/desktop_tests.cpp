@@ -241,6 +241,23 @@ private slots:
         session.setLevel(0,70);QVERIFY(session.message().contains("prepared at the start"));QCOMPARE(session.position(),QString("1.1"));
         QCOMPARE(session.playbackEdits(),std::uint64_t(0));
     }
+    // A flooded control queue refuses controls visibly, keeps a live edit for
+    // later, and never blocks Silence now; everything recovers afterward.
+    void editBurstBackpressureAndPanic() {
+        Session session;const auto clips=session.clipIds();
+        QVERIFY(session.launchClip(clips[0].toString()));session.play();session.tick();QVERIFY(session.running());
+        int queued=0;while(session.launchClip(clips[0].toString()))++queued; // preview renders only on tick
+        QCOMPARE(queued,int(fl_live::Engine::command_capacity));QVERIFY(session.message().contains("Control queue full"));
+        session.stop();QVERIFY(session.message().contains("Control queue full"));
+        session.setLevel(0,30);QCOMPARE(session.levels()[0].toInt(),30);QVERIFY(session.message().contains("while playing"));
+        QVERIFY(!session.launchClip(clips[0].toString()));QVERIFY(session.message().contains("Applying the last edit"));
+        const auto applied=session.playbackEdits();
+        session.panic();session.tick();QVERIFY(!session.running());QVERIFY(!session.pending());
+        session.tick();QCOMPARE(session.playbackEdits(),applied+1); // handed over once the queue had room
+        QCOMPARE(session.undoText(),QString("Undo track 1 level"));
+        QVERIFY(session.launchScene(session.sceneId(),"immediate"));session.play();session.tick();QVERIFY(session.running());
+        QCOMPARE(session.activeClipIds()[0],clips[0]);session.stop();session.tick();
+    }
     void sceneRequestsAndHistory() {
         Session session;const auto id=session.sceneId();const auto clips=session.clipIds();
         QCOMPARE(session.sceneState(),QString("Stopped"));

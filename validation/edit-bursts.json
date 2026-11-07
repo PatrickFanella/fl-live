@@ -1,0 +1,61 @@
+{
+  "verified_at": "2026-11-07T10:08:33.517703+00:00",
+  "base": "main after PR #132",
+  "issues": [
+    55
+  ],
+  "scope": "Control-queue saturation, replacement offers and panic delivery under playback edit bursts",
+  "environment": "Kvant, pinned CI image, docker --network none; host load not controlled",
+  "gates": {
+    "desktop": {
+      "passed": 23,
+      "total": 23
+    },
+    "release": {
+      "passed": 9,
+      "total": 9
+    },
+    "engine-only": {
+      "passed": 7,
+      "total": 7
+    },
+    "pipewire-sanitize": {
+      "passed": 17,
+      "total": 17
+    },
+    "document-io-sanitize": {
+      "passed": 10,
+      "total": 10
+    },
+    "thread-sanitizer": {
+      "passed": 3,
+      "total": 3,
+      "note": "Local -fsanitize=thread build of edit-burst-tests, three runs, no reports"
+    }
+  },
+  "verified_behaviors": [
+    "A full queue accepts exactly 64 controls, then refuses controls (including Stop) and replacement offers; panic silences the next block and discards the queue",
+    "After panic a replacement and fresh controls are accepted and apply under the new plan",
+    "A replacement held behind a far-future frame delays a queued Stop but not panic, which activates it and silences",
+    "Threaded bursts: 3000 rounds, bursts up to 72 controls, 60 panics each silenced within 2 render blocks of the request with a silent stopped block; 8136 refused controls, 2296 busy and 704 accepted offers in the recorded engine-only run",
+    "No allocation or release intercepted on the render thread",
+    "Desktop: flooding Launch reports 'Control queue full', Stop is refused the same way, a live edit is kept and handed over after panic frees the queue, Silence now stops, and Immediate scene launch recovers",
+    "Mutation caught: gating panic behind a held replacement fails the held-replacement check"
+  ],
+  "measured": {
+    "note": "Host measurements on Kvant, not a deadline qualification",
+    "release_max_block_us": 16.14,
+    "release_worst_replacement_us": 20.72,
+    "engine_only_debug_max_block_us": 47.8,
+    "engine_only_debug_worst_replacement_us": 48.3,
+    "worst_replacement": "64 MIDI tracks x 1024 notes with sounding voices, reversed track order, 64 queued commands"
+  },
+  "source_sha256": {
+    "include/fl_live/controller.hpp": "7dedbd1f9adab218604cc1cc11ab826b3420c208f5f60e512f9e196bb60aed37",
+    "src/engine.cpp": "19cf16efa761f23ace007637eaa6e3444c0b1603aae67f94b9913ab88b38b741",
+    "tests/edit_burst_tests.cpp": "51fe04eab00b7fc6d1187ffc61e4e37f090acfac314c8f6f3960046a635c1fd5",
+    "tests/desktop_tests.cpp": "03d85cefb8cf54b61cb17302f9ce024ced35e3b669bd5862119668191b56e1d7",
+    "apps/desktop/session.cpp": "42c855b8446db65a405502da173ba8b72c57874bd04425d0aff8d68a3ef6d4fd"
+  },
+  "limits": "Software test processes and preview UI; no real-time scheduling, physical audio or controlled host load; block timings are single-run maxima."
+}
