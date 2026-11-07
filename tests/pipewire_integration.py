@@ -94,6 +94,82 @@ def pitch_check_regression():
 
 pitch_check_regression()
 
+DROPPED_EXIT = 3
+MAX_ATTEMPTS = 3
+
+
+def dropped_cycles(values, mismatches, quantum):
+    """Return dropped-cycle runs when every mismatch is a whole lost quantum.
+
+    A follower that misses its graph cycle leaves the capture port silent for
+    exactly one or more quanta while the source keeps advancing. That is a
+    transport drop in this unprivileged private graph, not an engine output
+    error. Any nonzero mismatch, partial-quantum gap or offset change returns
+    None so the caller fails without retrying.
+    """
+    if not mismatches or any(value != 0 for _, value, _ in mismatches):
+        return None
+    runs = []
+    for index, _, _ in mismatches:
+        if runs and index == runs[-1][0] + runs[-1][1]:
+            runs[-1][1] += 1
+        else:
+            runs.append([index, 1])
+    for run in runs:
+        # A gap may also cover a frame whose authored value is zero.
+        while run[0] > 0 and values[run[0] - 1] == 0 and run[1] % quantum:
+            run[0] -= 1
+            run[1] += 1
+        while run[0] + run[1] < len(values) and values[run[0] + run[1]] == 0 and run[1] % quantum:
+            run[1] += 1
+    if any(length % quantum for _, length in runs):
+        return None
+    return [dict(first_frame=start, frames=length, cycles=length // quantum) for start, length in runs]
+
+
+def dropped_cycle_regression():
+    wave = [0.25, -0.5, 0.75, -1.0]
+    values = [wave[i % 4] for i in range(1024)]
+    def mismatches_of(captured):
+        return [(i, v, values[i]) for i, v in enumerate(captured) if v != values[i]]
+    gap = values.copy(); gap[256:384] = [0.0] * 128
+    assert dropped_cycles(gap, mismatches_of(gap), 128) == [dict(first_frame=256, frames=128, cycles=1)]
+    partial = values.copy(); partial[256:300] = [0.0] * 44
+    assert dropped_cycles(partial, mismatches_of(partial), 128) is None
+    wrong = values.copy(); wrong[5] = 0.125
+    assert dropped_cycles(wrong, mismatches_of(wrong), 128) is None
+    shifted = values[1:] + [0.25]
+    assert dropped_cycles(shifted, mismatches_of(shifted), 128) is None
+
+
+dropped_cycle_regression()
+
+
+def fail_dropped(runs, attempt_scope):
+    """Exit for the parent to retry; the full JSON was already printed."""
+    print("DROPPED_CYCLES " + json.dumps(dict(scope=attempt_scope, runs=runs)), file=sys.stderr, flush=True)
+    raise SystemExit(DROPPED_EXIT)
+
+
+if os.environ.get("FL_LIVE_PRIVATE_GRAPH_ATTEMPT") is None:
+    # Each attempt is a fresh private server. Only a run whose sole failures
+    # are dropped whole cycles is repeated; everything else fails at once.
+    dropped = []
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        child = subprocess.run([sys.executable, *sys.argv], capture_output=True, text=True,
+                               env=dict(os.environ, FL_LIVE_PRIVATE_GRAPH_ATTEMPT=str(attempt)))
+        sys.stdout.write(child.stdout)
+        sys.stderr.write(child.stderr)
+        if child.returncode != DROPPED_EXIT:
+            if dropped:
+                print(json.dumps(dict(retried_after_dropped_cycles=dropped, attempts=attempt,
+                                      final_returncode=child.returncode)), flush=True)
+            sys.exit(child.returncode)
+        dropped.append(next(json.loads(line[len("DROPPED_CYCLES "):]) for line in child.stderr.splitlines()
+                            if line.startswith("DROPPED_CYCLES ")))
+    print(json.dumps(dict(passed=False, retried_after_dropped_cycles=dropped, attempts=MAX_ATTEMPTS)), flush=True)
+    sys.exit(1)
+
 parser = argparse.ArgumentParser()
 parser.add_argument("binary")
 parser.add_argument("desktop_probe", nargs="?")
@@ -324,8 +400,12 @@ context.objects = [
                                       first_source_frame=offset, playback=stats, capture_sha256=hashlib.sha256(data).hexdigest(),
                                       mismatched_frames=len(mismatches), first_mismatches=mismatches[:8],
                                       unexpected_zero_frames=sum(value == 0 for _, value, _ in mismatches))), flush=True)
+                if mismatches and (runs := dropped_cycles(values, mismatches, args.quantum)):
+                    fail_dropped(runs, "frame-coded capture")
                 assert not mismatches, "frame-coded capture continuity unqualified; see measured JSON above"
                 sys.exit(0)
+            if mismatches and (runs := dropped_cycles(values, mismatches, args.quantum)):
+                fail_dropped(runs, "authored engine capture")
             assert not mismatches, ("capture differs from authored engine output", len(mismatches), mismatches[:8])
             remaining, errors = player.communicate(timeout=4)
             assert player.returncode == 0, (remaining, errors)
