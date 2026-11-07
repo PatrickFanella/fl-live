@@ -2020,6 +2020,61 @@ private slots:
         ui.click("stopButton");QTRY_VERIFY(!session.recording());session.tick();
         QCOMPARE(clips(session).size(),after.size()+2);QCOMPARE(folder.entryList({"*.wav"},QDir::Files).size(),3);
     }
+    // #48: a crash while recording leaves the take as a .part file with an
+    // unfinished header and a journal naming its track. Opening the project
+    // lists it; Recover takes writes a finished file, adds it as a clip in one
+    // Undo step and never replaces a file. Files without a journal or that
+    // cannot be read are reported and left alone.
+    void interruptedTakeRecovery() {
+        QTemporaryDir work;
+        const auto probe=qEnvironmentVariable("FL_LIVE_SAVE_PROBE");QVERIFY2(!probe.isEmpty(),"FL_LIVE_SAVE_PROBE not set");
+        QProcess crashed;crashed.start(probe,{"record-crash",work.path()});
+        QVERIFY(crashed.waitForFinished(20000));QCOMPARE(crashed.exitStatus(),QProcess::CrashExit);
+        const QDir folder(work.filePath("recordings"));
+        const auto parts=folder.entryList({"*.wav.part"},QDir::Files);QCOMPARE(parts.size(),1);
+        QCOMPARE(folder.entryList({"*.wav"},QDir::Files).size(),0);QVERIFY(QFile::exists(folder.filePath(parts[0].chopped(5)+".json")));
+        Session session;const auto project=work.filePath("recorded.json");
+        QVERIFY(session.loadProject(project));QVERIFY(session.message().contains("1 interrupted take found"));
+        const auto audio=session.trackIds()[0].toString();
+        QCOMPARE(session.interruptedTakes().size(),1);
+        const auto found=session.interruptedTakes()[0].toMap();
+        QVERIFY(found["journal"].toBool());QCOMPARE(found["track"].toString(),audio);QCOMPARE(found["file"].toString(),folder.filePath(parts[0]));
+        const auto clips=[&]{QStringList r;for(const auto& c:session.trackClips()[0].toList())r.append(c.toMap()["id"].toString());return r;};
+        const auto before=clips();
+        QVERIFY(session.recoverTakes());QVERIFY(session.message().startsWith("Recovered 1 take as new clips"));
+        QCOMPARE(session.undoText(),QString("Undo recovered take"));QVERIFY(session.interruptedTakes().isEmpty());
+        const auto after=clips();QCOMPARE(after.size(),before.size()+1);QCOMPARE(session.selectedClips()[0].toString(),after.last());
+        QCOMPARE(session.clipNames()[0].toString(),QString("Recovered take"));
+        const auto file=folder.filePath(parts[0].chopped(5));
+        QVERIFY(QFile::exists(file));QVERIFY(!QFile::exists(file+".part"));QVERIFY(!QFile::exists(file+".json"));
+        // Duration checked independently of the recovery code: 50 ticks of 480 frames, silent.
+        QFile recovered(file);QVERIFY(recovered.open(QIODevice::ReadOnly));const auto bytes=recovered.readAll();
+        QCOMPARE(bytes.left(4),QByteArray("RIFF"));QCOMPARE(bytes.mid(8,4),QByteArray("WAVE"));
+        int format=0,channels=0,rate=0,bits=0;QByteArray data;
+        for(qsizetype at=12;at+8<=bytes.size();){
+            const auto id=bytes.mid(at,4);const auto size=qFromLittleEndian<quint32>(bytes.constData()+at+4);
+            if(id=="fmt "){format=qFromLittleEndian<quint16>(bytes.constData()+at+8);channels=qFromLittleEndian<quint16>(bytes.constData()+at+10);
+                rate=static_cast<int>(qFromLittleEndian<quint32>(bytes.constData()+at+12));bits=qFromLittleEndian<quint16>(bytes.constData()+at+22);}
+            if(id=="data"){data=bytes.mid(at+8,size);QCOMPARE(at+8+qsizetype(size),bytes.size());}
+            at+=8+size+(size&1);
+        }
+        QCOMPARE(format,3);QCOMPARE(channels,2);QCOMPARE(rate,48000);QCOMPARE(bits,32);
+        QCOMPARE(data.size(),qsizetype(50*480*2*4));QVERIFY(std::all_of(data.begin(),data.end(),[](char c){return c==0;}));
+        session.undo();QCOMPARE(clips(),before);QVERIFY(QFile::exists(file));session.redo();QCOMPARE(clips(),after);
+        QVERIFY(session.saveProject(project));
+        // Without a journal the take is recovered to a file but not placed;
+        // an unreadable file is refused and left as it was.
+        {QFile in(file),out(folder.filePath("stray.wav.part"));QVERIFY(in.open(QIODevice::ReadOnly) && out.open(QIODevice::WriteOnly));out.write(in.readAll());}
+        {QFile bad(folder.filePath("bad.wav.part"));QVERIFY(bad.open(QIODevice::WriteOnly));bad.write(QByteArray(512,'x'));}
+        QVERIFY(session.loadProject(project));QCOMPARE(session.interruptedTakes().size(),2);QVERIFY(session.message().contains("2 interrupted takes"));
+        QmlUi ui(session);QVERIFY(QTest::qWaitForWindowExposed(ui.window));
+        ui.click("recoverTakes");
+        QTRY_VERIFY(session.message().contains("Cannot recover bad.wav.part"));
+        QVERIFY(session.message().contains("stray.wav.part has no journal"));QVERIFY(session.message().contains(folder.filePath("stray.wav")));
+        QCOMPARE(clips(),after);QVERIFY(QFile::exists(folder.filePath("stray.wav")));QVERIFY(!QFile::exists(folder.filePath("stray.wav.part")));
+        QCOMPARE(QFileInfo(folder.filePath("bad.wav.part")).size(),qint64(512));
+        QCOMPARE(session.interruptedTakes().size(),1);QVERIFY(ui.find(ui.window->contentItem(),"recoverTakes")!=nullptr);
+    }
     // #27: several clips per track. The selected clip is what the track's
     // controls act on; clip create, duplicate and delete are Undo steps and
     // keep references valid.

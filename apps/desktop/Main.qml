@@ -154,6 +154,12 @@ ApplicationWindow {
             Button { objectName: "retryAudioButton"; text: "Retry audio"; visible: !session.audioAvailable; onClicked: session.reconnectAudio() }
             Button { objectName: "stopButton"; text: "Stop"; onClicked: session.stop() }
             Button {
+                objectName: "recoverTakes"; text: "Recover takes"; visible: session.interruptedTakes.length > 0
+                onClicked: session.recoverTakes()
+                Accessible.name: "Recover " + session.interruptedTakes.length + " interrupted takes as clips"
+                ToolTip.visible: hovered; ToolTip.text: "Takes left unfinished by a crash. Recovery writes each to a finished file and adds it to its track; nothing is replaced."
+            }
+            Button {
                 objectName: "recordButton"; text: session.recording ? "● Recording" : "Record"
                 enabled: session.audioAvailable && !session.recording && session.armed.indexOf(true) >= 0
                 palette.button: session.recording ? "#8c2f39" : palette.button

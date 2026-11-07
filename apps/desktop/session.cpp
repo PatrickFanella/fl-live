@@ -8,9 +8,11 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QStandardPaths>
 #include <QUuid>
 #include "fl_live/document_io.hpp"
+#include "fl_live/capture.hpp"
 #include <stdexcept>
 #include <cmath>
 #include <filesystem>
@@ -419,6 +421,7 @@ QString Session::editName(const HistoryEntry& entry) {
     case EditKind::track_create: return "new track";
     case EditKind::track_duplicate: return QString("track %1 duplicate").arg(entry.index+1);
     case EditKind::track_delete: return "track deletion";
+    case EditKind::recover_takes: return entry.index == 1 ? "recovered take" : "recovered takes";
     case EditKind::record_take: return entry.index == 1 ? "recorded take" : "recorded takes";
     case EditKind::clip_create: return QString("track %1 new clip").arg(entry.index+1);
     case EditKind::clip_duplicate: return QString("track %1 clip duplicate").arg(entry.index+1);
@@ -676,6 +679,10 @@ bool Session::loadProject(const QString& path) {
         if (!report.relocated.isEmpty()) notes.append("Found moved audio inside the project folder: " + report.relocated.join("; ") + ". Save to keep the new locations.");
         if (!missing.isEmpty()) notes.append("Missing audio plays as silence; relink or import it: " + missing.join("; "));
         message_ = notes.isEmpty() ? QStringLiteral("Project opened. Launch clips, then press Play.") : "Project opened. " + notes.join(" ");
+        scanInterrupted();
+        if(!interrupted_.isEmpty())
+            message_ += QString(" %1 interrupted take%2 found in recordings; choose Recover takes to add %3 as clips.")
+                .arg(interrupted_.size()).arg(interrupted_.size()==1 ? "" : "s").arg(interrupted_.size()==1 ? "it" : "them");
         emit projectPathChanged();
         emit changed();
         return true;
@@ -1100,6 +1107,70 @@ void Session::openInput() {
     try{input_=std::make_unique<fl_live::PipeWireCapture>(input);}
     catch(const std::exception& error){throw std::runtime_error(std::string("Cannot open the recording input: ")+error.what());}
 }
+void Session::scanInterrupted() {
+    interrupted_.clear();
+    if(owned_path_.isEmpty())return;
+    const QDir folder(QFileInfo(owned_path_).absolutePath()+"/recordings");
+    for(const auto& name:folder.entryList({"*.wav.part"},QDir::Files,QDir::Name)) {
+        const auto file=folder.filePath(name);
+        QVariantMap take{{"file",file},{"track",QString()},{"journal",false}};
+        QFile journal(file.chopped(5)+".json");
+        if(journal.open(QIODevice::ReadOnly) && journal.size()<4096) {
+            const auto entry=QJsonDocument::fromJson(journal.readAll()).object();
+            if(entry["format"].toString()=="fl-live-take-journal" && entry["version"].toInt()==1){take["track"]=entry["track"].toString();take["journal"]=true;}
+        }
+        interrupted_.append(take);
+    }
+}
+bool Session::recoverTakes() {
+    if(!changeable())return false;
+    if(recording()||running()){message_="Stop playback before recovering takes";emit changed();return false;}
+    if(interrupted_.isEmpty()){message_="No interrupted takes to recover";emit changed();return false;}
+    auto snapshot=*identities_;snapshot.next_id=next_identity_;
+    fl_live::SessionDocument candidate(std::move(snapshot));
+    auto next=*content_;
+    QStringList notes;
+    std::vector<std::pair<fl_live::TrackId,fl_live::ClipId>> added;
+    for(const auto& value:std::as_const(interrupted_)) {
+        const auto take=value.toMap();
+        const auto part=take["file"].toString();
+        const auto stem=part.chopped(5); // "NAME.wav"
+        QString destination=stem;
+        for(int n=1;QFileInfo::exists(destination)||QFileInfo::exists(destination+".recovering");++n)
+            destination=stem.chopped(4)+QString(" recovered %1.wav").arg(n);
+        const auto result=fl_live::recoverTake(part.toStdString(),destination.toStdString());
+        if(!result.recovered){notes.append(QString::fromStdString(result.message));continue;}
+        // The recovered file was read back in full; the interrupted copy can go.
+        QFile::remove(part);QFile::remove(stem+".json");
+        const auto kept=QString("the recovered take is kept as %1").arg(destination);
+        bool known=false;std::uint64_t track=0;
+        if(take["journal"].toBool())track=take["track"].toString().toULongLong(&known);
+        const auto& tracks=candidate.snapshot().tracks;
+        const auto owner=std::find_if(tracks.begin(),tracks.end(),[&](const auto& t){return known && t.id.value==track;});
+        if(owner==tracks.end()){notes.append(QString("%1 has no journal naming an existing track; %2").arg(QFileInfo(part).fileName(),kept));continue;}
+        if(owner->kind!=fl_live::TrackKind::audio){notes.append(QString("%1 belongs to a MIDI track; %2").arg(QFileInfo(part).fileName(),kept));continue;}
+        const auto count=static_cast<std::size_t>(std::count_if(candidate.snapshot().clips.begin(),candidate.snapshot().clips.end(),[&](const auto& c){return c.track==owner->id;}));
+        if(count>=desktop_clips_per_track){notes.append(QString("The track already has 8 clips; %1").arg(kept));continue;}
+        auto decoded=fl_live::importWav(destination.toStdString());
+        if(!decoded){notes.append(QString("%1 could not be read: %2; %3").arg(QFileInfo(destination).fileName(),QString::fromStdString(decoded.message),kept));continue;}
+        const auto id=owner->id;
+        const auto clip=candidate.createClip(id,"Recovered take");
+        ClipContent content{clip};
+        content.audio=AudioSource::wav;content.asset=destination;content.media=std::make_shared<const fl_live::AudioClip>(std::move(decoded.clip));
+        next.clips.push_back(std::move(content));
+        added.emplace_back(id,clip);
+        if(result.discarded_bytes)notes.append(QString("%1 ended mid-frame; %2 trailing bytes were left out").arg(QFileInfo(part).fileName()).arg(result.discarded_bytes));
+    }
+    scanInterrupted();
+    const bool committed=!added.empty() && commitStructure(std::move(next),candidate.snapshot(),EditKind::recover_takes,static_cast<int>(added.size()));
+    if(committed){
+        for(const auto& [track,clip]:added)selected_clip_[track.value]=clip.value;
+        notes.prepend(QString("Recovered %1 take%2 as new clips").arg(added.size()).arg(added.size()==1 ? "" : "s"));
+    }
+    message_=notes.join(". ")+".";
+    emit changed();
+    return committed;
+}
 bool Session::record() {
     try {
         if(recording())throw std::invalid_argument("Already recording");
@@ -1111,17 +1182,32 @@ bool Session::record() {
         const QDir folder(QFileInfo(owned_path_).absolutePath()+"/recordings");
         if(!QDir().mkpath(folder.path()))throw std::runtime_error(("Cannot create "+folder.path()).toStdString());
         std::vector<Take> takes;
+        std::vector<QString> paths;
+        // A refusal part way leaves no file or journal behind.
+        auto cleanup=qScopeGuard([&]{
+            for(auto& t:takes)(void)t.take->finish();
+            for(const auto& p:paths){QFile::remove(p);QFile::remove(p+".part");QFile::remove(p+".json");}
+        });
         for(const auto& id:tracks) {
             auto name=QString::fromUtf8(std::find_if(identities_->tracks.begin(),identities_->tracks.end(),[&](const auto& t){return t.id==id;})->name);
             for(auto& c:name)if(!c.isLetterOrNumber() && c!=' ' && c!='-' && c!='_')c='-';
             QString path;
             for(int n=1;;++n) {
                 path=folder.filePath(QString("%1 take %2.wav").arg(name).arg(n));
-                if(!QFileInfo::exists(path) && !QFileInfo::exists(path+".part"))break;
+                if(!QFileInfo::exists(path) && !QFileInfo::exists(path+".part") && !QFileInfo::exists(path+".json"))break;
             }
+            // The journal names the take's track so a take interrupted by a
+            // crash can be recovered onto it. Written before audio starts.
+            paths.push_back(path);
+            QSaveFile journal(path+".json");
+            const QJsonObject entry{{"format","fl-live-take-journal"},{"version",1},{"track",QString::number(id.value)},
+                                    {"project",QFileInfo(owned_path_).fileName()},{"channels",2},{"rate",48000}};
+            if(!journal.open(QIODevice::WriteOnly) || journal.write(QJsonDocument(entry).toJson(QJsonDocument::Compact))<0 || !journal.commit())
+                throw std::runtime_error(("Cannot write "+QFileInfo(path).fileName()+".json").toStdString());
             takes.push_back({id,std::make_unique<fl_live::CaptureTake>(path.toStdString(),2,48000)});
         }
         openInput();
+        cleanup.dismiss();
         takes_=std::move(takes);
         fanout_.takes.clear();
         for(auto& t:takes_)fanout_.takes.push_back(t.take.get());
@@ -1147,6 +1233,8 @@ void Session::finishRecording() {
     for(auto& take:takes) {
         const auto status=take.take->finish();
         const auto file=QString::fromStdString(status.file.string());
+        // The journal is only needed while a .part file remains to recover.
+        if(!status.failed)QFile::remove(file+".json");
         if(status.overflowed)notes.append(QString("%1 dropped %2 frames when the disk fell behind").arg(QFileInfo(file).fileName()).arg(status.frames_dropped));
         if(status.failed){notes.append(QString::fromStdString(status.error));continue;}
         if(!status.frames_written){std::error_code ignored;std::filesystem::remove(status.file,ignored);continue;}

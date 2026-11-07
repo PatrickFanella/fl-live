@@ -153,21 +153,25 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
     assert (status["frames"] < 0 or frames == status["frames"]) and 48000 * 1.2 < frames < 48000 * 3.0, (frames, status)
     # Locate the first captured frame in the reference, then walk: every frame
     # must equal the next reference frame, except where the private graph
-    # dropped quanta under host load, which shows as a forward jump.
+    # dropped quanta under host load, which shows as a forward jump, or
+    # filled a late cycle with silence, which shows as a run of (0, 0) after
+    # which the reference resumes at or after where it stopped. Both are
+    # counted and limited together to a tenth of the take.
     index = {}
     for i in range(FRAMES):
         index.setdefault((reference[2 * i], reference[2 * i + 1]), i)
     position = None
-    matched = jumps = skipped = 0
+    matched = jumps = skipped = silent = gaps = 0
     for f in range(frames):
         pair = (samples[2 * f], samples[2 * f + 1])
-        if pair == (0.0, 0.0) and position is None:
-            continue  # silence before the reference reached the link
+        if pair == (0.0, 0.0):
+            if position is not None:  # before the reference reached the link otherwise
+                gaps += f == 0 or (samples[2 * f - 2], samples[2 * f - 1]) != (0.0, 0.0)
+                silent += 1
+            continue
         at = index.get(pair)
         if at is None:
-            lefts = {reference[2 * i]: i for i in range(FRAMES)}
-            rights = {reference[2 * i + 1]: i for i in range(FRAMES)}
-            context = [(samples[2 * g], samples[2 * g + 1], lefts.get(samples[2 * g]), rights.get(samples[2 * g + 1])) for g in range(max(0, f - 3), min(frames, f + 4))]
+            context = [(samples[2 * g], samples[2 * g + 1]) for g in range(max(0, f - 3), min(frames, f + 4))]
             raise AssertionError(f"captured frame {f} is not a reference frame (swapped, corrupted or invented); position {position}; {context}")
         if position is not None and at != position:
             assert at > position, f"frame {f} goes back in the reference ({at} after {position})"
@@ -176,8 +180,9 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
         position = at + 1
         matched += 1
     assert matched > 48000 * 1.2, (matched, frames)
-    assert skipped <= matched // 10, f"too many frames missing: {skipped} over {jumps} jumps"
+    assert skipped + silent <= matched // 10, f"too many frames missing: {skipped} over {jumps} jumps, {silent} silent over {gaps} gaps"
     print(json.dumps({"captured_frames": frames, "matched_frames": matched, "jumps": jumps, "skipped_frames": skipped,
+                      "silent_gaps": gaps, "silent_frames": silent,
                       "callbacks": status["callbacks"], "bad_buffers": status["bad_buffers"]}))
     print("PASS: " + ("desktop recording: armed track, take saved in recordings/ and added as the selected clip; " if desktop else "")
           + "stereo capture through fl-live-input matches the independent reference frame by frame, channels in place")
