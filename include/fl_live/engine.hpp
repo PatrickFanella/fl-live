@@ -84,6 +84,8 @@ struct Track {
     // pitch; a note it pushes outside 0..127 gets no voice.
     std::vector<AutomationPoint> device_gain_automation;
     std::vector<AutomationPoint> transpose_automation;
+    // The synth that plays live input notes on this track (input monitoring).
+    Instrument live_instrument{};
 };
 struct SessionPlan {
     std::uint32_t sample_rate = 48000;
@@ -130,6 +132,7 @@ public:
     static constexpr std::size_t clips_per_track_capacity = 64;
     static constexpr std::size_t notes_per_clip_capacity = 1024;
     static constexpr std::size_t voices_per_track = 16;
+    static constexpr std::size_t live_voices_per_track = 8;
     static constexpr std::size_t max_output_channels = 2;
     static constexpr std::size_t automation_points_capacity = 4096;
     static constexpr Frame envelope_frame_limit = 480000; // each segment, 10 s at 48 kHz
@@ -156,6 +159,14 @@ public:
     void start() noexcept;
     void stop() noexcept; // freezes playhead, clears queue and all voices
     void rewind() noexcept; // stopped only; otherwise no operation
+    // Live input notes (docs/recording.md, input monitoring). Rendering
+    // thread only. Live voices play the track's live_instrument at its gain
+    // and pan, sound with or without a clip or a running transport, follow
+    // their track through replace(), and end at silence_live() (panic). A
+    // note-on takes a free voice or the oldest; a note-off releases every
+    // held voice of that pitch. velocity is 0..1; 0 means note-off.
+    void live(std::size_t track, std::uint8_t pitch, float velocity, bool on) noexcept;
+    void silence_live() noexcept;
     [[nodiscard]] ScheduleResult schedule(Command command) noexcept;
     // All commands share one sample. Admission is all-or-nothing, including
     // capacity and validation. Insert before later events, after existing ties.
@@ -194,6 +205,8 @@ private:
     // entries past the plan's track count stay idle.
     std::vector<Runtime> runtime_;
     std::vector<Runtime> spare_;
+    struct LiveVoice { Voice voice; std::uint8_t pitch = 0; };
+    std::vector<std::array<LiveVoice, 8>> live_, live_spare_; // per track, sized at construction
     std::vector<std::array<std::size_t, 4>> automation_cursor_; // per track: gain, pan, device gain, transpose
     std::array<double, 128> steps_{};
     std::array<Command, command_capacity> commands_{};
@@ -204,6 +217,7 @@ private:
     void apply(const Command& command) noexcept;
     struct StereoSample { float left = 0; float right = 0; };
     [[nodiscard]] StereoSample render_track(std::size_t index) noexcept;
+    float voice_sample(Voice& voice, const Instrument& instrument) noexcept;
 };
 struct CommandBatch {
     std::array<Command, Engine::track_capacity> commands{};

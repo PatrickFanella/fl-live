@@ -2072,16 +2072,28 @@ private slots:
         QCOMPARE(clips(1).size(),after.size()+1);
         session.undo();QCOMPARE(clips(1),after);
     }
-    // #43: monitoring toggles and input choice. Only audio tracks monitor;
-    // the toggle is view state like Arm, not an Undo step.
+    // #43: monitoring toggles and input choice. Audio tracks monitor their
+    // input, MIDI tracks play live notes; the toggle is view state like Arm,
+    // not an Undo step.
     void monitoringToggles() {
         Session session;
         const auto audio=session.trackIds()[0].toString(),midi=session.trackIds()[1].toString();
         QCOMPARE(session.monitored(),(QVariantList{false,false}));
-        QVERIFY(!session.setMonitored(midi,true));QVERIFY(session.message().contains("Only audio tracks"));
         QVERIFY(session.setMonitored(audio,true));QCOMPARE(session.monitored(),(QVariantList{true,false}));QVERIFY(!session.canUndo());
+        // MIDI monitoring: an armed MIDI track with Monitor on plays live notes
+        // on its synth, with the transport stopped and no clip launched.
+        QVERIFY(!session.previewMidi(0x90,69,127)); // no armed MIDI track: no input
+        QVERIFY(session.setArmed(midi,true));QVERIFY(session.setMonitored(midi,true));QCOMPARE(session.monitored(),(QVariantList{true,true}));
+        session.tick();QVERIFY(!session.running());QCOMPARE(session.activeVoices(),0);
+        QVERIFY(session.previewMidi(0x90,69,127));session.tick();QCOMPARE(session.activeVoices(),1);
+        QVERIFY(session.previewMidi(0x80,69,0));for(int i=0;i<200;++i)session.tick();QCOMPARE(session.activeVoices(),0); // after the synth's release
+        QVERIFY(session.previewMidi(0x90,60,100));session.tick();QCOMPARE(session.activeVoices(),1);
+        QVERIFY(session.setMonitored(midi,false));session.tick();QCOMPARE(session.activeVoices(),0); // turning Monitor off silences
+        QVERIFY(session.setMonitored(midi,true));QVERIFY(session.previewMidi(0x90,60,100));session.tick();QCOMPARE(session.activeVoices(),1);
+        session.panic();session.tick();QCOMPARE(session.activeVoices(),0);
+        QVERIFY(session.setArmed(midi,false));
         QmlUi ui(session);QVERIFY(QTest::qWaitForWindowExposed(ui.window));
-        QVERIFY(ui.find(ui.window->contentItem(),"monitor1")==nullptr);
+        QVERIFY(ui.find(ui.window->contentItem(),"monitor1")!=nullptr);
         ui.click("monitor0");QTRY_COMPARE(session.monitored()[0].toBool(),false);
         ui.click("monitor0");QTRY_COMPARE(session.monitored()[0].toBool(),true);
         // Input choice: stored, shown, refused while recording, cleared by an

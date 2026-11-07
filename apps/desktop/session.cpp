@@ -36,7 +36,7 @@ Session::Session(fl_live::PipeWireConfig config, QObject* parent)
     saved_content_ = content_;
     restorePatternTarget();
     if (!preview_) {
-        try { prepared_->backend = std::make_unique<fl_live::PipeWireBackend>(prepared_->controller, config_); prepared_->backend->setMonitor(&monitor_); }
+        try { prepared_->backend = std::make_unique<fl_live::PipeWireBackend>(prepared_->controller, config_); prepared_->backend->setMonitor(&monitor_); prepared_->backend->setLive(&live_notes_); }
         catch (const std::exception& error) { audioFailed(QString::fromUtf8(error.what())); }
     }
     timer_.setInterval(10);
@@ -94,6 +94,7 @@ bool Session::reconnectAudio() {
         auto candidate = std::make_unique<Prepared>(*content_, *identities_);
         candidate->backend = std::make_unique<fl_live::PipeWireBackend>(candidate->controller, config_);
         candidate->backend->setMonitor(&monitor_);
+        candidate->backend->setLive(&live_notes_);
         prepared_.swap(candidate);
         failed_ = false;
         serial_ = 0;
@@ -598,7 +599,7 @@ bool Session::replace(Content content, Identities identities) {
         auto preparedMessage = QStringLiteral("Session prepared at the start. Launch clips, then press Play.");
         prepared_->backend.reset();
         try {
-            if (!preview_) { candidate->backend = std::make_unique<fl_live::PipeWireBackend>(candidate->controller, config_); candidate->backend->setMonitor(&monitor_); }
+            if (!preview_) { candidate->backend = std::make_unique<fl_live::PipeWireBackend>(candidate->controller, config_); candidate->backend->setMonitor(&monitor_); candidate->backend->setLive(&live_notes_); }
         } catch (...) {
             audioFailed("Cannot prepare audio"); // old document survives
             throw;
@@ -767,6 +768,7 @@ void Session::tick() {
     if (!failed_) offerWaiting();
     if (preview_) {
         std::array<float, 960> discarded{};
+        live_notes_.apply(prepared_->controller); // live input notes, as the backend applies them before each block
         prepared_->controller.process(discarded, 2); // 480 stereo frames; simulated clock, no audio output
         // The simulated clock stands in for the graph clock (docs/recording.md).
         if (const auto rendered = prepared_->controller.status(); rendered.running)
@@ -1204,10 +1206,13 @@ void Session::openMidiInput() {
     auto input=config_;input.target=midi_input_target_;input.autoconnect=!midi_input_target_.empty();
     try{midi_input_=std::make_unique<fl_live::PipeWireMidiCapture>(input);}
     catch(const std::exception& error){throw std::runtime_error(std::string("Cannot open the MIDI input: ")+error.what());}
+    midi_fanout_.live=&live_notes_;
+    midi_input_->setSink(&midi_fanout_); // monitoring listens while the input is open; takes join while recording
 }
 bool Session::previewMidi(int status,int data1,int data2) {
-    if(!preview_ || midi_takes_.empty())return false;
+    if(!preview_ || !armedKind(fl_live::TrackKind::midi))return false;
     const std::array<std::uint8_t,3> message{static_cast<std::uint8_t>(status),static_cast<std::uint8_t>(data1),static_cast<std::uint8_t>(data2)};
+    midi_fanout_.live=&live_notes_;
     midi_fanout_.midi(preview_clock_,message);
     return true;
 }
@@ -1271,7 +1276,6 @@ bool Session::setMonitored(const QString& trackId,bool on) {
         const fl_live::TrackId id{parseIdentity(trackId)};
         const auto track=std::find_if(identities_->tracks.begin(),identities_->tracks.end(),[&](const auto& t){return t.id==id;});
         if(track==identities_->tracks.end())throw std::invalid_argument("Unknown track");
-        if(track->kind!=fl_live::TrackKind::audio)throw std::invalid_argument("Only audio tracks monitor their input");
         if(on)monitored_.insert(id.value);else monitored_.erase(id.value);
         ++monitor_version_;updateMonitor();
         emit changed();return true;
@@ -1292,6 +1296,13 @@ void Session::updateMonitor() {
         left+=gain*(pan>0 ? 1-pan : 1.0F);right+=gain*(pan<0 ? 1+pan : 1.0F);
     }
     monitor_.setGain(left,right);
+    // MIDI: armed tracks with Monitor on play live input notes on their synth.
+    std::uint64_t live=0;
+    for(std::size_t i=0;i<identities_->tracks.size() && i<64;++i) {
+        const auto& t=identities_->tracks[i];
+        if(t.kind==fl_live::TrackKind::midi && armed_.contains(t.id.value) && monitored_.contains(t.id.value))live|=std::uint64_t{1}<<i;
+    }
+    live_notes_.setTracks(live);
 }
 bool Session::record() {
     try {
@@ -1342,10 +1353,11 @@ bool Session::record() {
         if(input_)input_->setSink(nullptr); // the data thread leaves the fan-out before it changes
         fanout_.takes.clear();
         for(auto& t:takes_)fanout_.takes.push_back(t.take.get());
+        if(midi_input_)midi_input_->setSink(nullptr);
         midi_fanout_.takes.clear();
         for(auto& t:midi_takes_)midi_fanout_.takes.push_back(t.take.get());
         if(input_)input_->setSink(&fanout_);
-        if(midi_input_ && !midi_takes_.empty())midi_input_->setSink(&midi_fanout_);
+        if(midi_input_)midi_input_->setSink(&midi_fanout_);
         // From a stopped transport the take starts at bar 1, so it is aligned
         // from its first frame; while running it starts at the next bar line.
         if(!running()){if(status_.position!=0 && !pending())send(fl_live::ControlKind::rewind);play();}
@@ -1416,6 +1428,7 @@ QString Session::finishRecording() {
     if(midi_input_)midi_input_->setSink(nullptr);
     midi_fanout_.takes.clear();
     auto midi_takes=std::move(midi_takes_);midi_takes_.clear();
+    if(midi_input_ && !failed_)midi_input_->setSink(&midi_fanout_);
     QStringList notes;
     std::vector<PendingTake> files;
     const auto rate=preview_ ? 48000U : config_.sample_rate;

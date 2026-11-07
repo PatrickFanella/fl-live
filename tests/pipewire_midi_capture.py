@@ -4,6 +4,7 @@ notes against the file's own timeline. No devices or session manager.
 
     pipewire_midi_capture.py MIDI_CAPTURE_PROBE          # the MIDI input and MidiTake alone
     pipewire_midi_capture.py --desktop DESKTOP_PROBE     # the desktop Session: arm, record, piano-roll clip
+    pipewire_midi_capture.py --desktop --monitor DESKTOP_PROBE  # MIDI monitoring heard in the output
 
 At 120 BPM and 96 ticks per quarter note one tick is exactly 250 frames at
 48 kHz, so the expected frames follow from the file alone. Recorded starts
@@ -19,6 +20,7 @@ import tempfile
 import time
 
 desktop = "--desktop" in sys.argv
+monitor = "--monitor" in sys.argv
 probe = str(pathlib.Path(sys.argv[-1]).resolve())
 TICK = 250  # frames per tick
 LEAD = 384  # ticks of silence before the first note, time to link
@@ -26,6 +28,8 @@ LEAD = 384  # ticks of silence before the first note, time to link
 # adjacent repeated pitches and the velocity extremes.
 NOTES = [(0, 48, 60, 100), (96, 48, 64, 90), (192, 96, 67, 80), (192, 96, 48, 70), (240, 24, 72, 127),
          (300, 30, 72, 1), (330, 6, 72, 64), (400, 200, 36, 55)]
+if monitor:  # three separated notes of 12,000 frames, 48,000 frames apart
+    NOTES = [(0, 48, 60, 100), (192, 48, 64, 100), (384, 48, 67, 100)]
 
 
 def smf():
@@ -102,10 +106,33 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
             server = subprocess.Popen(["pipewire", "-c", str(configuration)], env=env, stdout=log, stderr=log)
             until(lambda: (root / remote).exists() if server.poll() is None else False)
             (root / "project").mkdir()
-            recorder = subprocess.Popen([probe, remote, "--record-midi", str(root / "project")] if desktop else [probe, remote], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            mode = "--monitor-midi" if monitor else "--record-midi"
+            recorder = subprocess.Popen([probe, remote, mode, str(root / "project")] if desktop else [probe, remote], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             assert json.loads(recorder.stdout.readline())["ready"]
-            recorder.stdin.write("record\n"); recorder.stdin.flush()
-            assert json.loads(recorder.stdout.readline())["recording"]
+            if monitor:
+                heard = root / "heard.f32"
+                sink = subprocess.Popen(["pw-cat", "--remote", remote, "--record", "--raw", "--format", "f32", "--rate", "48000",
+                    "--channels", "1", "--channel-map", "MONO", "--target", "0", "--sample-count", "240000", "--properties",
+                    "{ node.name = fixture-sink node.group = pipewire.test node.always-process = true }", "-"],
+                    env=env, stdout=heard.open("wb"), stderr=subprocess.PIPE)
+
+                def configure_mono(name, direction):
+                    dump = subprocess.run(["pw-dump", "--remote", remote], env=env, capture_output=True, text=True, timeout=2)
+                    node = next((v for v in json.loads(dump.stdout) if v.get("info", {}).get("props", {}).get("node.name") == name), None)
+                    if not node:
+                        return False
+                    parameter = ("{ direction = " + direction + " mode = dsp format = { mediaType = audio mediaSubtype = raw "
+                                 "format = F32 rate = 48000 channels = 1 position = [ MONO ] } }")
+                    return subprocess.run(["pw-cli", "--remote", remote, "set-param", str(node["id"]), "PortConfig", parameter],
+                                          env=env, capture_output=True, text=True, timeout=2).returncode == 0
+                until(lambda: configure_mono("fl-live-output", "Output"))
+                until(lambda: configure_mono("fixture-sink", "Input"))
+                listing = lambda d: subprocess.run(["pw-link", "--remote", remote, d], env=env, capture_output=True, text=True, timeout=2).stdout.split()
+                subprocess.run(["pw-link", "--remote", remote, until(lambda: next((p for p in listing("--output") if p.startswith("fl-live-output:")), None)),
+                                until(lambda: next((p for p in listing("--input") if p.startswith("fixture-sink:")), None))], env=env, check=True, capture_output=True, timeout=2)
+            else:
+                recorder.stdin.write("record\n"); recorder.stdin.flush()
+                assert json.loads(recorder.stdout.readline())["recording"]
 
             def ports(direction):
                 return subprocess.run(["pw-link", "--remote", remote, direction], env=env, capture_output=True, text=True, timeout=2).stdout.split()
@@ -116,12 +143,43 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
             in_port = until(lambda: next((p for p in ports("--input") if p.startswith("fl-live-midi-input:")), None))
             subprocess.run(["pw-link", "--remote", remote, out_port, in_port], env=env, check=True, capture_output=True, timeout=2)
             player.wait(timeout=15)  # the file is about 4.5 s long
+            if monitor:
+                sink.wait(timeout=15)  # ends with status 1 at --sample-count; the size is checked
             time.sleep(0.2)
             recorder.stdin.write("stop\n"); recorder.stdin.flush()
             take = json.loads(recorder.stdout.readline())
             assert recorder.wait(timeout=5) == 0, recorder.stderr.read()
         finally:
             stop(recorder); stop(player); stop(server)
+            if monitor:
+                stop(sink)
+    if monitor:
+        # Three bursts of tone, one per note, then silence: no stuck note.
+        # Notes apply at the start of the output's next block. The MIDI input
+        # and the output are not linked, so either may run first in a cycle:
+        # an on or off lands in the same or the next block, and a length can
+        # differ from its note by up to two quanta.
+        assert take["done"] and not take["running"], take
+        raw = heard.read_bytes()
+        assert len(raw) == 240000 * 4, len(raw)
+        samples = struct.unpack(f"<{len(raw) // 4}f", raw)
+        loud = [f for f, v in enumerate(samples) if v != 0.0]
+        bursts = []
+        for f in loud:  # a sine crosses zero; gaps under 100 frames are one burst
+            if bursts and f - bursts[-1][1] < 100:
+                bursts[-1][1] = f
+            else:
+                bursts.append([f, f])
+        lengths = [end - start + 1 for start, end in bursts]
+        gaps = [bursts[i + 1][0] - bursts[i][0] for i in range(len(bursts) - 1)]
+        assert len(bursts) == 3, bursts
+        assert all(abs(n - 12000) <= 512 for n in lengths), lengths
+        assert all(abs(g - 48000) <= 512 for g in gaps), gaps
+        assert bursts[-1][1] < len(samples) - 1000, "sound continues to the end: a stuck note"
+        print(json.dumps({"bursts": len(bursts), "lengths": lengths, "onset_gaps": gaps, "silent_after": len(samples) - 1 - bursts[-1][1]}))
+        print("PASS: MIDI monitoring: each live note sounds through the armed MIDI track's synth for its length "
+              "within two quanta, transport stopped, and the output falls silent after the last note")
+        sys.exit(0)
     if desktop:
         # The clip holds the file's notes in ticks: same tempo, same 96 ticks
         # per beat, so positions relative to the first note and lengths match
