@@ -9,7 +9,7 @@ collect() {
             cp "build/$preset/Testing/Temporary/LastTest.log" "$results/$preset-LastTest.log"
         fi
     done
-    for capture in desktop-session desktop-active-clip desktop-step-editor desktop-history desktop-identity-renaming desktop-scene-controls desktop-scene-slots desktop-scene-management desktop-scene-copy-order desktop-track-mixer desktop-export-progress desktop-general-tracks desktop-clip-range desktop-d2-journey desktop-recovery; do
+    for capture in desktop-session desktop-active-clip desktop-step-editor desktop-history desktop-identity-renaming desktop-scene-controls desktop-scene-slots desktop-scene-management desktop-scene-copy-order desktop-track-mixer desktop-export-progress desktop-general-tracks desktop-clip-range desktop-d2-journey desktop-recovery desktop-automation; do
         if [[ -f "build/desktop/$capture.png" ]]; then
             cp "build/desktop/$capture.png" "$results/$capture.png"
         fi

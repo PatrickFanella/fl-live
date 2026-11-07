@@ -363,6 +363,74 @@ ApplicationWindow {
                                             const position = index, appWindow = ApplicationWindow.window
                                             if (session.deleteTrack(trackColumn.trackId)) appWindow.focusAfterDeletion(position)
                                         } Accessible.name: "Delete track " + (index + 1); ToolTip.visible: hovered; ToolTip.text: "Removes the track, its clip and its scene slots. Undo restores them." }
+                                    CheckBox { id: automationToggle; objectName: "automationToggle" + index; text: "Automation"; Accessible.name: "Show automation for track " + (index + 1) }
+                                }
+                                ColumnLayout {
+                                    id: automationEditor
+                                    visible: automationToggle.checked; Layout.fillWidth: true; spacing: 4
+                                    readonly property string parameter: automationParameter.currentIndex === 0 ? "level" : "pan"
+                                    readonly property real low: parameter === "level" ? 0 : -100
+                                    // Re-read on every document change; the canvas repaints only when the points differ.
+                                    readonly property var points: { session.undoText; session.dirty; return session.automationPoints(index, parameter) }
+                                    readonly property real span: Math.max(1600, points.length ? points[points.length - 1][0] + 400 : 0)
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        ComboBox { id: automationParameter; objectName: "automationParameter" + index; model: ["Level", "Pan"]; Layout.preferredWidth: 96; Accessible.name: "Automated parameter of track " + (index + 1) }
+                                        Label { text: automationEditor.points.length + (automationEditor.points.length === 1 ? " point" : " points"); color: "#9daabd"; Layout.fillWidth: true }
+                                        Button { objectName: "clearAutomation" + index; text: "Clear"; enabled: session.canEdit && automationEditor.points.length > 0; onClicked: session.clearAutomation(trackColumn.trackId, automationEditor.parameter); Accessible.name: "Clear automation of track " + (index + 1) }
+                                    }
+                                    Canvas {
+                                        id: lane
+                                        objectName: "automationLane" + index
+                                        Layout.fillWidth: true; Layout.preferredHeight: 48
+                                        readonly property string paintKey: JSON.stringify(automationEditor.points) + automationEditor.parameter + width
+                                        onPaintKeyChanged: requestPaint()
+                                        function xAt(at) { return at / automationEditor.span * width }
+                                        // The top pixel row is 100 percent, the bottom row the parameter's minimum.
+                                        function yAt(value) { return (height - 1) - (value - automationEditor.low) / (100 - automationEditor.low) * (height - 1) }
+                                        Accessible.role: Accessible.Graphic
+                                        Accessible.name: "Automation lane of track " + (index + 1) + ", " + automationEditor.points.length + " points. Click to add a point, click a point to remove it."
+                                        onPaint: {
+                                            const ctx = getContext("2d"); ctx.reset()
+                                            ctx.fillStyle = "#1c222b"; ctx.fillRect(0, 0, width, height)
+                                            ctx.strokeStyle = "#333e4d"
+                                            for (let bar = 400; bar < automationEditor.span; bar += 400) { ctx.beginPath(); ctx.moveTo(xAt(bar), 0); ctx.lineTo(xAt(bar), height); ctx.stroke() }
+                                            const pts = automationEditor.points
+                                            if (!pts.length) return
+                                            ctx.strokeStyle = "#e4bc75"; ctx.beginPath(); ctx.moveTo(0, yAt(pts[0][1]))
+                                            for (const p of pts) ctx.lineTo(xAt(p[0]), yAt(p[1]))
+                                            ctx.lineTo(width, yAt(pts[pts.length - 1][1])); ctx.stroke()
+                                            ctx.fillStyle = "#e4bc75"
+                                            for (const p of pts) ctx.fillRect(xAt(p[0]) - 3, yAt(p[1]) - 3, 6, 6)
+                                        }
+                                        MouseArea {
+                                            objectName: "automationLaneInput" + index
+                                            anchors.fill: parent; enabled: session.canEdit
+                                            onClicked: function(mouse) {
+                                                const editor = automationEditor
+                                                for (const p of editor.points)
+                                                    if (Math.abs(lane.xAt(p[0]) - mouse.x) <= 6 && Math.abs(lane.yAt(p[1]) - mouse.y) <= 10) {
+                                                        session.removeAutomationPoint(trackColumn.trackId, editor.parameter, p[0]); return
+                                                    }
+                                                // Snap to a sixteenth note (25 hundredths of a beat) and a whole percent.
+                                                const at = Math.round(mouse.x / lane.width * editor.span / 25) * 25
+                                                const value = Math.round(editor.low + (lane.height - 1 - mouse.y) / (lane.height - 1) * (100 - editor.low))
+                                                session.setAutomationPoint(trackColumn.trackId, editor.parameter, at, Math.max(editor.low, Math.min(100, value)))
+                                            }
+                                        }
+                                    }
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Label { text: "Beat"; color: "#9daabd" }
+                                        SpinBox { id: automationAt; objectName: "automationAt" + index; from: 0; to: 4096; value: 0; editable: true; Layout.preferredWidth: 84
+                                            textFromValue: function(v) { return (v / 4).toFixed(2) }
+                                            valueFromText: function(t) { const n = Math.round(parseFloat(t) * 4); return isNaN(n) ? value : Math.max(from, Math.min(to, n)) }
+                                            validator: RegularExpressionValidator { regularExpression: /^\s*\d{0,4}(\.\d{0,2})?\s*$/ }
+                                            Accessible.name: "Automation point position in beats, track " + (index + 1) }
+                                        Label { text: "Value"; color: "#9daabd" }
+                                        SpinBox { id: automationValue; objectName: "automationValue" + index; from: automationEditor.low; to: 100; value: automationEditor.parameter === "level" ? 70 : 0; editable: true; Layout.preferredWidth: 84; Accessible.name: "Automation point value in percent, track " + (index + 1) }
+                                        Button { objectName: "automationAdd" + index; text: "Add point"; enabled: session.canEdit; onClicked: session.setAutomationPoint(trackColumn.trackId, automationEditor.parameter, automationAt.value * 25, automationValue.value); Accessible.name: "Add automation point to track " + (index + 1) }
+                                    }
                                 }
                             }
                         }

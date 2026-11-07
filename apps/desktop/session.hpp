@@ -143,6 +143,13 @@ public:
     QVariantList clipRanges() const;
     Q_INVOKABLE bool setClipRange(const QString& trackId, double startFrame, double endFrame, bool loop);
     Q_INVOKABLE QVariantList waveform(int track, int bins) const;
+    // Automation lanes (see docs/automation.md). parameter is "level" or
+    // "pan"; positions are hundredths of a beat from the song start. Each
+    // change is one Undo step; a point at an existing position replaces it.
+    Q_INVOKABLE QVariantList automationPoints(int track, const QString& parameter) const; // [[at, value], ...]
+    Q_INVOKABLE bool setAutomationPoint(const QString& trackId, const QString& parameter, double at, double value);
+    Q_INVOKABLE bool removeAutomationPoint(const QString& trackId, const QString& parameter, double at);
+    Q_INVOKABLE bool clearAutomation(const QString& trackId, const QString& parameter);
     bool importing() const { return import_ticket_ != 0 || ready_import_.has_value(); }
     int stepCount() const { return pattern().step_count; }
     int selectedStep() const { return selected_step_; }
@@ -232,7 +239,7 @@ private:
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
     enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete, scene_copy, scene_order, track_pan, track_mute, track_solo,
-        track_create, track_duplicate, track_delete, audio_import, clip_range, audio_relink, assets_collect };
+        track_create, track_duplicate, track_delete, audio_import, clip_range, audio_relink, assets_collect, automation };
     struct HistoryEntry {
         Content content;
         Identities identities;

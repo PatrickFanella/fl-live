@@ -1383,6 +1383,61 @@ private slots:
         for(std::size_t f=1;f<96000;f+=4999)QCOMPARE(w.samples[2*f],static_cast<float>(static_cast<double>(f)/96000.0)*source.samples[f%source.samples.size()]);
         for(std::size_t f=96000;f<192000;f+=4999)QCOMPARE(w.samples[2*f],source.samples[f%source.samples.size()]);
     }
+    void qmlAutomationEditing() {
+        QTemporaryDir directory;
+        Session session;session.setTempo(120);QVERIFY(session.setMute(session.trackIds()[1].toString(),true));
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* r,const QString& name)->QQuickItem* {
+            if(r->objectName()==name && r->isVisible())return r;
+            for(auto* c:r->childItems())if(auto* m=findItem(c,name))return m;
+            return nullptr;
+        };
+        auto clickAt=[&](QQuickItem* item,QPointF local){QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(local).toPoint());};
+        auto click=[&](const char* name){auto* item=findItem(window->contentItem(),name);QVERIFY2(item,name);clickAt(item,{item->width()/2,item->height()/2});};
+        QVERIFY(!findItem(window->contentItem(),"automationLane0"));
+        click("automationToggle0");
+        auto* lane=findItem(window->contentItem(),"automationLane0");QVERIFY(lane);
+        const auto level=[&]{return session.automationPoints(0,"level");};
+        // Pointer: bottom-left adds (0, 0); one bar in at the top adds (400, 100).
+        clickAt(lane,{1,lane->height()-1});
+        QTRY_COMPARE(level(),(QVariantList{QVariant(QVariantList{0.0,0.0})}));QCOMPARE(session.undoText(),QString("Undo track 1 automation"));
+        clickAt(lane,{lane->width()*400/1600,0});
+        QTRY_COMPARE(level().size(),2);QCOMPARE(level()[1],QVariant(QVariantList{400.0,100.0}));
+        // Clicking a point removes it; Undo brings it back.
+        clickAt(lane,{lane->width()*400/1600,0});QTRY_COMPARE(level().size(),1);
+        click("undoButton");QTRY_COMPARE(level().size(),2);
+        // Keyboard: type a position in beats and a value, then Add point.
+        auto* at=findItem(window->contentItem(),"automationAt0");at->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier);for(const char c:QByteArray("2"))QTest::keyClick(window,c);QTest::keyClick(window,Qt::Key_Return);
+        auto* value=findItem(window->contentItem(),"automationValue0");value->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier);for(const char c:QByteArray("50"))QTest::keyClick(window,c);QTest::keyClick(window,Qt::Key_Return);
+        click("automationAdd0");
+        QTRY_COMPARE(level().size(),3);QCOMPARE(level()[1],QVariant(QVariantList{200.0,50.0}));
+        click("undoButton");QTRY_COMPARE(level().size(),2);
+        // Pan is a separate lane with its own range.
+        findItem(window->contentItem(),"automationParameter0")->setProperty("currentIndex",1);
+        QTRY_VERIFY(session.automationPoints(0,"pan").isEmpty());
+        clickAt(lane,{lane->width()/2,0}); // top row: +100 (pan has no pixel row at exactly 0; use the value field)
+        QTRY_COMPARE(session.automationPoints(0,"pan"),(QVariantList{QVariant(QVariantList{800.0,100.0})}));
+        QVERIFY(window->grabWindow().save("desktop-automation.png"));
+        click("clearAutomation0");QTRY_VERIFY(session.automationPoints(0,"pan").isEmpty());QCOMPARE(level().size(),2);
+        // Refusals keep history.
+        const auto undo=session.undoText();
+        QVERIFY(!session.setAutomationPoint(session.trackIds()[0].toString(),"level",10,101));
+        QVERIFY(!session.setAutomationPoint(session.trackIds()[0].toString(),"volume",10,50));
+        QVERIFY(!session.setAutomationPoint(session.trackIds()[0].toString(),"level",10.5,50));
+        QVERIFY(!session.removeAutomationPoint(session.trackIds()[0].toString(),"level",7));
+        QCOMPARE(session.undoText(),undo);
+        // Save/Open keeps the curve; the export follows it.
+        QVERIFY(session.saveProject(directory.filePath("lane.json")));
+        Session reopened;QVERIFY(reopened.loadProject(directory.filePath("lane.json")));
+        QCOMPARE(reopened.automationPoints(0,"level"),level());
+        QVERIFY(reopened.exportAudio(directory.filePath("lane.wav"),1,1,0,2,"float32"));QTRY_VERIFY(!reopened.exporting());
+        const auto w=readWav(directory.filePath("lane.wav"));const auto source=pulseClip(120);
+        for(std::size_t f=1;f<96000;f+=3001)QCOMPARE(w.samples[2*f],static_cast<float>(static_cast<double>(f)/96000.0)*source.samples[f%source.samples.size()]);
+    }
     void qmlMixerInput() {
         Session session;
         QQmlApplicationEngine engine;

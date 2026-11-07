@@ -415,6 +415,7 @@ QString Session::editName(const HistoryEntry& entry) {
     case EditKind::clip_range: return QString("track %1 clip range").arg(entry.index+1);
     case EditKind::audio_relink: return QString("track %1 audio relink").arg(entry.index+1);
     case EditKind::assets_collect: return "audio collection";
+    case EditKind::automation: return QString("track %1 automation").arg(entry.index+1);
     default: return {};
     }
 }
@@ -1166,6 +1167,74 @@ bool Session::newProject() {
         message_ = "New project. Launch clips, then press Play.";
         emit projectPathChanged();
         emit changed();
+        return true;
+    } catch (const std::exception& error) { message_ = QString::fromUtf8(error.what()); emit changed(); return false; }
+}
+namespace {
+std::optional<AutomatedParameter> parameterNamed(const QString& name) {
+    if (name == "level") return AutomatedParameter::level;
+    if (name == "pan") return AutomatedParameter::pan;
+    return std::nullopt;
+}
+}
+QVariantList Session::automationPoints(int track, const QString& parameter) const {
+    const auto kind = parameterNamed(parameter);
+    if (!kind || track < 0 || static_cast<std::size_t>(track) >= identities_->tracks.size()) return {};
+    const auto id = identities_->tracks[static_cast<std::size_t>(track)].id;
+    QVariantList result;
+    for (const auto& lane : content_->automation)
+        if (lane.track == id && lane.parameter == *kind)
+            for (const auto& point : lane.points) result.append(QVariant(QVariantList{static_cast<double>(point.at), point.value}));
+    return result;
+}
+bool Session::setAutomationPoint(const QString& trackId, const QString& parameter, double at, double value) {
+    if (!editable()) return false;
+    try {
+        const auto kind = parameterNamed(parameter);
+        if (!kind) throw std::invalid_argument("Automation parameter must be level or pan");
+        const fl_live::TrackId id{parseIdentity(trackId)};
+        const auto index = prepared_->mapped.trackIndex(id);
+        if (!index) throw std::invalid_argument("Unknown track");
+        if (!std::isfinite(at) || at != std::floor(at)) throw std::invalid_argument("Automation position must be whole hundredths of a beat");
+        auto next = *content_;
+        auto lane = std::find_if(next.automation.begin(), next.automation.end(), [&](const auto& l) { return l.track == id && l.parameter == *kind; });
+        if (lane == next.automation.end()) { next.automation.push_back({id, *kind, {}}); lane = next.automation.end() - 1; }
+        const LanePoint point{static_cast<std::int64_t>(at), value};
+        const auto place = std::lower_bound(lane->points.begin(), lane->points.end(), point.at, [](const auto& p, std::int64_t a) { return p.at < a; });
+        if (place != lane->points.end() && place->at == point.at) place->value = value; else lane->points.insert(place, point);
+        validateContent(next, *identities_);
+        if (next == *content_) return true;
+        edit(next, EditKind::automation, static_cast<int>(*index));
+        return *content_ == next;
+    } catch (const std::exception& error) { message_ = QString::fromUtf8(error.what()); emit changed(); return false; }
+}
+bool Session::removeAutomationPoint(const QString& trackId, const QString& parameter, double at) {
+    if (!editable()) return false;
+    try {
+        const auto kind = parameterNamed(parameter);
+        const fl_live::TrackId id{parseIdentity(trackId)};
+        const auto index = prepared_->mapped.trackIndex(id);
+        auto next = *content_;
+        const auto lane = std::find_if(next.automation.begin(), next.automation.end(), [&](const auto& l) { return kind && l.track == id && l.parameter == *kind; });
+        if (!index || lane == next.automation.end()) throw std::invalid_argument("No such automation lane");
+        const auto removed = std::erase_if(lane->points, [&](const auto& p) { return static_cast<double>(p.at) == at; });
+        if (!removed) throw std::invalid_argument("No automation point at that position");
+        if (lane->points.empty()) next.automation.erase(lane); // an empty lane returns control to the static value
+        edit(next, EditKind::automation, static_cast<int>(*index));
+        return true;
+    } catch (const std::exception& error) { message_ = QString::fromUtf8(error.what()); emit changed(); return false; }
+}
+bool Session::clearAutomation(const QString& trackId, const QString& parameter) {
+    if (!editable()) return false;
+    try {
+        const auto kind = parameterNamed(parameter);
+        const fl_live::TrackId id{parseIdentity(trackId)};
+        const auto index = prepared_->mapped.trackIndex(id);
+        if (!kind || !index) throw std::invalid_argument("Unknown track or parameter");
+        auto next = *content_;
+        std::erase_if(next.automation, [&](const auto& l) { return l.track == id && l.parameter == *kind; });
+        if (next == *content_) return true;
+        edit(next, EditKind::automation, static_cast<int>(*index));
         return true;
     } catch (const std::exception& error) { message_ = QString::fromUtf8(error.what()); emit changed(); return false; }
 }
