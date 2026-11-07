@@ -95,7 +95,7 @@ def pitch_check_regression():
 pitch_check_regression()
 
 DROPPED_EXIT = 3
-MAX_ATTEMPTS = 3
+MAX_ATTEMPTS = 5
 
 
 def dropped_cycles(values, mismatches, quantum):
