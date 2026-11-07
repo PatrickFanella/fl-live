@@ -1,4 +1,5 @@
 #include "session.hpp"
+#include "piano_view.hpp"
 #include <array>
 #include <algorithm>
 #include <QDir>
@@ -543,6 +544,7 @@ bool Session::replaceLive(Content content, Identities identities) {
     next_identity_ = std::max(next_identity_, identities_->next_id);
     restoreSceneSelection(selected_scene_, false);
     emit documentChanged();
+    emit notesChanged();
     emit sceneSelectionChanged();
     offerWaiting();
     live_ = true;
@@ -575,6 +577,7 @@ bool Session::replace(Content content, Identities identities) {
         next_identity_=std::max(next_identity_,identities_->next_id);
         restoreSceneSelection(selected_scene_,false);
         emit documentChanged();
+        emit notesChanged();
         emit sceneSelectionChanged();
         serial_ = 0;
         scene_serial_ = 0;
@@ -844,8 +847,10 @@ bool Session::editPattern(const QString& trackId) {
         const fl_live::TrackId id{parseIdentity(trackId)};
         const auto track=std::find_if(identities_->tracks.begin(),identities_->tracks.end(),[id](const auto& t){return t.id==id;});
         if(track==identities_->tracks.end() || track->kind!=fl_live::TrackKind::midi)throw std::invalid_argument("Choose a MIDI track to edit its pattern");
-        if(firstClip(*identities_,id)!=pattern_clip_)selected_notes_.clear();
+        const bool other=firstClip(*identities_,id)!=pattern_clip_;
+        if(other)selected_notes_.clear();
         pattern_clip_=firstClip(*identities_,id);selected_step_=0;
+        if(other)emit notesChanged();
         emit changed();return true;
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }
@@ -1350,6 +1355,11 @@ QVariantList Session::pianoNotes() const {
                 {"sounding",note.start<roll->length}});
     return result;
 }
+int Session::selectedVelocity() const {
+    if(const auto* roll=piano(); roll && !selected_notes_.empty())
+        for(const auto& note:roll->notes)if(note.id==selected_notes_.front())return note.velocity;
+    return 80;
+}
 QVariantList Session::selectedNotes() const {
     QVariantList result;
     if(const auto* roll=piano())
@@ -1493,3 +1503,7 @@ bool Session::setSynth(const QString& field,int value) {
         return *content_==next;
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }
+
+// Every program that links the session (the app, probes and tests) loads
+// Main.qml, which uses PianoNotesView.
+Q_COREAPP_STARTUP_FUNCTION(registerDesktopTypes)

@@ -68,7 +68,11 @@ class Session final : public QObject {
     Q_PROPERTY(bool pianoMode READ pianoMode NOTIFY changed)
     Q_PROPERTY(int pianoLength READ pianoLength NOTIFY changed)
     Q_PROPERTY(bool pianoLoop READ pianoLoop NOTIFY changed)
-    Q_PROPERTY(QVariantList pianoNotes READ pianoNotes NOTIFY changed)
+    // Notified only when notes or the edited clip change: building the list
+    // is proportional to the note count, so it must not follow every tick.
+    Q_PROPERTY(QVariantList pianoNotes READ pianoNotes NOTIFY notesChanged)
+    Q_PROPERTY(int pianoNoteCount READ pianoNoteCount NOTIFY changed)
+    Q_PROPERTY(int selectedVelocity READ selectedVelocity NOTIFY changed)
     Q_PROPERTY(QVariantList selectedNotes READ selectedNotes NOTIFY changed)
     Q_PROPERTY(bool importing READ importing NOTIFY changed)
     Q_PROPERTY(QVariantList clipFrames READ clipFrames NOTIFY changed)
@@ -130,6 +134,8 @@ public:
     Q_INVOKABLE bool setPianoLength(int ticks);
     Q_INVOKABLE bool setPianoLoop(bool loop);
     QVariantList pianoNotes() const;
+    int pianoNoteCount() const { return piano() ? static_cast<int>(piano()->notes.size()) : 0; }
+    int selectedVelocity() const; // of the first selected note, or 80 when none
     // Switches the clip between its step pattern and piano-roll notes. Turning
     // it on converts the pattern's sounding steps once; turning it off keeps
     // only the pattern. Each is one Undo step.
@@ -265,6 +271,7 @@ signals:
     void changed();
     void projectPathChanged();
     void documentChanged();
+    void notesChanged();
     void sceneSelectionChanged();
     void recoveryChanged();
 private:

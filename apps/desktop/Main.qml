@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import FlLive
 
 ApplicationWindow {
     id: window
@@ -486,7 +487,7 @@ ApplicationWindow {
                             SpinBox {
                                 objectName: "selectedNotesVelocity"; from: 1; to: 100; editable: true; Layout.preferredWidth: 90
                                 enabled: session.canChange && session.selectedNotes.length > 0
-                                value: { const n = session.pianoNotes.find(x => x.id === session.selectedNotes[0]); return n ? n.velocity : 80 }
+                                value: session.selectedVelocity
                                 onValueModified: session.setNotesVelocity(session.selectedNotes, value)
                                 Accessible.name: "Velocity of the selected notes"
                             }
@@ -508,7 +509,7 @@ ApplicationWindow {
                             clip: true // notes past the clip length are silent and not drawn
                             activeFocusOnTab: true
                             Accessible.role: Accessible.Grouping
-                            Accessible.name: "Piano roll, " + session.pianoNotes.length + " notes, " + session.selectedNotes.length + " selected. Click to add or select, drag to move or resize; arrows move the selection, Shift with Left or Right resizes, Delete removes."
+                            Accessible.name: "Piano roll, " + session.pianoNoteCount + " notes, " + session.selectedNotes.length + " selected. Click to add or select, drag to move or resize; arrows move the selection, Shift with Left or Right resizes, Delete removes."
                             Keys.onPressed: function(event) {
                                 if (event.key === Qt.Key_Escape) { session.clearNoteSelection(); event.accepted = true; return }
                                 if (!session.canChange || session.selectedNotes.length === 0) return
@@ -523,21 +524,14 @@ ApplicationWindow {
                                 else return
                                 event.accepted = true
                             }
-                            Repeater {
-                                model: pianoView.rows
-                                Rectangle {
-                                    required property int index
-                                    y: index * pianoView.rowHeight; height: pianoView.rowHeight; width: pianoView.width
-                                    color: [1, 3, 6, 8, 10].indexOf((pianoView.base + pianoView.rows - 1 - index) % 12) >= 0 ? "#151d28" : "transparent"
-                                }
-                            }
-                            Repeater {
-                                model: Math.ceil(session.pianoLength / 24)
-                                Rectangle {
-                                    required property int index
-                                    x: index * 24 * pianoView.tickWidth; width: 1; height: pianoView.height
-                                    color: index % 4 === 0 ? "#3d4d62" : "#202a38"
-                                }
+                            PianoNotesView {
+                                id: notesView
+                                objectName: "pianoNotesView"
+                                anchors.fill: parent
+                                notes: session.pianoNotes; selected: session.selectedNotes
+                                base: pianoView.base; rows: pianoView.rows; length: session.pianoLength
+                                dragging: pianoInput.dragging; resizing: pianoInput.resizing
+                                previewTicks: pianoInput.previewTicks; previewPitch: pianoInput.previewPitch
                             }
                             MouseArea {
                                 id: pianoInput
@@ -585,26 +579,6 @@ ApplicationWindow {
                                         session.addNote(pianoView.snap > 1 ? Math.floor(tick / grid) * grid : tick, grid, pitch, 80)
                                     }
                                     dragging = false; hit = null; previewTicks = 0; previewPitch = 0
-                                }
-                            }
-                            Repeater {
-                                model: session.pianoNotes
-                                Rectangle {
-                                    required property var modelData
-                                    required property int index
-                                    objectName: "pianoNote" + index
-                                    // While dragging, selected notes preview the snapped change.
-                                    readonly property bool selected: session.selectedNotes.indexOf(modelData.id) >= 0
-                                    readonly property bool moving: selected && pianoInput.dragging && !pianoInput.resizing
-                                    readonly property bool sizing: selected && pianoInput.dragging && pianoInput.resizing
-                                    readonly property int shownPitch: modelData.pitch + (moving ? pianoInput.previewPitch : 0)
-                                    visible: shownPitch >= pianoView.base && shownPitch < pianoView.base + pianoView.rows
-                                    x: (modelData.start + (moving ? pianoInput.previewTicks : 0)) * pianoView.tickWidth
-                                    width: Math.max(2, (modelData.length + (sizing ? pianoInput.previewTicks : 0)) * pianoView.tickWidth)
-                                    y: (pianoView.base + pianoView.rows - 1 - shownPitch) * pianoView.rowHeight; height: pianoView.rowHeight
-                                    opacity: moving || sizing ? 0.7 : 1
-                                    color: selected ? "#e4bc75" : "#5fa8d3"
-                                    border.color: "#0f141c"
                                 }
                             }
                         }

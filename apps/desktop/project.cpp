@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QSaveFile>
 #include <algorithm>
+#include <queue>
 #include <cmath>
 #include <stdexcept>
 
@@ -98,13 +99,14 @@ void validatePiano(const PianoRoll& roll) {
     }
     std::sort(ids.begin(), ids.end());
     if (std::adjacent_find(ids.begin(), ids.end()) != ids.end()) throw std::invalid_argument("Note IDs must be unique");
-    // At most 16 notes sound at once (the synth's voice count): count notes
-    // still sounding at each note start.
+    // At most 16 notes sound at once (the synth's voice count). Notes are in
+    // start order, so a sweep keeps the ends of notes still sounding; the
+    // last note of a group sharing one start sees the whole group.
+    std::priority_queue<int, std::vector<int>, std::greater<>> ends;
     for (const auto& note : roll.notes) {
-        const auto sounding = std::count_if(roll.notes.begin(), roll.notes.end(), [&](const PianoNote& other) {
-            return other.start <= note.start && other.start + other.length > note.start; });
-        if (sounding > static_cast<std::ptrdiff_t>(fl_live::Engine::voices_per_track))
-            throw std::invalid_argument("At most 16 notes can sound at once");
+        while (!ends.empty() && ends.top() <= note.start) ends.pop();
+        ends.push(note.start + note.length);
+        if (ends.size() > fl_live::Engine::voices_per_track) throw std::invalid_argument("At most 16 notes can sound at once");
     }
 }
 fl_live::MidiClip pianoClip(const PianoRoll& roll, int tempo, const SynthSettings& synth) {
