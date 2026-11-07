@@ -128,14 +128,21 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
         # exactly; velocity 1..127 maps to percent as (v * 100 + 63) // 127.
         assert take["clips"] == take["before"] + 1 and take["selected_last"], take
         assert take["message"].startswith("Recorded 1 take as new clips"), take
+        # Positions relative to the first note and lengths match to the
+        # tick, within the one tick that rounding can flip when the first
+        # note falls within a frame of a half-tick boundary (pw-midiplay
+        # timing varies by a frame under load; the frame-exact claim is the
+        # non-desktop mode's).
         notes = [tuple(n) for n in take["notes"]]
-        origin = notes[0][0]
         expected = sorted(((s, l, p, max(1, (v * 100 + 63) // 127)) for s, l, p, v in NOTES), key=lambda n: (n[0], n[2]))
-        recorded = sorted(((s - origin, l, p, v) for s, l, p, v in notes), key=lambda n: (n[0], n[2]))
-        assert recorded == expected, list(zip(recorded, expected))
-        print(json.dumps({"notes": len(notes), "first_note_tick": origin, "clip_length_ticks": take["length"]}))
+        recorded = sorted(notes, key=lambda n: (n[0], n[2]))
+        origin = recorded[0][0]
+        assert len(recorded) == len(expected) and all(r[2:] == e[2:] for r, e in zip(recorded, expected)), list(zip(recorded, expected))
+        worst = max(max(abs((r[0] - origin) - e[0]), abs(r[1] - e[1])) for r, e in zip(recorded, expected))
+        assert worst <= 1, f"notes differ from the file by up to {worst} ticks: {list(zip(recorded, expected))}"
+        print(json.dumps({"notes": len(notes), "first_note_tick": origin, "clip_length_ticks": take["length"], "worst_tick_difference": worst}))
         print("PASS: desktop MIDI recording: the armed MIDI track's take becomes the selected piano-roll clip holding every note "
-              "of the independently authored file at its exact tick, length, pitch and mapped velocity")
+              "of the independently authored file with its pitch and mapped velocity, at its tick and length within one tick of rounding")
         sys.exit(0)
     assert take["error"] == 0 and take["bad_buffers"] == 0 and take["dropped"] == 0 and take["closed_at_end"] == 0, take
     assert take["events"] == 2 * len(NOTES), take
