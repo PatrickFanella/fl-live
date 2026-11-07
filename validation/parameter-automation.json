@@ -1,0 +1,49 @@
+{
+  "verified_at": "2026-11-07T09:03:39.643510+00:00",
+  "base": "PR #126 head",
+  "issues": [
+    51
+  ],
+  "scope": "Automatable track level/pan parameters: identity, units, ranges, timing, interpolation, persistence",
+  "environment": "Kvant, pinned CI image, docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 20,
+      "total": 20
+    },
+    "release": {
+      "passed": 7,
+      "total": 7
+    },
+    "engine-only": {
+      "passed": 5,
+      "total": 5
+    },
+    "pipewire-sanitize": {
+      "passed": 15,
+      "total": 15
+    },
+    "document-io-sanitize": {
+      "passed": 8,
+      "total": 8
+    }
+  },
+  "verified_behaviors": [
+    "Engine gain/pan lanes match an independent statement of the linear policy sample by sample at blocks 1/64/128/257/512 with zero intercepted allocations; rewind restarts the curve",
+    "Engine refuses non-increasing frames, out-of-range or NaN values and over-capacity lanes",
+    "Desktop lanes persist behind automation-v1; malformed lanes, unknown parameters, extra fields and lanes for unknown tracks are refused",
+    "Beat-to-frame conversion uses the shared upward rounding (173,233.08 -> 173,234 at 133 BPM); rendered ramp samples match; mute overrides a level lane",
+    "Rename, duplicate (copied lanes on new ID), delete, Undo and Save/Open keep lanes on the right track IDs; a float export follows a one-bar ramp exactly"
+  ],
+  "source_sha256": {
+    "include/fl_live/engine.hpp": "83b3c5136c8d7d285f896186b7d684c6776689bf4e7ed3d4e48f43a9f71841cc",
+    "src/engine.cpp": "8d1643033d8891511886d3ffdf8fcd99c39f475a454c25f61815098e28777394",
+    "include/fl_live/document_render.hpp": "325b66f016425e5abde63c928d81dce4382c8a5a0ae9d01c3420fcf353ed86c8",
+    "src/document_render.cpp": "9c153a72314b3cafc80dfb3b8a061101bfd7b86bf94d1b138f4c1dc6d0780f56",
+    "apps/desktop/authored_project.cpp": "09ea97c3639632318fbd5ffbc8d98c89ff2861f4a3a232a7e5608e1609277446",
+    "tests/engine_tests.cpp": "0159595397360b280ea298e8878c6c53a5e7f9989b5bf4d2fd29cca476c9e615",
+    "tests/authored_project_tests.cpp": "8980b4e96203bdac89bacb092823b8b4cc4a6af07629e0609c44874788afcd61",
+    "tests/desktop_tests.cpp": "fa2a4e1169c447124f53fa30f997787c8969fdb0cd0b7e81e5496f8d0edb1117"
+  },
+  "limits": "No lane editing UI yet (#52); lanes are song-time, not clip-time; only level and pan."
+}

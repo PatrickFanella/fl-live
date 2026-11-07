@@ -13,6 +13,7 @@ Updated 2026-10-31. The near-term goal is a useful Linux MVP, with a close Live/
 | General Session document | [Qt-free metadata model](session-document.md): typed identities, transactional edits and reference cleanup; [versioned metadata files](session-metadata.md) with lossless IDs and validated replacement | General musical schema/media content, UI controls, history and render integration; issues #26/#56 retain integration work |
 | Document/render boundary | [Immutable preparation](document-render.md), stable-ID command/feedback mapping, supplied-content validation, four-track offline sample checks and stopped rebuild cleanup | General desktop management, persisted media/note content, mixer and live retirement |
 | Media import | [WAV admission policy](media-import.md), ordered worker decoding with cancellation, desktop import per audio track, waveform view and source/loop range editing, absolute and project-relative references in v4 projects, reported relocation, relink and collect-into-project | Warping, non-WAV formats |
+| Automation | [Level/pan parameter identity, linear interpolation and persistence](automation.md); sample-exact across block sizes | Lane editing UI, playback edits |
 | Recording/plugins/graphs | Planned | Implementation and integrated qualification |
 
 The first D1 engine slice is implemented. D0/D1 as a whole remain partial. D2–D5 are not complete. A generated WAV is not a usable workstation.

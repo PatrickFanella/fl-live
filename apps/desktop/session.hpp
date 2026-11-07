@@ -219,7 +219,8 @@ private:
         std::unique_ptr<fl_live::PipeWireBackend> backend;
         Prepared(const SessionContent& content, const fl_live::DocumentSnapshot& identities)
             : mapped(identities, contentSources(content, identities), 48000,
-                static_cast<std::uint32_t>(content.tempo)*1000U, {}, contentGains(content, identities)), controller(mapped.plan()) {}
+                static_cast<std::uint32_t>(content.tempo)*1000U, {}, contentGains(content, identities), contentAutomation(content, identities)),
+              controller(mapped.plan()) {}
     };
     using Content = std::shared_ptr<const SessionContent>;
     Content content_ = std::make_shared<const SessionContent>(defaultProject().content);

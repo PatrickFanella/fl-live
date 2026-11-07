@@ -808,6 +808,8 @@ bool Session::duplicateTrack(const QString& id) {
         if(name.size()<=fl_live::SessionDocument::name_byte_limit)candidate.renameTrack(copy,name);
         auto next=*content_;
         next.tracks.push_back({copy,trackContent(*content_,source).level});
+        // The copy gets its own lanes for the same parameters.
+        for(const auto& lane:content_->automation)if(lane.track==source){auto own=lane;own.track=copy;next.automation.push_back(std::move(own));}
         // duplicateTrack appends the new clips in the source track's order.
         std::size_t n=before;
         for(const auto& clip:identities_->clips) if(clip.track==source) {
@@ -827,6 +829,7 @@ bool Session::deleteTrack(const QString& id) {
         candidate.deleteTrack(target);
         auto next=*content_;
         std::erase_if(next.tracks,[target](const auto& t){return t.track==target;});
+        std::erase_if(next.automation,[target](const auto& l){return l.track==target;});
         std::erase_if(next.clips,[&](const auto& c){return !std::any_of(candidate.snapshot().clips.begin(),candidate.snapshot().clips.end(),[&](const auto& d){return d.id==c.clip;});});
         if(!commitStructure(std::move(next),candidate.snapshot(),EditKind::track_delete,-1))return false;
         message_="Deleted track; Undo restores it with its IDs";emit changed();return true;

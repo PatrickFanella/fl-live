@@ -29,7 +29,8 @@ This page separates what has been measured from what is planned or unqualified. 
 | Real-time continuity | Fixed-quantum private-graph controls when the host is idle | Private graph: [reference quantum continuity](../validation/reference-quantum-continuity.json) | Live quantum changes (#23); under host load the private graph drops or slips quanta, which the content checks report rather than fail |
 | Input | Offscreen keyboard and pointer events on the production QML; [shortcuts, focus restoration and unique accessible names](keyboard.md) | Offscreen UI: [keyboard and accessibility](../validation/keyboard-accessibility.json) | Native Wayland input (#22), keyboard-only qualification journey (#83), screen-reader checks (#80) |
 | Recording | None | — | Audio/MIDI recording (#43–#50) |
-| Automation, devices, plugins | None | — | Automation (#51–#57), typed devices (#73–#78), plugin hosting (#66–#72) |
+| Automation | [Level and pan lanes](automation.md) with stable IDs, linear interpolation, persistence | Offline: [automation](../validation/parameter-automation.json) | Lane editing UI (#52), playback edits (#53–#55), other parameters |
+| Devices, plugins | None | — | Typed devices (#73–#78), plugin hosting (#66–#72) |
 | Platforms | Linux with Qt 6.12 and PipeWire 1.6.9 in the pinned container | Hosted CI | Packaging and clean install (#85), macOS (#96) |
 
 ## Known gaps that affect everyday use

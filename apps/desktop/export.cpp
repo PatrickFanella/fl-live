@@ -40,7 +40,7 @@ ExportOutcome exportProjectWav(const QString& path, const SessionContent& conten
     if (QFileInfo::exists(path) || QFileInfo(path).isSymLink())
         throw std::runtime_error("Cannot create WAV: choose a new writable file path");
     const fl_live::DocumentRenderPlan prepared(identities, contentSources(content, identities), 48000,
-        static_cast<std::uint32_t>(content.tempo) * 1000U, {}, contentGains(content, identities));
+        static_cast<std::uint32_t>(content.tempo) * 1000U, {}, contentGains(content, identities), contentAutomation(content, identities));
     fl_live::Engine engine(prepared.plan());
     // Every clip starts at the song start (frame 0). Frames before the range
     // are rendered and discarded, so the range matches playback from the top.

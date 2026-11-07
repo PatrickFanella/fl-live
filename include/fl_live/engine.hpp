@@ -42,14 +42,25 @@ struct MidiClip {
     bool loop = true;
 };
 using Clip = std::variant<AudioClip, MidiClip>;
+// Automation breakpoint at a transport frame (frames since the song start).
+// Values between points are linear in frames; before the first point and
+// after the last the end value holds. Frames must strictly increase.
+struct AutomationPoint {
+    Frame at;
+    float value;
+    bool operator==(const AutomationPoint&) const = default;
+};
 // Balance pan law, pan in [-1,1]: the far channel is attenuated linearly and
 // the near channel stays at unity, so center is 0 dB on both channels. Mono
 // sources and the MIDI instrument feed both channels; stereo sources keep
 // their left/right channels.
+// A non-empty automation list replaces the static gain or pan.
 struct Track {
     float gain = 1.0F;
     std::vector<Clip> clips;
     float pan = 0.0F;
+    std::vector<AutomationPoint> gain_automation;
+    std::vector<AutomationPoint> pan_automation;
 };
 struct SessionPlan {
     std::uint32_t sample_rate = 48000;
@@ -84,6 +95,9 @@ public:
     static constexpr std::size_t notes_per_clip_capacity = 1024;
     static constexpr std::size_t voices_per_track = 16;
     static constexpr std::size_t max_output_channels = 2;
+    static constexpr std::size_t automation_points_capacity = 4096;
+    // Declared interpolation, shared by rendering and tests.
+    [[nodiscard]] static float automationValue(std::span<const AutomationPoint> points, Frame at, std::size_t& cursor) noexcept;
     explicit Engine(const SessionPlan& plan);
     Engine(SessionPlan&&) = delete;
     void start() noexcept;
@@ -113,6 +127,7 @@ private:
     };
     const SessionPlan& plan_;
     std::vector<Runtime> runtime_;
+    std::vector<std::array<std::size_t, 2>> automation_cursor_; // per track: gain, pan
     std::array<double, 128> steps_{};
     std::array<Command, command_capacity> commands_{};
     std::size_t head_ = 0;

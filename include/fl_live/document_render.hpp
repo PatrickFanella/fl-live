@@ -8,6 +8,14 @@ struct DocumentClipSource {
     Clip content;
 };
 struct DocumentTrackGain { TrackId id; float gain; };
+// Automatable track parameters. A lane replaces the static gain or pan of
+// its track; mute/solo still win (an inaudible track prepares silent).
+enum class AutomationTarget { gain, pan };
+struct DocumentAutomation {
+    TrackId track;
+    AutomationTarget target;
+    std::vector<AutomationPoint> points; // transport frames, engine units
+};
 struct PreparationBudget {
     static constexpr std::size_t audio_frame_limit = 1U << 24;
     static constexpr std::size_t midi_note_limit = 65536;
@@ -25,7 +33,8 @@ class DocumentRenderPlan final {
 public:
     DocumentRenderPlan(DocumentSnapshot document, std::span<const DocumentClipSource> sources,
         std::uint32_t sample_rate = 48000, std::uint32_t bpm_milli = 120000,
-        PreparationBudget budget = {}, std::span<const DocumentTrackGain> gains = {});
+        PreparationBudget budget = {}, std::span<const DocumentTrackGain> gains = {},
+        std::span<const DocumentAutomation> automation = {});
     DocumentRenderPlan(const DocumentRenderPlan&) = delete;
     DocumentRenderPlan& operator=(const DocumentRenderPlan&) = delete;
     DocumentRenderPlan(DocumentRenderPlan&&) = delete;

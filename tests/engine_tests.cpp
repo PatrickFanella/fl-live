@@ -266,6 +266,55 @@ void stereo_contract() {
     controller.process(out, 2);
     require(controller.status().handled_serial == 1 && controller.status().position == 3, "stereo controller frames");
 }
+// Independent statement of the declared policy: linear in frames between
+// points, end values held outside them.
+float expected_automation(std::initializer_list<std::pair<Frame, float>> points, Frame f) {
+    const std::vector<std::pair<Frame, float>> v(points);
+    if (f <= v.front().first) return v.front().second;
+    if (f >= v.back().first) return v.back().second;
+    for (std::size_t i = 0; i + 1 < v.size(); ++i)
+        if (f < v[i + 1].first) {
+            const double t = static_cast<double>(f - v[i].first) / static_cast<double>(v[i + 1].first - v[i].first);
+            return static_cast<float>(v[i].second + (static_cast<double>(v[i + 1].second) - v[i].second) * t);
+        }
+    return v.back().second;
+}
+void automation_contract() {
+    SessionPlan plan;
+    plan.tracks.push_back(Track{1, {AudioClip{{1}, true}}});
+    plan.tracks[0].gain_automation = {{100, 0.0F}, {1100, 1.0F}, {2000, 0.5F}};
+    plan.tracks[0].pan_automation = {{0, -1.0F}, {3000, 1.0F}};
+    const std::array launch{Command{CommandKind::launch, 0, 0, 0}};
+    const std::size_t frames = 3500;
+    const auto reference = render_channels(plan, launch, 1, frames, 2);
+    for (auto block : {64U, 128U, 257U, 512U}) require(render_channels(plan, launch, block, frames, 2) == reference, "automation differs by block size");
+    for (Frame f = 0; f < frames; ++f) {
+        const float gain = expected_automation({{100, 0.0F}, {1100, 1.0F}, {2000, 0.5F}}, f);
+        const float pan = expected_automation({{0, -1.0F}, {3000, 1.0F}}, f);
+        const float left = gain * (pan > 0 ? 1 - pan : 1.0F), right = gain * (pan < 0 ? 1 + pan : 1.0F);
+        require(reference[2 * f] == left && reference[2 * f + 1] == right, "automated sample differs from the declared interpolation");
+    }
+    // Rewind restarts the curve from the beginning (cursor reset).
+    Engine engine(plan);
+    require(engine.schedule(launch[0]) == ScheduleResult::accepted, "launch");
+    engine.start();
+    std::vector<float> block(2 * 1500);
+    require(engine.process(block, 2), "process");
+    engine.stop(); engine.rewind();
+    require(engine.schedule(launch[0]) == ScheduleResult::accepted, "relaunch");
+    engine.start();
+    std::vector<float> again(2 * 1500);
+    require(engine.process(again, 2) && again == std::vector<float>(reference.begin(), reference.begin() + 3000), "rewind must restart automation");
+    // Validation: order, range, NaN, capacity.
+    auto bad = plan;
+    bad.tracks[0].gain_automation = {{10, 0.5F}, {10, 0.6F}}; invalid([&] { Engine e(bad); });
+    bad.tracks[0].gain_automation = {{10, 4.5F}}; invalid([&] { Engine e(bad); });
+    bad.tracks[0].gain_automation = {{10, std::numeric_limits<float>::quiet_NaN()}}; invalid([&] { Engine e(bad); });
+    bad.tracks[0].gain_automation = {}; bad.tracks[0].pan_automation = {{0, -1.5F}}; invalid([&] { Engine e(bad); });
+    bad.tracks[0].pan_automation.assign(Engine::automation_points_capacity + 1, AutomationPoint{0, 0});
+    for (std::size_t i = 0; i < bad.tracks[0].pan_automation.size(); ++i) bad.tracks[0].pan_automation[i].at = i;
+    invalid([&] { Engine e(bad); });
+}
 void controller_allocation_contract() {
     const auto plan = audio_plan();
     RenderController controller(plan);
@@ -294,9 +343,9 @@ void controller_allocation_contract() {
 }
 int main() {
     try {
-        grid_contract(); audio_contract(); midi_contract(); stereo_contract(); queue_contract(); validation_contract();
+        grid_contract(); audio_contract(); midi_contract(); stereo_contract(); automation_contract(); queue_contract(); validation_contract();
         controller_allocation_contract();
-        std::cout << "PASS: grid, audio, MIDI, stereo/pan, command bounds, validation; process allocations=" << render_allocations << '\n';
+        std::cout << "PASS: grid, audio, MIDI, stereo/pan, automation, command bounds, validation; process allocations=" << render_allocations << '\n';
         return 0;
     } catch (const std::exception& e) {
         watch_allocations = false;

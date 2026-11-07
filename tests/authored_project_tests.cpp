@@ -241,7 +241,63 @@ void relativeAssets() {
     bad([](auto& r){r["required_features"]=QJsonArray{"asset-relative-v1","general-session-v1"};});
     bad([](auto& r){auto a=r["clips"].toArray();auto c=a[0].toObject();c["relative"]="x.wav";a[0]=c;r["clips"]=a;}); // pulse clip
 }
+void automationLanes() {
+    auto project=general();
+    const auto pulse=project.identities.tracks[0].id,bass=project.identities.tracks[3].id;
+    project.content.automation={{pulse,AutomatedParameter::level,{{0,0},{400,100}}},{bass,AutomatedParameter::pan,{{0,-100},{800,100}}}};
+    validateContent(project.content,project.identities);
+    const auto bytes=encodeAuthoredProject(project);
+    const auto root=QJsonDocument::fromJson(bytes).object();
+    CHECK(root["required_features"].toArray().contains("automation-v1") && root["automation"].toArray().size()==2);
+    auto decoded=decodeAuthoredProject(bytes);
+    CHECK(decoded.content.automation==project.content.automation);
+    // Positions map to frames with the shared upward rounding at 133 BPM.
+    const auto lanes=contentAutomation(project.content,project.identities);
+    CHECK(lanes.size()==2 && lanes[0].target==fl_live::AutomationTarget::gain && lanes[1].target==fl_live::AutomationTarget::pan);
+    CHECK((lanes[0].points==std::vector<fl_live::AutomationPoint>{{0,0.0F},{86617,1.0F}})); // ceil(48000*60*4/133)
+    CHECK(lanes[1].points[1].at==173234 && lanes[1].points[0].value==-1.0F); // ceil(173233.08)
+    // Rendering: the pulse track's gain ramps from 0 to 1 over the first bar.
+    auto unsolo=project; {fl_live::SessionDocument d(unsolo.identities);d.setTrackMix(unsolo.identities.tracks[2].id,{});unsolo.identities=d.snapshot();}
+    const fl_live::DocumentRenderPlan plan(unsolo.identities,contentSources(unsolo.content,unsolo.identities),48000,133000,{},
+        contentGains(unsolo.content,unsolo.identities),contentAutomation(unsolo.content,unsolo.identities));
+    CHECK(plan.plan().tracks[0].gain_automation.size()==2 && plan.plan().tracks[3].pan_automation.size()==2);
+    fl_live::Engine engine(plan.plan());
+    CHECK(engine.schedule(*plan.launch(project.identities.clips[0].id,0))==fl_live::ScheduleResult::accepted);
+    engine.start();std::vector<float> out(2*50000);CHECK(engine.process(out,2));
+    const auto source=pulseClip(133);
+    for(std::size_t f=1;f<50000;f+=997) {
+        const float gain=static_cast<float>(static_cast<double>(f)/86617.0);
+        CHECK(out[2*f]==gain*source.samples[f%source.samples.size()]);
+    }
+    // A muted track stays silent even when automated.
+    auto muted=unsolo;{fl_live::SessionDocument d(muted.identities);d.setTrackMix(pulse,{0,true,false});muted.identities=d.snapshot();}
+    const fl_live::DocumentRenderPlan silent(muted.identities,contentSources(muted.content,muted.identities),48000,133000,{},
+        contentGains(muted.content,muted.identities),contentAutomation(muted.content,muted.identities));
+    CHECK(silent.plan().tracks[0].gain==0 && silent.plan().tracks[0].gain_automation.empty());
+    // Validation.
+    const auto invalid=[&](auto edit){auto c=project.content;edit(c);rejects([&]{validateContent(c,project.identities);});};
+    invalid([](auto& c){c.automation[0].track=fl_live::TrackId{999};});
+    invalid([](auto& c){c.automation.push_back(c.automation[0]);});
+    invalid([](auto& c){c.automation[0].points.clear();});
+    invalid([](auto& c){c.automation[0].points={{10,5},{10,6}};});
+    invalid([](auto& c){c.automation[0].points={{0,101}};});
+    invalid([](auto& c){c.automation[1].points={{0,-101}};});
+    invalid([](auto& c){c.automation[0].points={{-1,5}};});
+    invalid([](auto& c){c.automation[0].points={{automation_position_limit+1,5}};});
+    invalid([](auto& c){c.automation[0].points={{0,std::nan("")}};});
+    rejects([&]{fl_live::DocumentRenderPlan p(project.identities,contentSources(project.content,project.identities),48000,133000,{},{},
+        std::vector<fl_live::DocumentAutomation>{{fl_live::TrackId{999},fl_live::AutomationTarget::gain,{{0,1}}}});});
+    const auto bad=[&](auto edit){auto r=root;edit(r);rejects([&]{decodeAuthoredProject(QJsonDocument(r).toJson());});};
+    bad([](auto& r){r.remove("automation");});
+    bad([](auto& r){r["required_features"]=QJsonArray{"general-session-v1"};}); // automation present without its feature
+    bad([](auto& r){auto a=r["automation"].toArray();auto l=a[0].toObject();l["parameter"]="volume";a[0]=l;r["automation"]=a;});
+    bad([](auto& r){auto a=r["automation"].toArray();auto l=a[0].toObject();l["extra"]=1;a[0]=l;r["automation"]=a;});
+    bad([](auto& r){auto a=r["automation"].toArray();auto l=a[0].toObject();auto pts=l["points"].toArray();auto pt=pts[0].toObject();pt["value"]="0";pts[0]=pt;l["points"]=pts;a[0]=l;r["automation"]=a;});
+    project.content.automation.clear();
+    CHECK(!QJsonDocument::fromJson(encodeAuthoredProject(project)).object().contains("automation"));
+}
 int main(){try{
+    automationLanes();
     relativeAssets();
     legacyMigration();generalRoundTrip();generalRejection();clipRanges();
     std::cout<<"PASS: v1-v3 migration with sample equivalence, v4 general content round trip, sources, clip ranges and rejection\n";return 0;

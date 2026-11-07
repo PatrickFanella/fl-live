@@ -179,6 +179,24 @@ void validateContent(const SessionContent& content,const fl_live::DocumentSnapsh
         if(static_cast<std::size_t>(std::count_if(identities.clips.begin(),identities.clips.end(),[&](const auto& c){return c.track==track.id;}))!=desktop_clips_per_track)
             throw std::invalid_argument("Each desktop track holds exactly one clip");
     }
+    for(std::size_t i=0;i<content.automation.size();++i) {
+        const auto& lane=content.automation[i];
+        if(std::none_of(identities.tracks.begin(),identities.tracks.end(),[&](const auto& t){return t.id==lane.track;}))
+            throw std::invalid_argument("Automation lane for an unknown track");
+        if(lane.parameter!=AutomatedParameter::level && lane.parameter!=AutomatedParameter::pan)throw std::invalid_argument("Unknown automated parameter");
+        for(std::size_t j=0;j<i;++j)if(content.automation[j].track==lane.track && content.automation[j].parameter==lane.parameter)
+            throw std::invalid_argument("A parameter has at most one automation lane");
+        if(lane.points.empty() || lane.points.size()>fl_live::Engine::automation_points_capacity)
+            throw std::invalid_argument("An automation lane holds 1 to 4096 points");
+        const double low=lane.parameter==AutomatedParameter::level ? 0 : -100;
+        for(std::size_t k=0;k<lane.points.size();++k) {
+            const auto& point=lane.points[k];
+            if(point.at<0 || point.at>automation_position_limit || (k && point.at<=lane.points[k-1].at))
+                throw std::invalid_argument("Automation points must strictly increase within 256 bars");
+            if(!std::isfinite(point.value) || point.value<low || point.value>100)
+                throw std::invalid_argument("Automation value is outside the parameter's range");
+        }
+    }
     for(const auto& clip:identities.clips) {
         const auto& value=clipContent(content,clip.id);
         if(std::count_if(content.clips.begin(),content.clips.end(),[&](const auto& c){return c.clip==clip.id;})!=1)
@@ -217,6 +235,21 @@ std::vector<fl_live::DocumentClipSource> contentSources(const SessionContent& co
     }
     return result;
 }
+std::vector<fl_live::DocumentAutomation> contentAutomation(const SessionContent& content,const fl_live::DocumentSnapshot& identities) {
+    validateContent(content,identities);
+    std::vector<fl_live::DocumentAutomation> result;
+    for(const auto& lane:content.automation) {
+        fl_live::DocumentAutomation prepared{lane.track,lane.parameter==AutomatedParameter::level ? fl_live::AutomationTarget::gain : fl_live::AutomationTarget::pan,{}};
+        for(const auto& point:lane.points) {
+            // Same upward rounding as every other musical boundary.
+            const auto numerator=48000ULL*60*static_cast<std::uint64_t>(point.at);
+            const auto denominator=static_cast<std::uint64_t>(content.tempo)*100;
+            prepared.points.push_back({(numerator+denominator-1)/denominator,static_cast<float>(point.value/100.0)});
+        }
+        result.push_back(std::move(prepared));
+    }
+    return result;
+}
 std::vector<fl_live::DocumentTrackGain> contentGains(const SessionContent& content,const fl_live::DocumentSnapshot& identities) {
     validateContent(content,identities);
     std::vector<fl_live::DocumentTrackGain> result;
@@ -252,10 +285,22 @@ QByteArray encodeAuthoredProject(const AuthoredProject& project,const QString& b
         else clips.append(QJsonObject{{"id",idText(clip.id.value)},{"audio",value.audio==AudioSource::pulse ? "pulse" : "empty"}});
     }
     const auto session=QJsonDocument::fromJson(fl_live::encodeDocumentMetadata(project.identities)).object();
-    const auto bytes=QJsonDocument(QJsonObject{{"format","fl-live-project"},{"version",4},
-        {"required_features",[&]{QJsonArray f{"general-session-v1"};if(ranges)f.append("clip-ranges-v1");if(relative)f.append("asset-relative-v1");return f;}()},
+    const bool automated=!project.content.automation.empty();
+    QJsonObject root{{"format","fl-live-project"},{"version",4},
+        {"required_features",[&]{QJsonArray f{"general-session-v1"};if(ranges)f.append("clip-ranges-v1");if(relative)f.append("asset-relative-v1");
+            if(automated)f.append("automation-v1");return f;}()},
         {"tempo",project.content.tempo},
-        {"session",session},{"tracks",tracks},{"clips",clips}}).toJson();
+        {"session",session},{"tracks",tracks},{"clips",clips}};
+    if(automated) {
+        QJsonArray lanes;
+        for(const auto& lane:project.content.automation) {
+            QJsonArray points;
+            for(const auto& point:lane.points)points.append(QJsonObject{{"at",static_cast<double>(point.at)},{"value",point.value}});
+            lanes.append(QJsonObject{{"track",idText(lane.track.value)},{"parameter",lane.parameter==AutomatedParameter::level ? "level" : "pan"},{"points",points}});
+        }
+        root.insert("automation",lanes);
+    }
+    const auto bytes=QJsonDocument(root).toJson();
     if(bytes.size()>limit)throw std::invalid_argument("Authored project exceeds size limit");
     return bytes;
 }
@@ -266,12 +311,14 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
     const auto root=json.object();
     if(root["format"]!="fl-live-project")throw std::invalid_argument("Unsupported project format");
     if(!root["version"].isDouble() || root["version"].toDouble()!=4)return decodeTemplate(bytes,root);
-    const auto v4=exact(root,{"format","version","required_features","tempo","session","tracks","clips"});
-    const auto features=v4["required_features"].toArray();
-    const bool ranges=features.contains("clip-ranges-v1"),relativePaths=features.contains("asset-relative-v1");
+    const auto features=root["required_features"].toArray();
+    const bool ranges=features.contains("clip-ranges-v1"),relativePaths=features.contains("asset-relative-v1"),automated=features.contains("automation-v1");
+    const auto v4=automated ? exact(root,{"format","version","required_features","tempo","session","tracks","clips","automation"})
+                            : exact(root,{"format","version","required_features","tempo","session","tracks","clips"});
     QJsonArray canonical{"general-session-v1"};
     if(ranges)canonical.append("clip-ranges-v1");
     if(relativePaths)canonical.append("asset-relative-v1");
+    if(automated)canonical.append("automation-v1");
     if(features!=canonical)throw std::invalid_argument("Unsupported required project feature");
     if(!v4["session"].isObject())throw std::invalid_argument("Project requires a session object");
     AuthoredProject project;
@@ -328,6 +375,25 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
             } else throw std::invalid_argument("Unsupported audio source");
         }
         project.content.clips.push_back(std::move(clip));
+    }
+    if(automated) {
+        if(!v4["automation"].isArray() || v4["automation"].toArray().size()>2*static_cast<qsizetype>(fl_live::SessionDocument::track_limit))
+            throw std::invalid_argument("Invalid automation array");
+        for(const auto& value:v4["automation"].toArray()) {
+            const auto lane=exact(value,{"track","parameter","points"});
+            AutomationLane decoded{fl_live::TrackId{idValue(lane["track"])}};
+            if(lane["parameter"]=="level")decoded.parameter=AutomatedParameter::level;
+            else if(lane["parameter"]=="pan")decoded.parameter=AutomatedParameter::pan;
+            else throw std::invalid_argument("Unsupported automated parameter");
+            if(!lane["points"].isArray() || lane["points"].toArray().size()>static_cast<qsizetype>(fl_live::Engine::automation_points_capacity))
+                throw std::invalid_argument("Invalid automation points");
+            for(const auto& p:lane["points"].toArray()) {
+                const auto point=exact(p,{"at","value"});
+                if(!point["value"].isDouble())throw std::invalid_argument("Automation values must be numbers");
+                decoded.points.push_back({integer(point["at"],0,static_cast<int>(automation_position_limit)),point["value"].toDouble()});
+            }
+            project.content.automation.push_back(std::move(decoded));
+        }
     }
     validateContent(project.content,project.identities);
     return project;

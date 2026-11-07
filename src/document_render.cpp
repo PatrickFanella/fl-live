@@ -7,7 +7,8 @@
 namespace fl_live {
 namespace {
 SessionPlan prepare(const DocumentSnapshot& document, std::span<const DocumentClipSource> sources,
-    std::uint32_t rate, std::uint32_t tempo, PreparationBudget budget, std::span<const DocumentTrackGain> gains) {
+    std::uint32_t rate, std::uint32_t tempo, PreparationBudget budget, std::span<const DocumentTrackGain> gains,
+    std::span<const DocumentAutomation> automation) {
     SessionDocument::validate(document);
     (void)TempoGrid(rate, tempo);
     if (sources.size() != document.clips.size()) throw std::invalid_argument("Every document clip requires exactly one source");
@@ -33,6 +34,14 @@ SessionPlan prepare(const DocumentSnapshot& document, std::span<const DocumentCl
             midi_notes += count;
         }
     }
+    for (std::size_t i = 0; i < automation.size(); ++i) {
+        const auto& lane = automation[i];
+        if (std::none_of(document.tracks.begin(), document.tracks.end(), [&](const auto& t) { return t.id == lane.track; }))
+            throw std::invalid_argument("Automation for an unknown track");
+        if (lane.target != AutomationTarget::gain && lane.target != AutomationTarget::pan) throw std::invalid_argument("Unknown automation target");
+        for (std::size_t j = 0; j < i; ++j)
+            if (automation[j].track == lane.track && automation[j].target == lane.target) throw std::invalid_argument("Duplicate automation lane");
+    }
     // Check all ownership/kind/count references before copying any media.
     for (const auto& track : document.tracks) {
         if (!gains.empty() && !levels.contains(track.id.value)) throw std::invalid_argument("Missing track gain binding");
@@ -52,8 +61,10 @@ SessionPlan prepare(const DocumentSnapshot& document, std::span<const DocumentCl
         if (!gains.empty()) prepared.gain = levels.at(track.id.value);
         // Mute/solo resolve to zero gain at preparation; pan maps percent to
         // the engine's balance law. Edits rebuild the plan.
-        if (!SessionDocument::audible(document, track.id)) prepared.gain = 0;
         prepared.pan = static_cast<float>(track.mix.pan) / static_cast<float>(TrackMix::pan_limit);
+        for (const auto& lane : automation) if (lane.track == track.id)
+            (lane.target == AutomationTarget::gain ? prepared.gain_automation : prepared.pan_automation) = lane.points;
+        if (!SessionDocument::audible(document, track.id)) { prepared.gain = 0; prepared.gain_automation.clear(); }
         for (const auto& clip : document.clips) if (clip.track == track.id)
             prepared.clips.push_back(*content.at(clip.id.value));
         plan.tracks.push_back(std::move(prepared));
@@ -64,8 +75,9 @@ SessionPlan prepare(const DocumentSnapshot& document, std::span<const DocumentCl
 }
 }
 DocumentRenderPlan::DocumentRenderPlan(DocumentSnapshot document, std::span<const DocumentClipSource> sources,
-    std::uint32_t sample_rate, std::uint32_t bpm_milli, PreparationBudget budget, std::span<const DocumentTrackGain> gains)
-    : document_(std::move(document)), plan_(prepare(document_, sources, sample_rate, bpm_milli, budget, gains)) {}
+    std::uint32_t sample_rate, std::uint32_t bpm_milli, PreparationBudget budget, std::span<const DocumentTrackGain> gains,
+    std::span<const DocumentAutomation> automation)
+    : document_(std::move(document)), plan_(prepare(document_, sources, sample_rate, bpm_milli, budget, gains, automation)) {}
 
 std::optional<std::size_t> DocumentRenderPlan::trackIndex(TrackId id) const noexcept {
     for (std::size_t i = 0; i < document_.tracks.size(); ++i) if (document_.tracks[i].id == id) return i;

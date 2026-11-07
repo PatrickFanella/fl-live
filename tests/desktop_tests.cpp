@@ -1352,6 +1352,37 @@ private slots:
         QVERIFY(!session.saveProject(path));QVERIFY(session.message().contains("already exists"));
         QCOMPARE(readAuthoredProject(path).identities.tracks.size(),4u);
     }
+    void automationIdentityStability() {
+        // Lanes are keyed by stable track IDs through rename, duplicate,
+        // delete, Undo and Save/Open.
+        QTemporaryDir directory;const auto path=directory.filePath("auto.json");
+        auto project=defaultProject();
+        const auto pulse=project.identities.tracks[0].id;
+        project.content.automation={{pulse,AutomatedParameter::level,{{0,0},{400,100}}}};
+        writeAuthoredProject(path,project);
+        Session session;QVERIFY(session.loadProject(path));
+        const auto id=session.trackIds()[0].toString();
+        QVERIFY(session.renameTrack(id,"Swell"));QVERIFY(session.duplicateTrack(id));
+        const auto copy=session.trackIds()[2].toString();
+        QVERIFY(session.saveProject(path));
+        auto saved=readAuthoredProject(path);
+        QCOMPARE(saved.content.automation.size(),2u);
+        QCOMPARE(saved.content.automation[0].track.value,pulse.value);
+        QCOMPARE(QString::number(saved.content.automation[1].track.value),copy);
+        QCOMPARE(saved.content.automation[1].points,saved.content.automation[0].points);
+        QVERIFY(session.deleteTrack(id));QVERIFY(session.saveProject(path));
+        saved=readAuthoredProject(path);
+        QCOMPARE(saved.content.automation.size(),1u);QCOMPARE(QString::number(saved.content.automation[0].track.value),copy);
+        session.undo();QCOMPARE(session.trackIds()[0].toString(),id);
+        QVERIFY(session.saveProject(path));QCOMPARE(readAuthoredProject(path).content.automation.size(),2u);
+        // The rendered export follows the lane: silence at the song start, full level after a bar.
+        session.setTempo(120);QVERIFY(session.setMute(session.trackIds()[1].toString(),true));QVERIFY(session.setMute(copy,true));
+        QVERIFY(session.exportAudio(directory.filePath("auto.wav"),1,2,0,2,"float32"));QTRY_VERIFY(!session.exporting());
+        const auto w=readWav(directory.filePath("auto.wav"));const auto source=pulseClip(120);
+        QCOMPARE(w.samples[0],0.0F);
+        for(std::size_t f=1;f<96000;f+=4999)QCOMPARE(w.samples[2*f],static_cast<float>(static_cast<double>(f)/96000.0)*source.samples[f%source.samples.size()]);
+        for(std::size_t f=96000;f<192000;f+=4999)QCOMPARE(w.samples[2*f],source.samples[f%source.samples.size()]);
+    }
     void qmlMixerInput() {
         Session session;
         QQmlApplicationEngine engine;

@@ -31,6 +31,16 @@ void validate(const SessionPlan& plan) {
             throw std::invalid_argument("track gain must be finite in [0,4]");
         if (!std::isfinite(track.pan) || track.pan < -1 || track.pan > 1)
             throw std::invalid_argument("track pan must be finite in [-1,1]");
+        const auto lane = [](const std::vector<AutomationPoint>& points, float low, float high) {
+            if (points.size() > Engine::automation_points_capacity) throw std::invalid_argument("at most 4096 automation points per lane");
+            for (std::size_t i = 0; i < points.size(); ++i) {
+                if (!std::isfinite(points[i].value) || points[i].value < low || points[i].value > high)
+                    throw std::invalid_argument("automation value outside the parameter range");
+                if (i && points[i].at <= points[i - 1].at) throw std::invalid_argument("automation points must strictly increase in time");
+            }
+        };
+        lane(track.gain_automation, 0, 4);
+        lane(track.pan_automation, -1, 1);
         if (track.clips.size() > Engine::clips_per_track_capacity) throw std::invalid_argument("at most 64 clips per track");
         for (const auto& clip : track.clips) {
             if (const auto* audio = std::get_if<AudioClip>(&clip)) {
@@ -90,6 +100,7 @@ std::optional<Frame> TempoGrid::try_next_bar(Frame at) const noexcept {
 Engine::Engine(const SessionPlan& plan) : plan_(plan) {
     validate(plan);
     runtime_.resize(plan.tracks.size());
+    automation_cursor_.resize(plan.tracks.size());
     for (std::size_t pitch = 0; pitch < steps_.size(); ++pitch)
         steps_[pitch] = 440.0 * std::exp2((static_cast<double>(pitch) - 69.0) / 12.0) / plan.sample_rate;
 }
@@ -145,14 +156,28 @@ void Engine::apply(const Command& command) noexcept {
     }
 }
 
+float Engine::automationValue(std::span<const AutomationPoint> points, Frame at, std::size_t& cursor) noexcept {
+    if (points.empty()) return 0;
+    if (cursor >= points.size() || points[cursor].at > at) cursor = 0; // rewind or first use
+    while (cursor + 1 < points.size() && points[cursor + 1].at <= at) ++cursor;
+    const auto& a = points[cursor];
+    if (at <= a.at || cursor + 1 == points.size()) return a.value;
+    const auto& b = points[cursor + 1];
+    const double t = static_cast<double>(at - a.at) / static_cast<double>(b.at - a.at);
+    return static_cast<float>(static_cast<double>(a.value) + (static_cast<double>(b.value) - static_cast<double>(a.value)) * t);
+}
+
 Engine::StereoSample Engine::render_track(std::size_t index) noexcept {
     auto& state = runtime_[index];
     if (!state.clip) return {};
     const auto& track = plan_.tracks[index];
     const auto& clip = track.clips[*state.clip];
     const auto age = position_ - state.launched;
-    const float left_gain = track.gain * (track.pan > 0 ? 1 - track.pan : 1.0F);
-    const float right_gain = track.gain * (track.pan < 0 ? 1 + track.pan : 1.0F);
+    auto& cursor = automation_cursor_[index];
+    const float gain = track.gain_automation.empty() ? track.gain : automationValue(track.gain_automation, position_, cursor[0]);
+    const float pan = track.pan_automation.empty() ? track.pan : automationValue(track.pan_automation, position_, cursor[1]);
+    const float left_gain = gain * (pan > 0 ? 1 - pan : 1.0F);
+    const float right_gain = gain * (pan < 0 ? 1 + pan : 1.0F);
     if (const auto* audio = std::get_if<AudioClip>(&clip)) {
         const auto length = audio->samples.size() / audio->channels;
         if (!audio->loop && age >= length) { state = Runtime{}; return {}; }
