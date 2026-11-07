@@ -1,0 +1,32 @@
+{
+  "verified_at": "2026-11-07T10:40:24.386670+00:00",
+  "base": "main after PR #137",
+  "issues": [
+    36
+  ],
+  "scope": "Piano-roll move, resize, pitch, velocity and snap with an all-or-nothing multi-note policy",
+  "environment": "Kvant, pinned CI image, docker --network none, Qt offscreen platform",
+  "gates": {
+    "desktop": {
+      "passed": 24,
+      "total": 24
+    }
+  },
+  "verified_behaviors": [
+    "Moving two notes by 24 ticks and 2 semitones updates both; resize and velocity edits are one Undo step each",
+    "All or nothing: a selection where one note would start before the clip, end after it, leave pitch 0-127 or drop below one tick is refused with notes and history unchanged; unknown or empty selections and velocities 0/101 are refused",
+    "Overlap policy: a note moved onto another of the same pitch is allowed; a move that would make 17 notes sound is refused",
+    "A square note moved 37 ticks off the grid at 137 BPM starts at frame 8103 and ends at frame 23869 in the float export (ceil(ticks*30000/137))",
+    "Engine: a note moved while sounding finishes its original duration (frames 0..11999), stays silent, then sounds again exactly at frames 48000..59999 of its new position",
+    "QML: dragging a note moves it by the snapped change in ticks and semitones; dragging its edge resizes it; a drag past the clip end is refused with a message; Left/Shift+Left, Up/Shift+Up, Snap Off and the velocity box edit the selection; the Undo button reverts"
+  ],
+  "source_sha256": {
+    "apps/desktop/session.hpp": "849b0633179b96008b86d251ef2ebbf5ccc34115f561b9a7ab3d6c7a2e4dba78",
+    "apps/desktop/session.cpp": "453efd21aa78e854f9051842f491675a1a852cce257e92ad22e7f951cdf34ad8",
+    "apps/desktop/Main.qml": "1dc11b40a280bc9a087aa7014bbbdb5bc4fa908107f4cc1a703838e936f31224",
+    "tests/authored_project_tests.cpp": "d170a63ac05f67bb0a30579d4b886188e82cb1dbae5b2cbc4d5cdb1b3ba43084",
+    "tests/desktop_tests.cpp": "2bfccdf8c2ac4889dea320a7c7eb743bdb323bf8720c101339d9f3108a7b9b46",
+    "src/engine.cpp": "19cf16efa761f23ace007637eaa6e3444c0b1603aae67f94b9913ab88b38b741"
+  },
+  "limits": "Offscreen platform with synthetic input; no physical audio; dense-drawing performance is #41."
+}

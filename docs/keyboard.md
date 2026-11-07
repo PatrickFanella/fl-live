@@ -11,7 +11,9 @@
 | Ctrl+. | Silence now (panic) | No dialog |
 | Ctrl+Shift+A / Ctrl+Shift+M | Add audio / MIDI track | No dialog |
 | Ctrl+E | Export with the export row's settings | Stopped, not exporting, no dialog |
-| Delete / Escape | Delete the selected notes / clear the selection | The [piano roll](piano-roll.md) grid has focus |
+| Delete or Backspace / Escape | Delete the selected notes / clear the selection | The [piano roll](piano-roll.md) grid has focus |
+| Left / Right, Shift+Left / Shift+Right | Move the selected notes one grid step / resize them | The piano-roll grid has focus |
+| Up / Down, Shift+Up / Shift+Down | Move the selected notes a semitone / an octave | The piano-roll grid has focus |
 
 Every key sequence is declared once; `keyboardContractAndFocus` expands the platform Undo/Redo bindings and fails on any duplicate. In a text field, Space types a space and Ctrl+Z undoes text, not the document. Tab moves through the controls in reading order.
 

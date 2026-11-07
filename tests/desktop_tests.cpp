@@ -1273,6 +1273,76 @@ private slots:
         ui.click("pianoOctaveUp");QTRY_VERIFY(ui.item("pianoRange")->property("text").toString().startsWith("Pitches 60–83"));
         QVERIFY(ui.window->grabWindow().save("desktop-piano-roll.png"));
     }
+    // #36: move, resize and velocity with an all-or-nothing policy, and the
+    // rendered timing of a moved note at a non-dividing tempo.
+    void pianoRollMoveResize() {
+        QTemporaryDir directory;Session session;session.setTempo(137);QVERIFY(session.setMute(session.trackIds()[0].toString(),true));
+        QVERIFY(session.usePianoRoll(true));
+        const auto note=[&](const QString& id){for(const auto& n:session.pianoNotes())if(n.toMap()["id"].toString()==id)return n.toMap();return QVariantMap{};};
+        QVERIFY(session.moveNotes({"2","3"},24,2));QCOMPARE(session.undoText(),QString("Undo move notes"));
+        QCOMPARE(note("2")["start"].toInt(),120);QCOMPARE(note("2")["pitch"].toInt(),66);QCOMPARE(note("3")["start"].toInt(),216);QCOMPARE(note("3")["pitch"].toInt(),69);
+        // All or nothing: one note leaving the clip or the pitch range refuses the whole edit.
+        const auto before=session.pianoNotes();const auto undo=session.undoText();
+        QVERIFY(!session.moveNotes({"4","1"},-24,0));QVERIFY(session.message().contains("nothing moved"));
+        QVERIFY(!session.moveNotes({"4"},48,0));QVERIFY(!session.moveNotes({"4"},0,56));QVERIFY(!session.moveNotes({"1"},0,-61));
+        QVERIFY(!session.resizeNotes({"1"},-72));QVERIFY(!session.resizeNotes({"2","4"},48));QVERIFY(session.message().contains("nothing changed"));
+        QVERIFY(!session.setNotesVelocity({"1"},0));QVERIFY(!session.setNotesVelocity({"1"},101));QVERIFY(!session.moveNotes({"9"},24,0));QVERIFY(!session.moveNotes({},24,0));
+        QCOMPARE(session.pianoNotes(),before);QCOMPARE(session.undoText(),undo);
+        QVERIFY(session.resizeNotes({"1"},24));QCOMPARE(note("1")["length"].toInt(),96);QCOMPARE(session.undoText(),QString("Undo resize note"));
+        QVERIFY(session.setNotesVelocity({"1","2"},100));QCOMPARE(note("2")["velocity"].toInt(),100);QCOMPARE(session.undoText(),QString("Undo note velocity"));
+        // Overlaps are allowed, even on one pitch: both notes sound. The 16-voice limit still applies.
+        QVERIFY(session.moveNotes({"2"},-120,-6));QCOMPARE(note("2")["start"].toInt(),0);QCOMPARE(note("2")["pitch"].toInt(),60);
+        session.undo();
+        for(int n=0;n<15;++n)QVERIFY(session.addNote(288,24,30+n,80)); // with note 4, 16 sound at tick 288
+        QVERIFY(!session.moveNotes({"3"},72,0));QVERIFY(session.message().contains("16 notes"));
+        for(int n=0;n<15;++n)session.undo();
+        // Undo walks back each edit; IDs never change.
+        session.undo();session.undo();QCOMPARE(note("1")["length"].toInt(),72);session.undo();QCOMPARE(note("2")["start"].toInt(),96);
+        // Timing: one square note moved off the grid by 37 ticks at 137 BPM.
+        QVERIFY(session.deleteNotes({"2","3","4"}));QVERIFY(session.setSynth("waveform",2));QVERIFY(session.moveNotes({"1"},37,0));
+        QVERIFY(session.exportAudio(directory.filePath("moved.wav"),1,1,0,2,"float32"));QTRY_VERIFY(!session.exporting());
+        const auto w=readWav(directory.filePath("moved.wav"));
+        const auto frame=[](std::uint64_t ticks){return (ticks*30000+136)/137;}; // ceil(ticks * 48000 * 60 / (137 * 96))
+        const auto start=frame(37),end=frame(37+72);QCOMPARE(start,std::uint64_t(8103));QCOMPARE(end,std::uint64_t(23869));
+        QCOMPARE(w.samples[2*(start-1)],0.0F);QVERIFY(w.samples[2*start]!=0.0F);QVERIFY(w.samples[2*(end-1)]!=0.0F);QCOMPARE(w.samples[2*end],0.0F);
+    }
+    // #36 through the QML: drag to move, drag the edge to resize, arrow keys,
+    // snap and the selection's velocity.
+    void qmlPianoRollDragAndKeys() {
+        Session session;QmlUi ui(session);QVERIFY(ui.window && QTest::qWaitForWindowExposed(ui.window));
+        ui.click("pianoMode");QTRY_VERIFY(session.pianoMode());
+        auto* roll=ui.item("pianoRoll");
+        const auto at=[&](double tick,int pitch){
+            const int base=roll->property("base").toInt(),rows=roll->property("rows").toInt();const double row=roll->property("rowHeight").toDouble();
+            return roll->mapToScene(QPointF(tick*roll->width()/session.pianoLength(),(base+rows-1-pitch+0.5)*row)).toPoint();};
+        const auto rowPixels=roll->property("rowHeight").toDouble();
+        const auto drag=[&](QPoint from,QPoint to){
+            QTest::mousePress(ui.window,Qt::LeftButton,Qt::NoModifier,from);
+            for(int step=1;step<=6;++step)QTest::mouseMove(ui.window,from+(to-from)*step/6);
+            QTest::mouseRelease(ui.window,Qt::LeftButton,Qt::NoModifier,to);
+        };
+        const auto note=[&](const QString& id){for(const auto& n:session.pianoNotes())if(n.toMap()["id"].toString()==id)return n.toMap();return QVariantMap{};};
+        // Drag note 2 (beat 2, pitch 64) right by two sixteenths and up two semitones.
+        const auto from=at(130,64);drag(from,from+QPoint(qRound(48*roll->width()/session.pianoLength()),-qRound(2*rowPixels)));
+        QTRY_COMPARE(note("2")["start"].toInt(),144);QCOMPARE(note("2")["pitch"].toInt(),66);QCOMPARE(session.selectedNotes(),(QVariantList{"2"}));
+        // Drag the right edge of note 3 (192..264) one sixteenth longer.
+        const auto edge=at(263,67);drag(edge,edge+QPoint(qRound(24*roll->width()/session.pianoLength()),0));
+        QTRY_COMPARE(note("3")["length"].toInt(),96);QCOMPARE(note("3")["start"].toInt(),192);
+        // A drag that would leave the clip is refused and leaves the note alone.
+        const auto third=at(200,67);drag(third,third+QPoint(qRound(120*roll->width()/session.pianoLength()),0)); // 192..288 would end at 408 of 384
+        QTRY_VERIFY2(ui.status().contains("nothing moved"),qPrintable(ui.status()));QCOMPARE(note("3")["start"].toInt(),192);
+        // Keyboard: Right moves by the snap, Shift+Right resizes, Up/Shift+Up change pitch.
+        QTest::mouseClick(ui.window,Qt::LeftButton,Qt::NoModifier,at(10,60));QTRY_COMPARE(session.selectedNotes(),(QVariantList{"1"}));
+        QTest::keyClick(ui.window,Qt::Key_Right);QTRY_COMPARE(note("1")["start"].toInt(),24);
+        QTest::keyClick(ui.window,Qt::Key_Right,Qt::ShiftModifier);QTRY_COMPARE(note("1")["length"].toInt(),96);
+        QTest::keyClick(ui.window,Qt::Key_Up);QTRY_COMPARE(note("1")["pitch"].toInt(),61);
+        QTest::keyClick(ui.window,Qt::Key_Up,Qt::ShiftModifier);QTRY_COMPARE(note("1")["pitch"].toInt(),73);
+        // Snap Off moves by one tick; the velocity box edits the selection.
+        ui.keys("pianoSnap",Qt::Key_Down,3);QCOMPARE(ui.item("pianoSnap")->property("currentIndex").toInt(),3);
+        ui.item("pianoRoll")->forceActiveFocus();QTest::keyClick(ui.window,Qt::Key_Left);QTRY_COMPARE(note("1")["start"].toInt(),23);
+        ui.type("selectedNotesVelocity","40",true);QTRY_COMPARE(note("1")["velocity"].toInt(),40);
+        ui.click("undoButton");QTRY_COMPARE(note("1")["velocity"].toInt(),70);
+    }
     void qmlRelinkMissingAudio() {
         QTemporaryDir root;const auto audio=root.filePath("a.wav"),project=root.filePath("p.json");
         std::vector<qint16> tone(4800);for(std::size_t i=0;i<tone.size();++i)tone[i]=static_cast<qint16>(i%300*50);

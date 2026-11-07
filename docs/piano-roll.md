@@ -1,6 +1,6 @@
 # Piano roll
 
-A MIDI clip can use a piano roll instead of its step pattern (#35). The notes sit at free positions on a sixteenth-note grid and keep stable IDs. Move, resize and per-note pitch/velocity editing are #36; clip length and loop controls are #38.
+A MIDI clip can use a piano roll instead of its step pattern. Notes sit at free tick positions, keep stable IDs, and can be added, selected, deleted (#35), moved, resized and given a velocity (#36). Clip length and loop controls are #38.
 
 ## Model
 
@@ -24,10 +24,18 @@ Tick **Piano roll** in the pattern header. This converts the step pattern once: 
 
 The grid shows two octaves; **Octave down** and **Octave up** move the view. Its height follows the space the window leaves.
 
-- Click an empty cell to add a sixteenth note at that pitch with 80 % velocity, snapped down to the sixteenth. The new note is selected.
+**Snap** chooses the grid: 1/16 (24 ticks, the default), 1/8, 1/4 or Off (one tick).
+
+- Click an empty cell to add a note one grid step long (a sixteenth with Snap off) at that pitch with 80 % velocity. Its start snaps down to the grid. The new note is selected.
 - Click a note to select it; Shift-click adds it to or removes it from the selection.
-- **Delete** (with the grid focused) or **Delete selected** removes the selected notes. **Escape** clears the selection.
+- Drag a note to move the selection. The horizontal change snaps to the grid and the vertical change moves whole semitones. Drag the last five pixels of a note to resize the selection. Selected notes show the snapped change while you drag. The change is relative, so a note that starts off the grid stays off it by the same amount.
+- With the grid focused: Left and Right move the selection by one grid step, and Shift+Left and Shift+Right resize it. Up and Down move it a semitone, and Shift+Up and Shift+Down an octave. **Delete** or **Backspace** removes the selection, and **Escape** clears it. **Delete selected** does the same as Delete.
+- **Velocity %** in the header sets the velocity of every selected note.
 - For exact notes from the keyboard, set Start and Length in sixteenths, Pitch and Velocity, then press **Add note**.
+
+Edits to several notes are all or nothing. If any selected note would start before the clip, end after it, leave MIDI pitches 0–127 or become shorter than one tick, the whole edit is refused with a message ("nothing moved" or "nothing changed"), and the notes and history stay unchanged. Overlapping notes are allowed, even on the same pitch. Each sounds on its own voice, within the 16-voice limit, which a move can also exceed and be refused for. Each move, resize or velocity change is one Undo step.
+
+A note moved or deleted while it sounds keeps its voice for the rest of its original duration and then ends; the [plan replacement](plan-replacement.md) carries voices but never retriggers passed notes. The moved note then sounds at its new position. No voice is left sounding.
 
 Adding and deleting work while playing, like other [playback edits](general-session.md#playback-edits). An out-of-range or overcrowded note is refused with a message and leaves the notes and history unchanged ("At most 16 notes can sound at once").
 
@@ -44,4 +52,13 @@ IDs are decimal strings like other identities. Decoding requires exactly these f
 
 ## Verification
 
-`authored-project-io` covers validation refusals, tick-to-frame rendering at 137 BPM, round trip and malformed files. In `desktop-session`, `pianoRollEditing` covers conversion (sample-identical export), add, select, delete, refusals including the 16-note limit, ID stability, Undo/Redo, switching back and Save/Open. `qmlPianoRollInput` adds, selects, Shift-selects and deletes with the pointer and the Delete key, undoes with the button, clears with Escape and adds a note from the keyboard fields. The [receipt](../validation/piano-roll-notes.json) records the run.
+`authored-project-io` covers validation refusals, tick-to-frame rendering at 137 BPM, round trip and malformed files. In `desktop-session`, `pianoRollEditing` covers conversion (sample-identical export), add, select, delete, refusals including the 16-note limit, ID stability, Undo/Redo, switching back and Save/Open. `qmlPianoRollInput` adds, selects, Shift-selects and deletes with the pointer and the Delete key, undoes with the button, clears with Escape and adds a note from the keyboard fields.
+
+For #36:
+
+- `pianoRollMoveResize` covers moves, resizes and velocity, each refusal of the all-or-nothing policy, same-pitch overlap and the voice limit through a move.
+- In the same test, a square note moved 37 ticks off the grid at 137 BPM starts at frame 8,103 and ends at frame 23,869 in the float export, matching the independently rounded positions.
+- `qmlPianoRollDragAndKeys` drags to move and to resize, refuses a drag past the clip end, and uses the arrow keys, Snap Off and the velocity box.
+- `authored-project-io` checks that a note moved while sounding finishes its voice and then sounds at its new position.
+
+The [move and resize receipt](../validation/piano-roll-editing.json) records the run. The [receipt](../validation/piano-roll-notes.json) records the run.

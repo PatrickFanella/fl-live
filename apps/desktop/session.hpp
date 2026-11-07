@@ -131,6 +131,12 @@ public:
     // above 16 simultaneous notes.
     Q_INVOKABLE bool addNote(int start, int length, int pitch, int velocity);
     Q_INVOKABLE bool deleteNotes(const QVariantList& ids);
+    // Multi-note edits are all or nothing: when any listed note would leave
+    // the clip or the MIDI pitch range, the edit is refused and nothing moves.
+    // Each is one Undo step. Overlapping notes, even of one pitch, all sound.
+    Q_INVOKABLE bool moveNotes(const QVariantList& ids, int deltaTicks, int deltaPitch);
+    Q_INVOKABLE bool resizeNotes(const QVariantList& ids, int deltaTicks); // length stays >= 1 tick
+    Q_INVOKABLE bool setNotesVelocity(const QVariantList& ids, int velocity);
     // Selection is view state: not saved or undone, kept by note ID across
     // unrelated edits, cleared when the edited clip changes.
     QVariantList selectedNotes() const;
@@ -282,7 +288,7 @@ private:
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
     enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete, scene_copy, scene_order, track_pan, track_mute, track_solo,
-        track_create, track_duplicate, track_delete, audio_import, clip_range, audio_relink, assets_collect, automation, synth, piano_mode, note_add, note_delete };
+        track_create, track_duplicate, track_delete, audio_import, clip_range, audio_relink, assets_collect, automation, synth, piano_mode, note_add, note_delete, note_move, note_resize, note_velocity };
     struct HistoryEntry {
         Content content;
         Identities identities;
@@ -308,6 +314,7 @@ private:
     int history_index_hint_ = -1; // note count for the delete Undo label
     const PianoRoll* piano() const;
     bool editPiano(EditKind kind, const std::function<void(PianoRoll&)>& change);
+    bool editNotes(EditKind kind, const QVariantList& ids, const std::function<void(PianoNote&)>& change);
     void restorePatternTarget();
     std::unique_ptr<fl_live::WavImportWorker> importer_;
     std::uint64_t import_ticket_ = 0;

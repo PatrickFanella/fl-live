@@ -361,7 +361,29 @@ void pianoRoll() {
         const auto n=p["notes"].toArray();p["notes"]=QJsonArray{n[2],n[0],n[1]};c["piano"]=p;a[3]=c;r["clips"]=a;}); // out of order
     auto onAudio=project.content;onAudio.clips[0].piano=ok;rejects([&]{validateContent(onAudio,project.identities);});
 }
+// A note moved while it sounds: its voice finishes the original duration and
+// the moved note starts at its new position; nothing is left sounding (#36).
+void movedNoteVoices() {
+    const PianoRoll before{384,2,{{1,0,48,60,80}}};
+    PianoRoll after=before;after.notes[0].start=192;
+    const fl_live::SessionPlan a{48000,120000,{{1,{pianoClip(before,120,{})}}}},b{48000,120000,{{1,{pianoClip(after,120,{})}}}};
+    fl_live::Engine engine(a);
+    std::vector<float> out;
+    const auto step=[&](int at,std::size_t voices){if(!engine.process(out,2) || engine.active_voices()!=voices)throw std::runtime_error("moved note voices, step "+std::to_string(at)+": "+std::to_string(engine.active_voices()));};
+    CHECK(engine.schedule({fl_live::CommandKind::launch,0,0,0})==fl_live::ScheduleResult::accepted);
+    engine.start();
+    out.resize(2*6000);
+    step(1,1); // 6000 of 12000 frames sounded
+    (void)engine.replace(b,{{0},{{0}}});
+    out.resize(2*5999);step(2,1); // finishing its own duration
+    out.resize(2*1);step(3,0);  // ended at frame 12000
+    out.resize(2*(48000-12000));step(4,0); // silent until the moved note
+    out.resize(2*1);step(5,1);             // starts at frame 48000
+    out.resize(2*11998);step(6,1);
+    out.resize(2*1);step(7,0);             // and ends after frame 59999
+}
 int main(){try{
+    movedNoteVoices();
     pianoRoll();
     synthSettings();
     automationLanes();

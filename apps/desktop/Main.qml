@@ -470,7 +470,17 @@ ApplicationWindow {
                         RowLayout {
                             Button { objectName: "pianoOctaveDown"; text: "Octave down"; enabled: pianoView.base > 0; onClicked: pianoView.base = Math.max(0, pianoView.base - 12) }
                             Button { objectName: "pianoOctaveUp"; text: "Octave up"; enabled: pianoView.base + pianoView.rows < 128; onClicked: pianoView.base = Math.min(128 - pianoView.rows, pianoView.base + 12) }
-                            Label { objectName: "pianoRange"; text: "Pitches " + pianoView.base + "–" + (pianoView.base + pianoView.rows - 1) + " · 1/16 grid · " + (session.pianoLength / 96) + " beats"; color: "#b7c5d8" }
+                            Label { objectName: "pianoRange"; text: "Pitches " + pianoView.base + "–" + (pianoView.base + pianoView.rows - 1) + " · " + (session.pianoLength / 96) + " beats"; color: "#b7c5d8" }
+                            Label { text: "Snap" }
+                            ComboBox { id: snapBox; objectName: "pianoSnap"; model: ["1/16", "1/8", "1/4", "Off"]; Layout.preferredWidth: 80; Accessible.name: "Piano-roll snap" }
+                            Label { text: "Velocity %" }
+                            SpinBox {
+                                objectName: "selectedNotesVelocity"; from: 1; to: 100; editable: true; Layout.preferredWidth: 90
+                                enabled: session.canChange && session.selectedNotes.length > 0
+                                value: { const n = session.pianoNotes.find(x => x.id === session.selectedNotes[0]); return n ? n.velocity : 80 }
+                                onValueModified: session.setNotesVelocity(session.selectedNotes, value)
+                                Accessible.name: "Velocity of the selected notes"
+                            }
                             Item { Layout.fillWidth: true }
                             Button { objectName: "deleteNotes"; text: "Delete selected"; enabled: session.canChange && session.selectedNotes.length > 0; onClicked: session.deleteNotes(session.selectedNotes); Accessible.name: "Delete selected notes" }
                         }
@@ -482,14 +492,27 @@ ApplicationWindow {
                             readonly property int rows: 24
                             readonly property real rowHeight: height / rows
                             readonly property real tickWidth: width / Math.max(1, session.pianoLength)
+                            readonly property int snap: [24, 48, 96, 1][snapBox.currentIndex]
                             Layout.fillWidth: true; Layout.fillHeight: true
                             Layout.minimumHeight: 120; Layout.maximumHeight: 288
                             color: "#0f141c"; border.color: activeFocus ? "#e4bc75" : "#2e3a4a"
                             activeFocusOnTab: true
                             Accessible.role: Accessible.Grouping
-                            Accessible.name: "Piano roll, " + session.pianoNotes.length + " notes, " + session.selectedNotes.length + " selected. Click to add or select; Delete removes the selection."
-                            Keys.onDeletePressed: session.deleteNotes(session.selectedNotes)
-                            Keys.onEscapePressed: session.clearNoteSelection()
+                            Accessible.name: "Piano roll, " + session.pianoNotes.length + " notes, " + session.selectedNotes.length + " selected. Click to add or select, drag to move or resize; arrows move the selection, Shift with Left or Right resizes, Delete removes."
+                            Keys.onPressed: function(event) {
+                                if (event.key === Qt.Key_Escape) { session.clearNoteSelection(); event.accepted = true; return }
+                                if (!session.canChange || session.selectedNotes.length === 0) return
+                                const shift = (event.modifiers & Qt.ShiftModifier) !== 0
+                                if (event.key === Qt.Key_Delete || event.key === Qt.Key_Backspace) session.deleteNotes(session.selectedNotes)
+                                else if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
+                                    const delta = event.key === Qt.Key_Left ? -pianoView.snap : pianoView.snap
+                                    if (shift) session.resizeNotes(session.selectedNotes, delta)
+                                    else session.moveNotes(session.selectedNotes, delta, 0)
+                                } else if (event.key === Qt.Key_Up || event.key === Qt.Key_Down)
+                                    session.moveNotes(session.selectedNotes, 0, (event.key === Qt.Key_Up ? 1 : -1) * (shift ? 12 : 1))
+                                else return
+                                event.accepted = true
+                            }
                             Repeater {
                                 model: pianoView.rows
                                 Rectangle {
@@ -507,21 +530,51 @@ ApplicationWindow {
                                 }
                             }
                             MouseArea {
+                                id: pianoInput
                                 objectName: "pianoRollInput"
                                 anchors.fill: parent; enabled: session.canChange
-                                onClicked: function(mouse) {
-                                    pianoView.forceActiveFocus()
-                                    const tick = Math.floor(mouse.x / pianoView.tickWidth)
-                                    const pitch = pianoView.base + pianoView.rows - 1 - Math.floor(mouse.y / pianoView.rowHeight)
+                                property var hit: null
+                                property bool resizing: false
+                                property bool dragging: false
+                                property real pressX: 0
+                                property real pressY: 0
+                                property int previewTicks: 0
+                                property int previewPitch: 0
+                                function noteAt(x, y) {
+                                    const tick = Math.floor(x / pianoView.tickWidth)
+                                    const pitch = pianoView.base + pianoView.rows - 1 - Math.floor(y / pianoView.rowHeight)
                                     const notes = session.pianoNotes
-                                    for (let i = notes.length - 1; i >= 0; --i) {
-                                        const n = notes[i]
-                                        if (n.pitch === pitch && tick >= n.start && tick < n.start + n.length) {
-                                            session.selectNote(n.id, (mouse.modifiers & Qt.ShiftModifier) !== 0)
-                                            return
-                                        }
+                                    for (let i = notes.length - 1; i >= 0; --i)
+                                        if (notes[i].pitch === pitch && tick >= notes[i].start && tick < notes[i].start + notes[i].length) return notes[i]
+                                    return null
+                                }
+                                function snapped(ticks) { return pianoView.snap > 1 ? Math.round(ticks / pianoView.snap) * pianoView.snap : Math.round(ticks) }
+                                onPressed: function(mouse) {
+                                    pianoView.forceActiveFocus()
+                                    pressX = mouse.x; pressY = mouse.y; dragging = false; previewTicks = 0; previewPitch = 0
+                                    hit = noteAt(mouse.x, mouse.y)
+                                    // The last five pixels of a note resize it; the rest moves it.
+                                    resizing = hit !== null && mouse.x >= (hit.start + hit.length) * pianoView.tickWidth - 5
+                                }
+                                onPositionChanged: function(mouse) {
+                                    if (!hit) return
+                                    if (!dragging && Math.abs(mouse.x - pressX) + Math.abs(mouse.y - pressY) < 5) return
+                                    if (!dragging) { dragging = true; if (session.selectedNotes.indexOf(hit.id) < 0) session.selectNote(hit.id, false) }
+                                    previewTicks = snapped((mouse.x - pressX) / pianoView.tickWidth)
+                                    previewPitch = resizing ? 0 : -Math.round((mouse.y - pressY) / pianoView.rowHeight)
+                                }
+                                onReleased: function(mouse) {
+                                    if (dragging) {
+                                        if (resizing) { if (previewTicks !== 0) session.resizeNotes(session.selectedNotes, previewTicks) }
+                                        else if (previewTicks !== 0 || previewPitch !== 0) session.moveNotes(session.selectedNotes, previewTicks, previewPitch)
+                                    } else if (hit) session.selectNote(hit.id, (mouse.modifiers & Qt.ShiftModifier) !== 0)
+                                    else {
+                                        const tick = Math.floor(mouse.x / pianoView.tickWidth)
+                                        const pitch = pianoView.base + pianoView.rows - 1 - Math.floor(mouse.y / pianoView.rowHeight)
+                                        const grid = pianoView.snap > 1 ? pianoView.snap : 24
+                                        session.addNote(pianoView.snap > 1 ? Math.floor(tick / grid) * grid : tick, grid, pitch, 80)
                                     }
-                                    session.addNote(Math.floor(tick / 24) * 24, 24, pitch, 80)
+                                    dragging = false; hit = null; previewTicks = 0; previewPitch = 0
                                 }
                             }
                             Repeater {
@@ -530,10 +583,17 @@ ApplicationWindow {
                                     required property var modelData
                                     required property int index
                                     objectName: "pianoNote" + index
-                                    visible: modelData.pitch >= pianoView.base && modelData.pitch < pianoView.base + pianoView.rows
-                                    x: modelData.start * pianoView.tickWidth; width: Math.max(2, modelData.length * pianoView.tickWidth)
-                                    y: (pianoView.base + pianoView.rows - 1 - modelData.pitch) * pianoView.rowHeight; height: pianoView.rowHeight
-                                    color: session.selectedNotes.indexOf(modelData.id) >= 0 ? "#e4bc75" : "#5fa8d3"
+                                    // While dragging, selected notes preview the snapped change.
+                                    readonly property bool selected: session.selectedNotes.indexOf(modelData.id) >= 0
+                                    readonly property bool moving: selected && pianoInput.dragging && !pianoInput.resizing
+                                    readonly property bool sizing: selected && pianoInput.dragging && pianoInput.resizing
+                                    readonly property int shownPitch: modelData.pitch + (moving ? pianoInput.previewPitch : 0)
+                                    visible: shownPitch >= pianoView.base && shownPitch < pianoView.base + pianoView.rows
+                                    x: (modelData.start + (moving ? pianoInput.previewTicks : 0)) * pianoView.tickWidth
+                                    width: Math.max(2, (modelData.length + (sizing ? pianoInput.previewTicks : 0)) * pianoView.tickWidth)
+                                    y: (pianoView.base + pianoView.rows - 1 - shownPitch) * pianoView.rowHeight; height: pianoView.rowHeight
+                                    opacity: moving || sizing ? 0.7 : 1
+                                    color: selected ? "#e4bc75" : "#5fa8d3"
                                     border.color: "#0f141c"
                                 }
                             }
