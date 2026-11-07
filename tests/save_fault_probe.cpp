@@ -1,3 +1,6 @@
+#include <QElapsedTimer>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QThread>
 #include "session.hpp"
 #include <QCoreApplication>
@@ -117,6 +120,25 @@ int recordCrash(const QString& dir) {
     QThread::msleep(300); // the worker writes every few milliseconds
     std::abort();
 }
+// Records 400 preview ticks (192,000 frames) as fast as possible while the
+// fault injector makes every write slow, so the 2 s take ring overflows
+// (#49). Prints the time the ticks took, the report and the take file.
+int recordOverflow(const QString& dir) {
+    Session session;
+    require(session.saveProject(QDir(dir).filePath("overflow.json")), "initial save");
+    require(session.setArmed(session.trackIds()[0].toString(), true) && session.record(), "record");
+    QElapsedTimer timer; timer.start();
+    for (int i = 0; i < 400; ++i) session.tick();
+    const auto tick_ms = timer.elapsed();
+    timer.restart();
+    session.stop();
+    const auto stop_ms = timer.elapsed();
+    const auto files = QDir(QDir(dir).filePath("recordings")).entryList({"*.wav"}, QDir::Files);
+    std::cout << QJsonDocument(QJsonObject{{"tick_ms", static_cast<double>(tick_ms)}, {"stop_ms", static_cast<double>(stop_ms)},
+        {"message", session.message()}, {"clips", static_cast<int>(session.trackClips()[0].toList().size())},
+        {"file", files.size() == 1 ? QDir(dir).filePath("recordings/" + files[0]) : QString()}}).toJson(QJsonDocument::Compact).toStdString() << std::endl;
+    return 0;
+}
 int verify(const QString& dir) {
     const auto path = QDir(dir).filePath("project.json");
     Session session;
@@ -138,6 +160,7 @@ int main(int argc, char** argv) {
         if (mode == "verify") return verify(dir);
         if (mode == "crash") return crash(dir);
         if (mode == "record-crash") return recordCrash(dir);
+        if (mode == "record-overflow") return recordOverflow(dir);
         return 2;
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << std::endl;

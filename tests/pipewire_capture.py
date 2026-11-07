@@ -6,6 +6,7 @@ No desktop remote, devices or session manager are used.
     pipewire_capture.py --desktop DESKTOP_PROBE              # the desktop Session: arm, record, stop
     pipewire_capture.py --desktop --loss server DESKTOP_PROBE  # kill the server mid-take, restart, Retry audio
     pipewire_capture.py --desktop --loss input DESKTOP_PROBE   # destroy only the input node mid-take
+    pipewire_capture.py --desktop --route-change DESKTOP_PROBE # unlink and relink the input mid-take
 
 In desktop mode arming the track opens the input node, so the fixture links
 it before recording starts, exactly as for the capture stream alone."""
@@ -20,7 +21,8 @@ import time
 
 desktop = "--desktop" in sys.argv
 loss = sys.argv[sys.argv.index("--loss") + 1] if "--loss" in sys.argv else None
-assert loss in (None, "server", "input") and (desktop or not loss), sys.argv
+route_change = "--route-change" in sys.argv
+assert loss in (None, "server", "input") and (desktop or not loss) and (desktop or not route_change) and not (loss and route_change), sys.argv
 probe = str(pathlib.Path(sys.argv[-1]).resolve())
 
 
@@ -134,10 +136,12 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
 
             until(lambda: configure("fixture-source", "Output"))
             until(lambda: configure("fl-live-input", "Input"))
+            pairs = []
             for channel in ("FL", "FR"):
                 out_port = until(lambda: port("--output", f"fixture-source:output_{channel}"))
                 in_port = until(lambda: port("--input", f"fl-live-input:input_{channel}"))
                 subprocess.run(["pw-link", "--remote", remote, out_port, in_port], env=env, check=True, capture_output=True, timeout=2)
+                pairs.append((out_port, in_port))
             time.sleep(0.3)  # let the link settle before the take starts
             recorder.stdin.write("record\n"); recorder.stdin.flush()
             if loss == "server":
@@ -158,6 +162,16 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
                 node = next(v for v in json.loads(dump.stdout) if v.get("info", {}).get("props", {}).get("node.name") == "fl-live-input")
                 subprocess.run(["pw-cli", "--remote", remote, "destroy", str(node["id"])], env=env, check=True, capture_output=True, timeout=2)
                 lost = json.loads(recorder.stdout.readline())
+            elif route_change:
+                time.sleep(0.6)
+                for out_port, in_port in pairs:
+                    subprocess.run(["pw-link", "--remote", remote, "-d", out_port, in_port], env=env, check=True, capture_output=True, timeout=2)
+                time.sleep(0.3)
+                for out_port, in_port in pairs:
+                    subprocess.run(["pw-link", "--remote", remote, out_port, in_port], env=env, check=True, capture_output=True, timeout=2)
+                time.sleep(0.9)
+                recorder.stdin.write("stop\n"); recorder.stdin.flush()
+                status = json.loads(recorder.stdout.readline())
             else:
                 time.sleep(1.5)
                 recorder.stdin.write("stop\n"); recorder.stdin.flush()
@@ -165,7 +179,7 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
             assert recorder.wait(timeout=5) == 0, recorder.stderr.read()
         finally:
             stop(recorder); stop(player); stop(server)
-    def check(samples, minimum):
+    def check(samples, minimum, allowance=10, partial=False):
         frames = len(samples) // 2
         # Locate the first captured frame in the reference, then walk: every frame
         # must equal the next reference frame, except where the private graph
@@ -176,10 +190,16 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
         index = {}
         for i in range(FRAMES):
             index.setdefault((reference[2 * i], reference[2 * i + 1]), i)
+        lefts, rights = set(reference[0::2]), set(reference[1::2])
         position = None
         matched = jumps = skipped = silent = gaps = 0
         for f in range(frames):
             pair = (samples[2 * f], samples[2 * f + 1])
+            # Links change one channel at a time: with `partial`, a frame with
+            # one silent channel counts as silence if the other channel holds
+            # a value of its own reference sequence.
+            if partial and pair != (0.0, 0.0) and 0.0 in pair and (pair[0] in lefts if pair[1] == 0.0 else pair[1] in rights):
+                pair = (0.0, 0.0)
             if pair == (0.0, 0.0):
                 if position is not None:  # before the reference reached the link otherwise
                     gaps += f == 0 or (samples[2 * f - 2], samples[2 * f - 1]) != (0.0, 0.0)
@@ -196,7 +216,7 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
             position = at + 1
             matched += 1
         assert matched > minimum, (matched, frames)
-        assert skipped + silent <= matched // 10, f"too many frames missing: {skipped} over {jumps} jumps, {silent} silent over {gaps} gaps"
+        assert skipped + silent <= matched * allowance // 100, f"too many frames missing: {skipped} over {jumps} jumps, {silent} silent over {gaps} gaps"
         return {"captured_frames": frames, "matched_frames": matched, "jumps": jumps, "skipped_frames": skipped,
                 "silent_gaps": gaps, "silent_frames": silent}
 
@@ -230,6 +250,17 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
     samples = wav_floats(output)
     frames = len(samples) // 2
     assert (status["frames"] < 0 or frames == status["frames"]) and 48000 * 1.2 < frames < 48000 * 3.0, (frames, status)
+    if route_change:
+        # While unlinked the input reads silence; after relinking the
+        # reference resumes further on. Every non-silent frame is still a
+        # reference frame in order; the gap is reported, not hidden.
+        result = check(samples, 48000 * 1.0, allowance=80, partial=True)
+        assert result["silent_gaps"] >= 1 and result["silent_frames"] >= 48000 * 0.15, result
+        assert result["jumps"] >= 1, result
+        print(json.dumps(result))
+        print("PASS: route change mid-take: the take keeps running through an unlink and relink, records silence while unlinked, "
+              "resumes on the reference afterwards and still becomes the selected clip")
+        sys.exit(0)
     result = check(samples, 48000 * 1.2)
     print(json.dumps({**result, "callbacks": status["callbacks"], "bad_buffers": status["bad_buffers"]}))
     print("PASS: " + ("desktop recording: armed track, take saved in recordings/ and added as the selected clip; " if desktop else "")

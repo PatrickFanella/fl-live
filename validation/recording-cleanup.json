@@ -1,0 +1,54 @@
+{
+  "verified_at": "2026-11-07T13:56:54.613360+00:00",
+  "base": "main after PR #157",
+  "issues": [
+    49
+  ],
+  "scope": "Recording under route change, disk overflow, panic and clip deletion, through the real desktop Session",
+  "environment": "Kvant, pinned CI image (Qt 6.12, PipeWire 1.6.9), docker --network none, QT_QPA_PLATFORM=offscreen, LD_PRELOAD fault injector, owned private PipeWire server at quantum 256",
+  "gates": {
+    "ci/verify.sh": {
+      "desktop": "33/33",
+      "release": "11/11",
+      "engine-only": "8/8",
+      "pipewire-sanitize": "21/21",
+      "document-io-sanitize": "11/11"
+    },
+    "recording-overflow, pipewire-recording-route-change and the two loss tests, repeats": {
+      "passed": 8,
+      "total": 8
+    }
+  },
+  "measurements": {
+    "overflow": {
+      "captured_frames": 192000,
+      "frames_on_disk": 99840,
+      "frames_dropped": 92160,
+      "ticks_ms": 4,
+      "stop_ms": 2704,
+      "write_delay_ms": 100
+    },
+    "route change": {
+      "captured_frames": 86784,
+      "matched_frames": 71934,
+      "silent_frames": 14850,
+      "skipped_reference_frames": 14850,
+      "gaps": 3
+    }
+  },
+  "verified_behaviors": [
+    "A disk slower than the take overflows the 2 s ring without delaying the capture side; dropped frames are whole blocks, reported, and disk + dropped = captured; the take still becomes a clip",
+    "Deleting the playing clip on an armed track while running and recording is accepted",
+    "Panic silences playback with no voice left while audio and MIDI takes keep recording; Stop adds both, closing the held note",
+    "Unlinking and relinking the live input mid-take keeps the take running; every non-silent frame is a reference frame in order and the gap is counted"
+  ],
+  "source_sha256": {
+    "tests/fault_inject.cpp": "c517f0efab06857a1bf96d07b3fd48b2e43f3ca425c63c655a3b1aaf97ce2049",
+    "tests/save_fault_probe.cpp": "0979b9d3d25e9648f831e9fa991ae1ac78c2f0217dfb8d654df105646d904c07",
+    "tests/recording_overflow.py": "187500e1cd2cebbac739f36057c7aef9924c9f0d1b65f170d450b80440356de8",
+    "tests/desktop_tests.cpp": "952c06c7f222e620f533845c8b02b4cb65f2298216010520c202730306b55227",
+    "tests/pipewire_capture.py": "16c972baf63f4a5c9e043d96e20d42427782d0e3fde943be8bc6412eff39f502",
+    "docs/recording.md": "055c5b6806a41717d5dd13b9da5c7f6ae964383272aaf16396db6488da14995a"
+  },
+  "limits": "Stop waits for the worker to write what the ring holds (2.7 s with 100 ms writes). Route change is a software link change on the private graph, not a device switch; MIDI route change is covered by MidiTake's held-note closing, not a live unlink test."
+}

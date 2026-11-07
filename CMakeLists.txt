@@ -214,6 +214,9 @@ if(FL_LIVE_BUILD_DESKTOP)
             add_test(NAME pipewire-desktop-midi-recording COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_midi_capture.py --desktop $<TARGET_FILE:desktop-backend-probe>)
             set_tests_properties(pipewire-desktop-midi-recording PROPERTIES TIMEOUT 60)
+            add_test(NAME pipewire-recording-route-change COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_capture.py --desktop --route-change $<TARGET_FILE:desktop-backend-probe>)
+            set_tests_properties(pipewire-recording-route-change PROPERTIES TIMEOUT 60)
             foreach(loss server input)
                 add_test(NAME pipewire-recording-${loss}-loss COMMAND ${Python3_EXECUTABLE}
                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_capture.py --desktop --loss ${loss} $<TARGET_FILE:desktop-backend-probe>)
@@ -228,6 +231,9 @@ if(FL_LIVE_BUILD_DESKTOP)
         find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
         add_test(NAME atomic-save-faults COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/atomic_save_faults.py $<TARGET_FILE:save-fault-probe> $<TARGET_FILE:fault-inject>)
+        add_test(NAME recording-overflow COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/recording_overflow.py $<TARGET_FILE:save-fault-probe> $<TARGET_FILE:fault-inject>)
+        set_tests_properties(recording-overflow PROPERTIES TIMEOUT 120)
         set_tests_properties(atomic-save-faults PROPERTIES TIMEOUT 120)
         add_executable(desktop-tests tests/desktop_tests.cpp)
         target_link_libraries(desktop-tests PRIVATE fl_live_session fl_live_document_io Qt6::QuickControls2 Qt6::Test)
