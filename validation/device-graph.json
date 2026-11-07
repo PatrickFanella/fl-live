@@ -1,0 +1,31 @@
+{
+  "verified_at": "2026-11-07T11:16:59.228138+00:00",
+  "base": "main after PR #142",
+  "issues": [
+    73,
+    74
+  ],
+  "scope": "Typed device ports, chain validation, identity, persistence and compilation into prepared render plans",
+  "environment": "Kvant, pinned CI image, docker --network none",
+  "verified_behaviors": [
+    "A MIDI-track chain (transpose +5, transpose -12, gain -6 dB) validates in the declared order source -> 1 -> 3 -> instrument -> 2 -> output",
+    "Compiled notes are 7 semitones lower at the same starts; device_gain equals 10^(-6/20) for that track and 1 elsewhere",
+    "A note leaving 0-127 at the first of two transposes is dropped even though the second would bring it back",
+    "devices-v1 round trips exactly; unknown kind, extra field, unknown endpoint, a three-endpoint connection, devices without the feature and a counter at an existing ID are refused",
+    "Refused graphs with their messages: MIDI source into an audio port, a branch, a loop beside the chain (cycle), a loose device, an unknown device, a connection out of the output, MIDI into the output; also non-integer or out-of-range transpose, out-of-range or NaN gain, nine devices, +36 dB combined gain, a MIDI device on an audio track, an unknown track and two chains for one track",
+    "DocumentRenderPlan refuses device_gain 17; the engine multiplies device_gain with a level lane (0.5*0.25 then 0.5*0.5*0.25)",
+    "Session: duplicate copies a chain under fresh IDs 3 and 4 with remapped connections and counter 5; delete removes the chain; Undo restores it; loading a cyclic or mistyped chain is refused with the open document, path and history unchanged"
+  ],
+  "source_sha256": {
+    "include/fl_live/engine.hpp": "59c1eda2fbc4c58d2efaa0a96b64f71865afd6b61661cdc0619ed92d15f8a816",
+    "src/engine.cpp": "7aac03d71063ee2723881e9c6e5ab79bd5c1dec91af06729d3d552bcc6ee78b7",
+    "include/fl_live/document_render.hpp": "6f99aba2549dc0aa6fa7ed0a4873a634ed862f73b90d84bb442656653bd1b42b",
+    "src/document_render.cpp": "e6a8814b186658c965817db637792a44220a8b029a10d849be2d774e4695bdd5",
+    "apps/desktop/authored_project.hpp": "a52f071cc6febeb234785b45ac55de5e79b890bcafb0542c4bc5a4026f638aca",
+    "apps/desktop/authored_project.cpp": "8f4181137b3b4462f3fdb96ea3b8bf60859a3f835a2d155a1ef8067bd2556fbe",
+    "apps/desktop/session.cpp": "df7be504f10f5570a6f08e41a50c5d0fc8fa17270d965b1efddccaa090284aee",
+    "tests/authored_project_tests.cpp": "bd9553421066447b52f74fea742ef6fbdaf08750be7bdab95bff98715aa8a5df",
+    "tests/desktop_tests.cpp": "3e0ae78a3131c88adeb93f687f51696b1283caa693fe23b0ff021a52c8c1f021"
+  },
+  "limits": "No device UI, parameter automation or live device edits yet (#77); compilation is static per prepared plan."
+}

@@ -69,12 +69,15 @@ struct AutomationPoint {
 // sources and the MIDI instrument feed both channels; stereo sources keep
 // their left/right channels.
 // A non-empty automation list replaces the static gain or pan.
+// device_gain is the compiled product of the track's gain devices, applied
+// with the gain (static or automated); it is not replaced by automation.
 struct Track {
     float gain = 1.0F;
     std::vector<Clip> clips;
     float pan = 0.0F;
     std::vector<AutomationPoint> gain_automation;
     std::vector<AutomationPoint> pan_automation;
+    float device_gain = 1.0F;
 };
 struct SessionPlan {
     std::uint32_t sample_rate = 48000;

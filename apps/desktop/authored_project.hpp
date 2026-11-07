@@ -53,13 +53,57 @@ struct AutomationLane {
     bool operator==(const AutomationLane&) const = default;
 };
 inline constexpr std::int64_t automation_position_limit = 256LL * 4 * 100;
+// Typed devices (docs/devices.md). Ports carry MIDI notes or stereo audio. A
+// track's devices form one linear chain: source -> MIDI devices ->
+// instrument (MIDI tracks) -> audio devices -> output. Branches, merges,
+// cycles, type mismatches and unknown endpoints are refused. A parameter is
+// bound by (device ID, kind); device IDs are project-wide, from a counter
+// saved with the devices, so later edits never reissue one.
+enum class PortType { midi, audio };
+enum class DeviceKind { gain, transpose }; // transpose: MIDI in/out; gain: audio in/out
+struct Device {
+    std::uint64_t id = 0;
+    DeviceKind kind = DeviceKind::gain;
+    double value = 0; // gain: -60..+12 dB; transpose: whole semitones -48..+48
+    bool operator==(const Device&) const = default;
+};
+struct DeviceEndpoint {
+    enum class Kind { source, instrument, output, device };
+    Kind kind = Kind::source;
+    std::uint64_t device = 0; // Kind::device only
+    bool operator==(const DeviceEndpoint&) const = default;
+};
+struct DeviceConnection {
+    DeviceEndpoint from, to;
+    bool operator==(const DeviceConnection&) const = default;
+};
+// Present only for tracks with at least one device; others use the default
+// chain source -> (instrument ->) output.
+struct TrackDevices {
+    fl_live::TrackId track;
+    std::vector<Device> devices;
+    std::vector<DeviceConnection> connections;
+    bool operator==(const TrackDevices&) const = default;
+};
+inline constexpr std::size_t devices_per_track_limit = 8;
+inline constexpr double combined_device_gain_limit_db = 24;
 struct SessionContent {
     int tempo = 120;
     std::vector<TrackContent> tracks;
     std::vector<ClipContent> clips;
     std::vector<AutomationLane> automation;
+    std::vector<TrackDevices> devices;
+    std::uint64_t next_device_id = 1;
     bool operator==(const SessionContent&) const = default;
 };
+// The chain of a validated entry in order, MIDI stage first.
+struct DeviceChain { std::vector<Device> midi, audio; };
+DeviceChain deviceChain(const TrackDevices& entry, fl_live::TrackKind kind);
+// Connections for devices in order, MIDI devices before the instrument.
+std::vector<DeviceConnection> chainConnections(const std::vector<Device>& devices, fl_live::TrackKind kind);
+// Transposes notes through the chain; a note leaving 0-127 at any device is
+// dropped rather than clamped.
+fl_live::MidiClip transposed(fl_live::MidiClip clip, const std::vector<Device>& midi);
 // An imported file's location relative to the project file's folder, when
 // it lies inside that folder. Used only to find files after the project
 // folder moved; never to choose between different files.

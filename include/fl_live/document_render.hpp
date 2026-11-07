@@ -7,7 +7,8 @@ struct DocumentClipSource {
     ClipId id;
     Clip content;
 };
-struct DocumentTrackGain { TrackId id; float gain; };
+// gain is the track level; device_gain the compiled gain-device product.
+struct DocumentTrackGain { TrackId id; float gain; float device_gain = 1.0F; };
 // Automatable track parameters. A lane replaces the static gain or pan of
 // its track; mute/solo still win (an inaudible track prepares silent).
 enum class AutomationTarget { gain, pan };
