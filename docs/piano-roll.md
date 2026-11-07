@@ -48,6 +48,21 @@ Shortening is non-destructive. Notes that start at or after the new end stay in 
 
 The clip length becomes frames once, with the same upward rounding, and each repetition is exactly that many frames. Repetitions can therefore drift from the musical grid by up to one frame per loop, as step patterns already did. With Loop off the clip plays once, the track then stops, and a sounding release ends with it.
 
+## Drawing and dense clips
+
+The grid is one `PianoNotesView`, a painted item that draws the rows, sixteenth lines and notes into a single texture. It repaints only when its inputs change: notes, selection, the visible pitches, the length or a drag preview. Unchanged frames reuse the texture. `pianoNotes` is notified only when notes or the edited clip change, not on every 10 ms session tick, and the velocity box and the grid's accessible name read scalar properties. Hit-testing remains in QML on the note data, so clicks, Shift-clicks, drags and keys behave exactly as before. The 16-voice check is a sweep over end times rather than a pairwise count.
+
+`pianoRollDenseWorkload` (#41) opens the densest supported clip: 1,024 notes over 16 bars, a note every six ticks lasting 90, at most 15 sounding together, across all 24 visible pitches. It measures the production QML on Qt's software renderer (offscreen platform, 1060 × 1000 window, device pixel ratio 1, grid 980 × 132 px). It asserts hit-testing on the dense grid, plus selection, a move and a delete, and that idle frames do not repaint. The timings are printed, not asserted. The host is a 12-core AMD Ryzen 9 9900X, load average about 22–24 from unrelated jobs during the runs. Median of three runs, milliseconds:
+
+| Measure | Before (delegate per note) | After | Four-note clip |
+|---|---|---|---|
+| Idle frame | 95–104 | 11.1–11.2 | 10.9–11.2 |
+| Velocity edit to next frame | 177–211 | 25.7–26.5 | — |
+| Click on a note to next frame | 250–283 | 18.9–20.4 | — |
+| Open the project to first frame | 226–289 | 27–39 | — |
+
+An edit to the dense clip still costs about 25 ms, mostly preparing and validating the new document. Qt's GPU scene graph, native Wayland and display scaling were not measured; the [receipt](../validation/piano-roll-dense.json) has the raw numbers.
+
 ## Persistence
 
 Clips with notes add a `piano` object beside `pattern` and the project declares the required feature `piano-roll-v1`. A one-shot clip adds `"loop": false`; a looping clip omits the field, and `"loop": true` is refused so each state has one spelling:

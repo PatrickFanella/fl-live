@@ -1478,7 +1478,7 @@ private slots:
         QFile file(good);QVERIFY(file.open(QIODevice::ReadOnly));const auto bytes=file.readAll();file.close();
         const auto corrupt=[&](const QString& name,auto edit){
             auto root=QJsonDocument::fromJson(bytes).object();edit(root);
-            const auto path=directory.filePath(name);QFile out(path);out.open(QIODevice::WriteOnly);out.write(QJsonDocument(root).toJson());out.close();return path;};
+            const auto path=directory.filePath(name);QFile out(path);if(!out.open(QIODevice::WriteOnly))throw std::runtime_error("fixture");out.write(QJsonDocument(root).toJson());out.close();return path;};
         const auto withNote=[](auto change){return [change](QJsonObject& root){auto clips=root["clips"].toArray();auto clip=clips[1].toObject();
             auto piano=clip["piano"].toObject();auto notes=piano["notes"].toArray();auto note=notes[0].toObject();change(note,piano);
             notes[0]=note;piano["notes"]=notes;clip["piano"]=piano;clips[1]=clip;root["clips"]=clips;};};
