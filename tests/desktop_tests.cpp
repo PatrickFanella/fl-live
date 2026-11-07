@@ -1,3 +1,6 @@
+#include <QElapsedTimer>
+#include <QSGRendererInterface>
+#include <iostream>
 #include "session.hpp"
 #include <QtTest>
 #include <QQmlApplicationEngine>
@@ -1261,7 +1264,8 @@ private slots:
         QCOMPARE(added["start"].toInt(),192);QCOMPARE(added["length"].toInt(),24);QCOMPARE(session.selectedNotes(),(QVariantList{added["id"]}));
         QTest::mouseClick(ui.window,Qt::LeftButton,Qt::NoModifier,at(10,60));QTRY_COMPARE(session.selectedNotes(),(QVariantList{"1"}));
         QTest::mouseClick(ui.window,Qt::LeftButton,Qt::ShiftModifier,at(195,62));
-        QTRY_COMPARE(session.selectedNotes().size(),2);QVERIFY(ui.item("pianoNote0")->property("color").value<QColor>()==QColor("#e4bc75"));
+        QTRY_COMPARE(session.selectedNotes().size(),2);
+        QTRY_COMPARE(ui.window->grabWindow().pixelColor(at(10,60)),QColor("#e4bc75")); // drawn in the selected colour
         QTest::keyClick(ui.window,Qt::Key_Delete);QTRY_COMPARE(session.pianoNotes().size(),3);
         ui.click("undoButton");QTRY_COMPARE(session.pianoNotes().size(),5);
         ui.window->requestActivate();ui.item("pianoRoll")->forceActiveFocus();QTest::keyClick(ui.window,Qt::Key_Escape);QTRY_VERIFY(session.selectedNotes().isEmpty());
@@ -1385,6 +1389,56 @@ private slots:
         ui.click("pianoLoop");QTRY_VERIFY(!session.pianoLoop());
         ui.click("undoButton");QTRY_VERIFY(session.pianoLoop());ui.click("undoButton");QTRY_COMPARE(session.pianoLength(),384);
     }
+    // #41: the densest supported clip (1024 notes, 15 sounding at once over
+    // 16 bars) in the production QML. Prints timings for the receipt; asserts
+    // only behavior (hit-testing, selection and edits on the dense grid).
+    void pianoRollDenseWorkload() {
+        QTemporaryDir directory;const auto path=directory.filePath("dense.json");
+        auto project=defaultProject();
+        auto& clip=*std::find_if(project.content.clips.begin(),project.content.clips.end(),[&](const auto& c){return c.clip==project.identities.clips[1].id;});
+        PianoRoll roll{piano_length_limit,true,1,{}};
+        for(int i=0;i<1024;++i)roll.notes.push_back({roll.next_id++,i*6,std::min(90,piano_length_limit-i*6),48+(i*7)%24,40+i%60});
+        clip.piano=roll;writeAuthoredProject(path,project);
+        Session session;QmlUi ui(session);QVERIFY(ui.window && QTest::qWaitForWindowExposed(ui.window));
+        int frames=0;QObject::connect(ui.window,&QQuickWindow::frameSwapped,[&]{++frames;});
+        const auto nextFrame=[&]{const int seen=frames;ui.window->update();return QTest::qWaitFor([&]{return frames>seen;},5000);};
+        QElapsedTimer timer;
+        // Baseline: the same window with the four-note template clip in the piano roll.
+        ui.click("pianoMode");QTRY_VERIFY(session.pianoMode());QVERIFY(nextFrame());
+        std::vector<double> baseline;
+        for(int i=0;i<60;++i){timer.restart();QVERIFY(nextFrame());baseline.push_back(timer.nsecsElapsed()/1e6);}
+        session.undo();QVERIFY(!session.dirty());
+        timer.start();ui.type("projectFile",path);ui.click("openProjectButton");
+        QTRY_COMPARE(session.pianoNotes().size(),1024);QVERIFY(nextFrame());const auto openMs=timer.nsecsElapsed()/1e6;
+        QTRY_COMPARE(ui.item("pianoNotesView")->property("notes").toList().size(),1024);
+        std::vector<double> frame,edit,input;
+        const auto paints=[&]{return ui.item("pianoNotesView")->property("paints").toInt();};
+        const int beforeIdle=paints();
+        for(int i=0;i<60;++i){timer.restart();QVERIFY(nextFrame());frame.push_back(timer.nsecsElapsed()/1e6);}
+        const int idleRepaints=paints()-beforeIdle;QCOMPARE(idleRepaints,0); // idle frames reuse the painted texture
+        for(int i=0;i<20;++i) {
+            timer.restart();QVERIFY(session.setNotesVelocity({QString::number(1+i)},100-i));QVERIFY(nextFrame());edit.push_back(timer.nsecsElapsed()/1e6);
+        }
+        auto* roll_=ui.item("pianoRoll");
+        const auto at=[&](double tick,int pitch){
+            const int base=roll_->property("base").toInt(),rows=roll_->property("rows").toInt();const double row=roll_->property("rowHeight").toDouble();
+            return roll_->mapToScene(QPointF(tick*roll_->width()/session.pianoLength(),(base+rows-1-pitch+0.5)*row)).toPoint();};
+        for(int i=0;i<20;++i) {
+            // Note k starts at 6k with pitch 48 + 7k mod 24; aim at the middle of a note nobody else covers at that pitch.
+            const int k=100+i*37;const int pitch=48+(k*7)%24;
+            timer.restart();QTest::mouseClick(ui.window,Qt::LeftButton,Qt::NoModifier,at(k*6+45,pitch));
+            QTRY_COMPARE(session.selectedNotes(),(QVariantList{QString::number(k+1)}));QVERIFY(nextFrame());input.push_back(timer.nsecsElapsed()/1e6);
+        }
+        // Edits on the dense grid keep data and selection: move the selected note and delete it.
+        const auto selected=session.selectedNotes();QTest::keyClick(ui.window,Qt::Key_Right);
+        QTRY_VERIFY(session.selectedNotes()==selected);QTest::keyClick(ui.window,Qt::Key_Delete);QTRY_COMPARE(session.pianoNotes().size(),1023);
+        const auto stats=[](std::vector<double> v){std::sort(v.begin(),v.end());double sum=0;for(auto x:v)sum+=x;
+            return QString("{\"mean\":%1,\"median\":%2,\"max\":%3}").arg(sum/v.size(),0,'f',2).arg(v[v.size()/2],0,'f',2).arg(v.back(),0,'f',2);};
+        const auto api=ui.window->rendererInterface()->graphicsApi();
+        std::cout<<qPrintable(QString("DENSE {\"notes\":1024,\"window\":\"%1x%2\",\"dpr\":%3,\"graphics_api\":%4,\"roll\":\"%5x%6\",\"open_ms\":%7,\"frame_ms\":%8,\"edit_to_frame_ms\":%9,\"click_to_frame_ms\":%10,\"baseline_4_notes_frame_ms\":%11,\"idle_repaints\":%12}")
+            .arg(ui.window->width()).arg(ui.window->height()).arg(ui.window->devicePixelRatio()).arg(static_cast<int>(api))
+            .arg(qRound(roll_->width())).arg(qRound(roll_->height())).arg(openMs,0,'f',1).arg(stats(frame)).arg(stats(edit)).arg(stats(input)).arg(stats(baseline)).arg(idleRepaints))<<std::endl;
+    }
     // #39: every piano-roll operation through Undo/Redo and Save/Open, and
     // refused loads that leave the open document and its history alone.
     void pianoRollHistoryAndPersistence() {
@@ -1424,7 +1478,7 @@ private slots:
         QFile file(good);QVERIFY(file.open(QIODevice::ReadOnly));const auto bytes=file.readAll();file.close();
         const auto corrupt=[&](const QString& name,auto edit){
             auto root=QJsonDocument::fromJson(bytes).object();edit(root);
-            const auto path=directory.filePath(name);QFile out(path);out.open(QIODevice::WriteOnly);out.write(QJsonDocument(root).toJson());out.close();return path;};
+            const auto path=directory.filePath(name);QFile out(path);if(!out.open(QIODevice::WriteOnly))throw std::runtime_error("fixture");out.write(QJsonDocument(root).toJson());out.close();return path;};
         const auto withNote=[](auto change){return [change](QJsonObject& root){auto clips=root["clips"].toArray();auto clip=clips[1].toObject();
             auto piano=clip["piano"].toObject();auto notes=piano["notes"].toArray();auto note=notes[0].toObject();change(note,piano);
             notes[0]=note;piano["notes"]=notes;clip["piano"]=piano;clips[1]=clip;root["clips"]=clips;};};
@@ -1442,6 +1496,75 @@ private slots:
             QVERIFY(same(state(),before));QCOMPARE(session.projectPath(),path);QCOMPARE(session.dirty(),dirty);QVERIFY(session.canRedo());
         }
         session.redo();QVERIFY(same(state(),states.back()));
+    }
+    // #42: notes built and edited in the QML render with the edited timing,
+    // pitch and velocity, also after Undo/Redo and reopening; every
+    // termination path leaves no voice sounding.
+    void qmlPianoRollPlaybackJourney() {
+        QTemporaryDir directory;const auto project=directory.filePath("notes.json");
+        const auto level=[](int velocity){return 0.25F*(1.0F*((static_cast<float>(velocity)/100)*0.1F)*1.0F);}; // track 25 %, square ±1, envelope 1
+        const auto changes=[](const std::vector<float>& s,std::size_t from,std::size_t to){
+            int n=0;for(std::size_t f=from+1;f<to;++f)if((s[2*f]>0)!=(s[2*(f-1)]>0))++n;return n;};
+        std::vector<float> first;
+        {
+            Session session;QmlUi ui(session);QVERIFY(ui.window && QTest::qWaitForWindowExposed(ui.window));
+            ui.click("mute0");QTRY_VERIFY(session.mutes()[0].toBool());
+            ui.click("pianoMode");QTRY_VERIFY(session.pianoMode());
+            auto* roll=ui.item("pianoRoll");
+            const auto at=[&](double tick,int pitch){
+                const int base=roll->property("base").toInt(),rows=roll->property("rows").toInt();const double row=roll->property("rowHeight").toDouble();
+                return roll->mapToScene(QPointF(tick*roll->width()/session.pianoLength(),(base+rows-1-pitch+0.5)*row)).toPoint();};
+            // Remove the converted notes with the pointer and the Delete key.
+            ui.click("pianoOctaveUp");QTRY_COMPARE(roll->property("base").toInt(),60);
+            QTest::mouseClick(ui.window,Qt::LeftButton,Qt::NoModifier,at(10,60));
+            for(auto [tick,pitch]:{std::pair{110,64},{210,67},{300,72}})QTest::mouseClick(ui.window,Qt::LeftButton,Qt::ShiftModifier,at(tick,pitch));
+            QTRY_COMPARE(session.selectedNotes().size(),4);QTest::keyClick(ui.window,Qt::Key_Delete);QTRY_VERIFY(session.pianoNotes().isEmpty());
+            ui.click("pianoOctaveDown");
+            ui.keys("synthWaveform",Qt::Key_Down,2);QTRY_COMPARE(session.synth()[0].toInt(),2);
+            // A at beat 2, then two notes on one pitch overlapping from beat 3.
+            const auto add=[&](const char* start,const char* length,const char* pitch,const char* velocity){
+                ui.type("noteStart",start,true);ui.type("noteLength",length,true);ui.type("notePitch",pitch,true);ui.type("noteVelocity",velocity,true);ui.click("addNoteButton");};
+            add("4","2","69","90");add("8","4","57","40");add("8","2","57","60");QTRY_COMPARE(session.pianoNotes().size(),3);
+            // Drag A one sixteenth later.
+            const auto from=at(100,69);QTest::mousePress(ui.window,Qt::LeftButton,Qt::NoModifier,from);
+            const auto by=QPoint(qRound(24*roll->width()/session.pianoLength()),0);
+            for(int step=1;step<=4;++step)QTest::mouseMove(ui.window,from+by*step/4);
+            QTest::mouseRelease(ui.window,Qt::LeftButton,Qt::NoModifier,from+by);
+            QTRY_COMPARE(session.pianoNotes()[0].toMap()["start"].toInt(),120);
+            ui.keys("exportFormat",Qt::Key_Down,2);ui.exportTo(session,directory.filePath("a.wav"),"1");QTRY_VERIFY(!session.exporting());
+            first=readWav(directory.filePath("a.wav")).samples;
+            // Ticks become frames at 120 BPM by * 250: A 30000..42000, B 48000..72000, C 48000..60000.
+            QCOMPARE(first.size(),std::size_t(2*96000));
+            QCOMPARE(first[2*29999],0.0F);QCOMPARE(first[2*30000],level(90));QCOMPARE(std::abs(first[2*41999]),level(90));QCOMPARE(first[2*42000],0.0F);
+            QCOMPARE(first[2*47999],0.0F);QCOMPARE(first[2*48000],0.25F*(1.0F*((40.0F/100)*0.1F)*1.0F+1.0F*((60.0F/100)*0.1F)*1.0F));
+            QCOMPARE(std::abs(first[2*60000]),level(40));QCOMPARE(std::abs(first[2*71999]),level(40));QCOMPARE(first[2*72000],0.0F);
+            QVERIFY(std::abs(changes(first,30000,42000)-220)<=2);  // 440 Hz: two sign changes per 109.1 frames
+            QVERIFY(std::abs(changes(first,48000,72000)-220)<=2);  // 220 Hz over twice the length
+            // Undo the drag, then Redo it: the render follows.
+            ui.click("undoButton");QTRY_COMPARE(session.pianoNotes()[0].toMap()["start"].toInt(),96);
+            ui.exportTo(session,directory.filePath("undone.wav"),"1");QTRY_VERIFY(!session.exporting());
+            const auto undone=readWav(directory.filePath("undone.wav")).samples;QCOMPARE(undone[2*23999],0.0F);QCOMPARE(undone[2*24000],level(90));
+            ui.click("redoButton");QTRY_COMPARE(session.pianoNotes()[0].toMap()["start"].toInt(),120);
+            ui.type("projectFile",project);ui.click("saveProjectButton");QVERIFY(!session.dirty());QVERIFY(ui.window->close());
+        }
+        Session session;QmlUi ui(session);QVERIFY(ui.window && QTest::qWaitForWindowExposed(ui.window));
+        ui.type("projectFile",project);ui.click("openProjectButton");QTRY_COMPARE(session.pianoNotes().size(),3);
+        ui.keys("exportFormat",Qt::Key_Down,2);ui.exportTo(session,directory.filePath("reopened.wav"),"1");QTRY_VERIFY(!session.exporting());
+        QVERIFY(readWav(directory.filePath("reopened.wav")).samples==first);
+        // Termination paths while the clip plays on the preview clock.
+        const auto ids=[&]{QVariantList r;for(const auto& n:session.pianoNotes())r.append(n.toMap()["id"]);return r;};
+        const auto play=[&]{QVERIFY(session.launchScene(session.sceneId(),"immediate"));session.play();QTRY_VERIFY(session.running());
+            QTRY_VERIFY_WITH_TIMEOUT(session.activeVoices()>0,10000);};
+        play();QTest::keyClick(ui.window,Qt::Key_Period,Qt::ControlModifier);QTRY_VERIFY(!session.running());QCOMPARE(session.activeVoices(),0); // panic
+        play();const auto all=ids();QVERIFY(session.deleteNotes(all));      // deletion: sounding notes finish, nothing restarts
+        QTRY_VERIFY_WITH_TIMEOUT(session.activeVoices()==0,10000);QVERIFY(session.running());
+        for(int i=0;i<250;++i){QTest::qWait(10);QCOMPARE(session.activeVoices(),0);} // a full loop later, still nothing
+        session.undo();QTRY_VERIFY_WITH_TIMEOUT(session.activeVoices()>0,10000);    // the restored notes play again
+        QVERIFY(session.setPianoLength(144));QVERIFY(session.running());              // replacement: shorter loop
+        QTRY_VERIFY_WITH_TIMEOUT(session.activeVoices()==0,10000);QTRY_VERIFY_WITH_TIMEOUT(session.activeVoices()>0,10000); // A repeats, the cut notes end
+        QVERIFY(session.setPianoLoop(false));                                        // one-shot: the clip ends, the track stops
+        QTRY_VERIFY_WITH_TIMEOUT(session.activeClips()[1].toInt()<0,10000);QCOMPARE(session.activeVoices(),0);
+        play();session.stop();QTRY_VERIFY(!session.running());QCOMPARE(session.activeVoices(),0); // stop
     }
     void qmlRelinkMissingAudio() {
         QTemporaryDir root;const auto audio=root.filePath("a.wav"),project=root.filePath("p.json");

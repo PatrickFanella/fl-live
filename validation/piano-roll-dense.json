@@ -1,0 +1,106 @@
+{
+  "verified_at": "2026-11-07T11:03:18.117070+00:00",
+  "base": "main after PR #140",
+  "issues": [
+    41
+  ],
+  "scope": "Dense piano-roll workload: drawing, edit and input latency before and after a single painted note view",
+  "environment": "Kvant: AMD Ryzen 9 9900X 12-core (24 threads), host load average 21-24 from unrelated jobs; pinned CI image, docker --network none; Qt 6.12 offscreen platform, software scene graph (graphics API 1), window 1060x1000, device pixel ratio 1, grid 980x132 px",
+  "workload": "1024 notes over 16 bars (6144 ticks): note k starts at 6k, lasts 90 ticks (clipped at 16 bars), pitch 48 + 7k mod 24, velocity 40 + k mod 60; at most 15 sounding at once",
+  "gates": {
+    "desktop": {
+      "passed": 24,
+      "total": 24
+    }
+  },
+  "measurements_ms": {
+    "before": {
+      "note": "one QML Rectangle per note and per grid line; note list rebuilt on every 10 ms session tick; three runs",
+      "idle_frame_median": [
+        103.72,
+        95.16,
+        98.35
+      ],
+      "edit_to_frame_median": [
+        188.06,
+        182.36,
+        210.94
+      ],
+      "click_to_frame_median": [
+        250.0,
+        256.34,
+        271.95
+      ],
+      "open_ms": [
+        250.0,
+        226.8,
+        278.4
+      ],
+      "baseline_4_notes_frame_median": [
+        11.1,
+        11.14
+      ]
+    },
+    "after": {
+      "note": "PianoNotesView painted item, notesChanged notification, scalar bindings, O(n log n) voice check; three runs",
+      "idle_frame_median": [
+        11.18,
+        11.2,
+        11.16
+      ],
+      "idle_frame_max": [
+        13.16,
+        15.34,
+        18.91
+      ],
+      "edit_to_frame_median": [
+        26.49,
+        25.83,
+        25.68
+      ],
+      "edit_to_frame_max": [
+        30.42,
+        34.91,
+        30.39
+      ],
+      "click_to_frame_median": [
+        20.35,
+        18.91,
+        20.07
+      ],
+      "click_to_frame_max": [
+        29.46,
+        24.04,
+        27.38
+      ],
+      "open_ms": [
+        38.5,
+        27.2,
+        37.4
+      ],
+      "baseline_4_notes_frame_median": [
+        11.23,
+        11.12,
+        11.12
+      ],
+      "idle_repaints": 0
+    }
+  },
+  "verified_behaviors": [
+    "Clicking the middle of 20 different notes on the dense grid selects exactly that note's ID",
+    "A keyboard move keeps the selection and Delete removes the note (1023 left)",
+    "Idle frames cause no repaint of the note view",
+    "All earlier piano-roll tests pass with the painted view; the selected colour is checked in the rendered window image"
+  ],
+  "observed_limits": "An edit to the dense clip still takes about 25 ms (document preparation and validation); GPU scene graph, native Wayland and display scaling are unmeasured; single host under background load.",
+  "source_sha256": {
+    "apps/desktop/piano_view.hpp": "dfd4358a5cd7c4ddc311197f57aeafa5cf421cfa2f55cf9c451e60a686d139c8",
+    "apps/desktop/piano_view.cpp": "8876768785c5ddc5bd0a202aaa6787844df5a9b917ed80a9f2f95047a94a812b",
+    "apps/desktop/Main.qml": "9e81582fa8d424082f7e35dcb8de8080154ebc5db06416b63d440412aed37196",
+    "apps/desktop/session.hpp": "4b734c73f4d62c31c264de5ff11b09241e79eb5397775aaec220573e7a37258b",
+    "apps/desktop/session.cpp": "058543e4fdb769330f8c1e68dfeec15283f3f0a08060801cea134743e62361b6",
+    "apps/desktop/project.cpp": "6a27e9f3711e69a210a6fbec87ecacd9d2abe423baf8c23b548562596b709413",
+    "tests/desktop_tests.cpp": "8f2fef46da42713d201632683e7af085c30052c217c016b9f03ab38d3089336e",
+    "CMakeLists.txt": "245e332dcd890958e3deef2f099a3e56efff92cd3004ee4056fe9a4171cefb70"
+  }
+}
