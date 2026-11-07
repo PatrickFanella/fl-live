@@ -1,0 +1,38 @@
+{
+  "verified_at": "2026-11-07T12:01:12.791260+00:00",
+  "base": "main after PR #147",
+  "issues": [
+    83
+  ],
+  "scope": "The musical workflow with the keyboard only, with visible focus, resulting state and output",
+  "environment": "Kvant, pinned CI image, docker --network none, Qt offscreen platform, software renderer, window 1060x1000",
+  "gates": {
+    "desktop": {
+      "passed": 24,
+      "total": 24
+    },
+    "desktop-tests full runs": {
+      "passed": 5,
+      "total": 5,
+      "note": "five consecutive direct runs, excluding the environment-dependent autosave probe test"
+    }
+  },
+  "verified_behaviors": [
+    "29 Tab stops over 24 distinct controls (counted from the journey's script; the test asserts at least 25), each reached from the current focus with visualFocus (or the grid's active focus) and its box inside the window",
+    "Ctrl+Shift+M, Space on buttons and check boxes, typed fields, arrow keys and Alt+arrows in the piano roll, Up in a combo box and spin boxes, Ctrl+Z, Ctrl+S and Ctrl+E",
+    "Resulting state: two keyboard-entered notes (one moved to tick 216, one lengthened to 120 ticks and raised to pitch 65), a +12 transpose, level 75, scene membership, one automation point; Undo of a later level change",
+    "Saved project holds the device and the level; the float export is non-silent from frame 0",
+    "The track strip scrolls sideways and the editor pane vertically to keep focus visible; the status line has a fixed height so the layout does not jump"
+  ],
+  "pointer_only": [
+    "drawing a note at a pointer position in the grid (keyboard fields cover it)",
+    "dragging notes (arrow keys cover moves and resizes)",
+    "clicking an automation lane (typed fields cover it)"
+  ],
+  "source_sha256": {
+    "apps/desktop/Main.qml": "523ce02d731624af2e7159c1ad701fddbb6805019ad80849c7404b43cf2f611f",
+    "apps/desktop/session.cpp": "ea4a7906e0fb1b6767b009be7a593f1619a7300713a6b391a9c5ba95ec1fdc8a",
+    "tests/desktop_tests.cpp": "960176c2c56f8f2a0ec02ae8dc38677510f4483d2a847295ae0a775590dfb960"
+  },
+  "limits": "Offscreen synthetic input; no screen reader (#80) or native Wayland (#22, #81) checks."
+}

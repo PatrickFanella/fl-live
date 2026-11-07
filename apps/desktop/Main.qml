@@ -12,6 +12,30 @@ ApplicationWindow {
     // Notifies only when the number of tracks actually changes, so the track
     // Repeater keeps its delegates (and their focus and edits) otherwise.
     readonly property int trackSlots: session.trackCount
+    // Keyboard focus must stay visible: scroll the track strip to a control
+    // that receives focus outside its viewport.
+    onActiveFocusItemChanged: reveal(activeFocusItem)
+    // Scrolls the track strip horizontally and the pane vertically until the
+    // item is inside both viewports.
+    function reveal(target) {
+        if (!target) return
+        for (const view of [trackScroll.contentItem, paneScroll.contentItem]) {
+            if (!view || !view.contentItem) continue
+            let inside = false
+            for (let item = target; item; item = item.parent) if (item === view.contentItem) { inside = true; break }
+            if (!inside) continue
+            const at = target.mapToItem(view, 0, 0)
+            if (view === trackScroll.contentItem) {
+                if (at.x < 0) view.contentX = Math.max(0, view.contentX + at.x - 16)
+                else if (at.x + target.width > view.width)
+                    view.contentX = Math.max(0, Math.min(view.contentWidth - view.width, view.contentX + at.x + target.width - view.width + 16))
+            } else {
+                if (at.y < 0) view.contentY = Math.max(0, view.contentY + at.y - 16)
+                else if (at.y + target.height > view.height)
+                    view.contentY = Math.max(0, Math.min(view.contentHeight - view.height, view.contentY + at.y + target.height - view.height + 16))
+            }
+        }
+    }
     property bool textOwnsUndo: (activeFocusItem instanceof TextInput || activeFocusItem instanceof TextEdit) && !activeFocusItem.readOnly
     Shortcut { sequences: [StandardKey.Undo]; enabled: session.canUndo && !window.textOwnsUndo && !closeDialog.visible && !renameDialog.visible; onActivated: session.undo() }
     Shortcut { sequences: [StandardKey.Redo]; enabled: session.canRedo && !window.textOwnsUndo && !closeDialog.visible && !renameDialog.visible; onActivated: session.redo() }
@@ -205,8 +229,18 @@ ApplicationWindow {
         Rectangle {
             color: "#242c37"; radius: 8
             Layout.fillWidth: true; Layout.fillHeight: true
+            // The pane scrolls vertically when open editors make it taller than
+            // the window; otherwise its content fills the pane exactly.
+            ScrollView {
+                id: paneScroll
+                objectName: "paneScroll"
+                anchors.fill: parent; anchors.margins: 16
+                contentWidth: availableWidth
+                clip: true
             ColumnLayout {
-                anchors.fill: parent; anchors.margins: 16; spacing: 12
+                width: paneScroll.availableWidth
+                height: Math.max(implicitHeight, paneScroll.availableHeight)
+                spacing: 12
                 ScrollView {
                     id: trackScroll
                     objectName: "trackScroll"
@@ -543,9 +577,12 @@ ApplicationWindow {
                             clip: true // notes past the clip length are silent and not drawn
                             activeFocusOnTab: true
                             Accessible.role: Accessible.Grouping
-                            Accessible.name: "Piano roll, " + session.pianoNoteCount + " notes, " + session.selectedNotes.length + " selected. Click to add or select, drag to move or resize; arrows move the selection, Shift with Left or Right resizes, Delete removes."
+                            Accessible.name: "Piano roll, " + session.pianoNoteCount + " notes, " + session.selectedNotes.length + " selected. Click to add or select, drag to move or resize; arrows move the selection, Shift with Left or Right resizes, Alt with Left or Right selects the previous or next note, Delete removes."
                             Keys.onPressed: function(event) {
                                 if (event.key === Qt.Key_Escape) { session.clearNoteSelection(); event.accepted = true; return }
+                                if ((event.modifiers & Qt.AltModifier) && (event.key === Qt.Key_Left || event.key === Qt.Key_Right)) {
+                                    session.selectAdjacentNote(event.key === Qt.Key_Left ? -1 : 1); event.accepted = true; return
+                                }
                                 if (!session.canChange || session.selectedNotes.length === 0) return
                                 const shift = (event.modifiers & Qt.ShiftModifier) !== 0
                                 if (event.key === Qt.Key_Delete || event.key === Qt.Key_Backspace) session.deleteNotes(session.selectedNotes)
@@ -665,12 +702,16 @@ ApplicationWindow {
                 }
                 Item { Layout.fillHeight: true; visible: !session.pianoMode }
             }
+            }
         }
         Label {
             Layout.fillWidth: true; wrapMode: Text.WordWrap
             text: "Edits apply while playing, except tempo, Open, New, import and export. Launch a scene, then press Play. Scene timing applies to launch and stop; clips use one bar. Immediate actions keep future queued actions. 4/4."
             color: "#9daabd"
         }
-        Label { objectName: "statusMessage"; Layout.fillWidth: true; text: session.message; wrapMode: Text.WordWrap }
+        // A fixed two-line status keeps the layout above it from jumping as messages change.
+        Label { objectName: "statusMessage"; Layout.fillWidth: true; text: session.message; wrapMode: Text.WordWrap
+            maximumLineCount: 2; elide: Text.ElideRight; Layout.preferredHeight: 2 * fontMetrics.lineSpacing; verticalAlignment: Text.AlignTop
+            FontMetrics { id: fontMetrics } }
     }
 }
