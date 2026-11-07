@@ -2,7 +2,7 @@
 
 `fl_live_document_io` is an optional Qt Core adapter for `SessionDocument`. It writes names, track kinds, clip ownership, scene entries, stable IDs and the allocation high-water mark. The model and engine libraries remain independent of Qt and file I/O. All encoding, validation and file operations belong on a control/worker owner, outside rendering.
 
-The format is `fl-live-session-metadata`, version 1, with required feature `session-identities-v1`. It is a metadata transport, not the desktop's `fl-live-project` musical format. Notes, media, tempo/mixer state, parameters and devices are not supported fields. Both formats reject each other; template versions 1 and 2 continue through their existing reader and migration tests. A later general musical schema must define its own integration and migration rules.
+The format is `fl-live-session-metadata`, version 1, with required feature `session-identities-v1`. It is a metadata transport, not the desktop's `fl-live-project` musical format. Notes, media, tempo, gain, parameters and devices are not supported fields. Per-track pan, mute and solo are supported through the optional required feature `track-mixer-v1`: when present, every track object has exactly `{"pan": int -100..100, "mute": bool, "solo": bool}` under `mix`; when absent, no track may carry `mix`. The encoder writes the feature only when some track differs from the default, so identity-only documents keep their bytes. Both formats reject each other; template versions 1 and 2 continue through their existing reader and migration tests. A later general musical schema must define its own integration and migration rules.
 
 ```json
 {
@@ -18,7 +18,7 @@ The format is `fl-live-session-metadata`, version 1, with required feature `sess
 
 IDs and `next_id` use canonical unsigned decimal strings, including values above 2^53. Numeric JSON IDs, signs, leading zeros, whitespace and overflow are rejected. This avoids rounding the document's full-width IDs through JSON numeric consumers. Zero remains invalid under model validation. The exhausted cursor value 18446744073709551615 is representable and reopens without allowing further allocation.
 
-The adapter requires the exact declared field set at each object level, expected array/string types, version 1 and the single supported required feature. Unknown fields/features, future versions and malformed or oversized input fail before document replacement. Model validation then checks identity uniqueness, limits, clip owners and scene references. Names must preserve valid Unicode/UTF-8 through conversion as well as satisfy the model's byte/control-character bounds.
+The adapter requires the exact declared field set at each object level, expected array/string types, version 1 and either `["session-identities-v1"]` or `["session-identities-v1", "track-mixer-v1"]` as required features, in that order. Unknown fields/features, future versions and malformed or oversized input fail before document replacement. Model validation then checks identity uniqueness, limits, clip owners and scene references. Names must preserve valid Unicode/UTF-8 through conversion as well as satisfy the model's byte/control-character bounds.
 
 Input and encoded output are limited to 4 MiB. Array counts are checked before constructing the corresponding entity lists. Tests exercise the maximum entity/scene-entry workload with full-width IDs and escaped 128-byte names within that byte budget. They also use a hand-authored fixture with IDs above 2^53 and the maximum cursor, independently of the encoder.
 

@@ -12,10 +12,12 @@ std::uint64_t parseIdentity(const QString& text) {
     return id;
 }
 QString identityText(std::uint64_t id){return QString::number(static_cast<qulonglong>(id));}
+// The desktop always renders the stereo mix; mono remains an engine option.
+fl_live::PipeWireConfig stereo(fl_live::PipeWireConfig config){config.channels=2;return config;}
 }
 
 Session::Session(fl_live::PipeWireConfig config, QObject* parent)
-    : QObject(parent), config_(std::move(config)), prepared_(std::make_unique<Prepared>(settings_, *identities_)),
+    : QObject(parent), config_(stereo(std::move(config))), prepared_(std::make_unique<Prepared>(settings_, *identities_)),
       project_path_(QDir::home().filePath("fl-live-project.json")), preview_(config_.remote.empty()) {
     history_[0] = {settings_, identities_, EditKind::none, -1, selected_scene_};
     saved_identities_ = identities_;
@@ -288,6 +290,34 @@ QVariantList Session::clipStates() const {
 QVariantList Session::levels() const {
     return {settings_.levels[0], settings_.levels[1]};
 }
+QVariantList Session::pans() const {
+    QVariantList result;for(const auto& track:identities_->tracks)result.append(track.mix.pan);return result;
+}
+QVariantList Session::mutes() const {
+    QVariantList result;for(const auto& track:identities_->tracks)result.append(track.mix.mute);return result;
+}
+QVariantList Session::solos() const {
+    QVariantList result;for(const auto& track:identities_->tracks)result.append(track.mix.solo);return result;
+}
+bool Session::setPan(const QString& id,int value){return editMix(id,MixField::pan,value);}
+bool Session::setMute(const QString& id,bool value){return editMix(id,MixField::mute,value);}
+bool Session::setSolo(const QString& id,bool value){return editMix(id,MixField::solo,value);}
+bool Session::editMix(const QString& trackId,MixField field,int value) {
+    if(!editable())return false;
+    try {
+        const fl_live::TrackId id{parseIdentity(trackId)};
+        const auto index=prepared_->mapped.trackIndex(id);
+        if(!index)throw std::invalid_argument("Unknown track");
+        auto mix=identities_->tracks[*index].mix;
+        if(field==MixField::pan)mix.pan=value;else if(field==MixField::mute)mix.mute=value!=0;else mix.solo=value!=0;
+        fl_live::SessionDocument candidate(*identities_);candidate.setTrackMix(id,mix);
+        if(candidate.snapshot()==*identities_)return true;
+        auto identities=std::make_shared<const fl_live::DocumentSnapshot>(candidate.snapshot());
+        if(!replace(settings_,identities))return false;
+        pushHistory(field==MixField::pan ? EditKind::track_pan : field==MixField::mute ? EditKind::track_mute : EditKind::track_solo,static_cast<int>(*index));
+        emit changed();return true;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
 QVariantList Session::pitches() const {
     QVariantList result;
     for (const auto& step : settings_.steps) result.append(step.pitch);
@@ -349,6 +379,9 @@ QString Session::editName(const HistoryEntry& entry) {
     case EditKind::scene_delete: return "scene deletion";
     case EditKind::scene_copy: return "scene copy";
     case EditKind::scene_order: return "scene order";
+    case EditKind::track_pan: return QString("track %1 pan").arg(entry.index+1);
+    case EditKind::track_mute: return QString("track %1 mute").arg(entry.index+1);
+    case EditKind::track_solo: return QString("track %1 solo").arg(entry.index+1);
     default: return {};
     }
 }
@@ -534,8 +567,8 @@ void Session::panic() {
 }
 void Session::tick() {
     if (preview_) {
-        std::array<float, 480> discarded{};
-        prepared_->controller.process(discarded); // simulated clock, no audio output
+        std::array<float, 960> discarded{};
+        prepared_->controller.process(discarded, 2); // 480 stereo frames; simulated clock, no audio output
     }
     if (prepared_->backend && prepared_->backend->status().error) {
         audioFailed("Audio backend disconnected");
@@ -551,8 +584,8 @@ void Session::tick() {
 bool Session::exportWav(const QString& path, int bars) {
     if (!editable()) return false;
     try {
-        exportProjectWav(path, settings_, bars);
-        message_ = QString("Exported %1 bars: both tracks from the start, mono 48 kHz / 16-bit WAV").arg(bars);
+        exportProjectWav(path, settings_, *identities_, bars);
+        message_ = QString("Exported %1 bars: both tracks from the start through the mixer, stereo 48 kHz / 16-bit WAV").arg(bars);
         emit changed();
         return true;
     } catch (const std::exception& error) {

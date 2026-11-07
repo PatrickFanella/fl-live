@@ -80,7 +80,7 @@ rtk proxy ./build/desktop/fl-live --remote pipewire-0 --target YOUR_OUTPUT_NODE
 
 Replace the target with the intended PipeWire node name. Without `--target`, manual port setup/linking is required. The app does not select an output device automatically. This hardware path has not been qualified yet. See [desktop contract](docs/desktop-session.md) and [validation receipt](validation/desktop-session.json).
 
-The desktop can export its current two-track template mix while stopped: enter a new WAV path, select 1–16 bars, then choose **Export both tracks**. Output is mono 48 kHz / 16-bit PCM; both clips start at frame zero. Existing destinations are refused. See [project export policy](docs/projects.md#export-the-current-template-mix).
+The desktop can export its current two-track template mix while stopped: enter a new WAV path, select 1–16 bars, then choose **Export both tracks**. Output is stereo 48 kHz / 16-bit PCM through the track mixer; both clips start at frame zero. Existing destinations are refused. See [project export policy](docs/projects.md#export-the-current-template-mix).
 
 The authored desktop now supports track/clip/scene Rename dialogs, document Undo/Redo and version 3 saves with stable identities. Playback resolves string IDs through prepared plans; v1/v2 projects import with initial identities. The two authored Pulse + Steps sources remain shared across scenes. See [desktop identity integration](docs/desktop-identities.md) for the format and qualification boundaries.
 
@@ -89,5 +89,7 @@ Scene launch/stop uses one atomic group with an explicit Immediate or One bar po
 While stopped, use **Include in scene** beside each clip to choose scene membership. These choices support Undo/Redo and Save/Open. Launching a scene stops excluded tracks; individual clip launch remains available.
 
 Use **New scene** to add an empty arrangement, choose its clips with Include in scene, and select it from **Scenes** before launching. **Delete scene** supports Undo; at least one scene remains. Scenes share the authored clips and their settings.
+
+Each track has **Level %**, **Pan** (L100–C–R100, balance law), **Mute** and **Solo**. While any track is soloed only soloed tracks play; mute wins. These are stopped edits with Undo/Redo, and they persist through Save/Open. The desktop outputs stereo. See [track mixer](docs/projects.md#track-mixer).
 
 **Copy arrangement** creates another scene with the same slot choices and shared clip sources. **Move up/down** changes scene order. These edits support Undo/Redo and persist through Save/Open.

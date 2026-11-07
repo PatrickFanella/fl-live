@@ -15,7 +15,10 @@ struct PreparationBudget {
     std::size_t midi_notes = midi_note_limit;
 };
 
-// Prepare on a worker/control owner, never in the callback. Owns independent
+// Prepare on a worker/control owner, never in the callback. Track gain comes
+// from the optional bindings (default 1); each track's TrackMix then applies
+// pan and the mute/solo policy (an inaudible track prepares with zero gain).
+// Owns independent
 // copies of metadata and source-rate mono clip content. Must outlive every
 // Engine/RenderController constructed from plan(). No live replacement API.
 class DocumentRenderPlan final {

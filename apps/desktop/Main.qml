@@ -4,7 +4,7 @@ import QtQuick.Layouts
 
 ApplicationWindow {
     id: window
-    width: 1040; height: 920
+    width: 1040; height: 960
     minimumWidth: 900; minimumHeight: 620
     visible: true
     property bool discardOnClose: false
@@ -237,8 +237,30 @@ ApplicationWindow {
                         }
                         Item { visible: index === 0; Layout.fillHeight: true }
                         RowLayout {
+                            Layout.fillWidth: true
                             Label { text: "Level %"; color: "#9daabd" }
                             SpinBox { objectName: "level" + index; from: 0; to: 100; value: session.levels[index]; enabled: session.canEdit; onValueModified: session.setLevel(index, value); Accessible.name: "Track " + (index + 1) + " level percent" }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label { text: "Pan"; color: "#9daabd" }
+                            SpinBox {
+                                objectName: "pan" + index; from: -100; to: 100; stepSize: 5; editable: true
+                                value: session.pans[index]; enabled: session.canEdit
+                                textFromValue: function(value) { return value === 0 ? "C" : value < 0 ? "L" + (-value) : "R" + value }
+                                validator: RegularExpressionValidator { regularExpression: /^\s*([CcLlRr]\d{0,3}|-?\d{1,3})\s*$/ }
+                                valueFromText: function(text) {
+                                    const t = text.trim().toUpperCase()
+                                    const v = t === "C" ? 0 : t[0] === "L" ? -parseInt(t.slice(1)) : t[0] === "R" ? parseInt(t.slice(1)) : parseInt(t)
+                                    return isNaN(v) ? value : Math.max(from, Math.min(to, v))
+                                }
+                                onValueModified: session.setPan(session.trackIds[index], value)
+                                Accessible.name: "Track " + (index + 1) + " pan, left to right"
+                                ToolTip.visible: hovered; ToolTip.text: "Balance pan: the far side is reduced, the near side stays at full level."
+                                Layout.preferredWidth: 96
+                            }
+                            CheckBox { objectName: "mute" + index; text: "Mute"; checked: session.mutes[index]; enabled: session.canEdit; onClicked: session.setMute(session.trackIds[index], checked); Accessible.name: "Mute track " + (index + 1) }
+                            CheckBox { objectName: "solo" + index; text: "Solo"; checked: session.solos[index]; enabled: session.canEdit; onClicked: session.setSolo(session.trackIds[index], checked); Accessible.name: "Solo track " + (index + 1); ToolTip.visible: hovered; ToolTip.text: "While any track is soloed, only soloed tracks play. Mute wins over solo." }
                         }
                     }
                 }

@@ -14,3 +14,6 @@ QByteArray encodeAuthoredProject(const AuthoredProject&);
 AuthoredProject decodeAuthoredProject(const QByteArray&);
 AuthoredProject readAuthoredProject(const QString& path);
 void writeAuthoredProject(const QString& path, const AuthoredProject&);
+// Stereo 48 kHz PCM16 through the track mixer (level, pan, mute, solo). Each
+// track's first clip starts at frame zero; hard end, no effect tails.
+void exportProjectWav(const QString& path, const ProjectSettings& settings, const fl_live::DocumentSnapshot& identities, int bars);

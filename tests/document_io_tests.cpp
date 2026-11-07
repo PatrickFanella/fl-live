@@ -136,6 +136,33 @@ void rejectedInputs() {
     rejects([&] { loadDocumentMetadata(directory.filePath("missing.json"), current); });
     CHECK(current.snapshot() == before);
 }
+void mixerRoundTrip() {
+    auto state = fixture();
+    const auto plain = encodeDocumentMetadata(state);
+    CHECK(!plain.contains("track-mixer-v1") && !plain.contains("\"mix\""));
+    state.tracks[0].mix = TrackMix{-100, true, true};
+    const auto encoded = encodeDocumentMetadata(state);
+    const auto root = QJsonDocument::fromJson(encoded).object();
+    CHECK((root["required_features"].toArray() == QJsonArray{"session-identities-v1", "track-mixer-v1"}));
+    CHECK(decodeDocumentMetadata(encoded) == state);
+    state.tracks[0].mix = TrackMix{37, false, false};
+    CHECK(decodeDocumentMetadata(encodeDocumentMetadata(state)) == state);
+    // Feature and fields must agree; values must be in range and typed.
+    const auto good = QJsonDocument::fromJson(encodeDocumentMetadata(state)).object();
+    const auto bad = [&](auto edit) { auto r = good; edit(r); rejects([&] { decodeDocumentMetadata(QJsonDocument(r).toJson()); }); };
+    const auto mix = [&](const char* key, QJsonValue value) {
+        bad([&](auto& r) { auto a=r["tracks"].toArray();auto t=a[0].toObject();auto m=t["mix"].toObject();m[key]=value;t["mix"]=m;a[0]=t;r["tracks"]=a; });
+    };
+    bad([](auto& r) { r["required_features"] = QJsonArray{"session-identities-v1"}; });
+    bad([](auto& r) { r["required_features"] = QJsonArray{"track-mixer-v1", "session-identities-v1"}; });
+    bad([](auto& r) { auto a=r["tracks"].toArray();auto t=a[0].toObject();t.remove("mix");a[0]=t;r["tracks"]=a; });
+    mix("pan", 101); mix("pan", -101); mix("pan", 1.5); mix("pan", "0"); mix("mute", 1); mix("solo", QJsonValue());
+    bad([](auto& r) { auto a=r["tracks"].toArray();auto t=a[0].toObject();auto m=t["mix"].toObject();m["gain"]=1;t["mix"]=m;a[0]=t;r["tracks"]=a; });
+    auto identityOnly = QJsonDocument::fromJson(plain).object();
+    auto tracks = identityOnly["tracks"].toArray(); auto track = tracks[0].toObject();
+    track["mix"] = QJsonObject{{"pan", 0}, {"mute", false}, {"solo", false}}; tracks[0] = track; identityOnly["tracks"] = tracks;
+    rejects([&] { decodeDocumentMetadata(QJsonDocument(identityOnly).toJson()); });
+}
 void savePreservationAndMaximum() {
     QTemporaryDir directory; CHECK(directory.isValid());
     const auto path = directory.filePath("saved.json");
@@ -152,7 +179,7 @@ void savePreservationAndMaximum() {
     const std::string name(128, '"'); // worst-case JSON escaping with full-width IDs
     for (std::size_t t=0;t<64;++t) {
         const auto track = TrackId{maximum.next_id++};
-        maximum.tracks.push_back({track,name,TrackKind::audio});
+        maximum.tracks.push_back({track,name,TrackKind::audio,TrackMix{-100,true,true}});
         for (std::size_t c=0;c<64;++c) maximum.clips.push_back({ClipId{maximum.next_id++},track,name});
     }
     for (std::size_t s=0;s<256;++s) {
@@ -166,7 +193,7 @@ void savePreservationAndMaximum() {
 }
 int main() {
     try {
-        roundTrips(); persistedIdsRender(); rejectedInputs(); savePreservationAndMaximum();
+        roundTrips(); persistedIdsRender(); rejectedInputs(); mixerRoundTrip(); savePreservationAndMaximum();
         std::cout << "PASS: metadata file identity round trips, strict admission and preservation\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

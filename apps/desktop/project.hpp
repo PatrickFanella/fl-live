@@ -29,5 +29,3 @@ void writeProject(const QString& path, const ProjectSettings& settings);
 QByteArray encodeProjectSettings(const ProjectSettings& settings);
 ProjectSettings decodeProjectSettings(const QByteArray& bytes);
 
-// Both template clips start at frame zero; hard end, no effect tails.
-void exportProjectWav(const QString& path, const ProjectSettings& settings, int bars);

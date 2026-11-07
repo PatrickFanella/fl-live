@@ -50,6 +50,10 @@ SessionPlan prepare(const DocumentSnapshot& document, std::span<const DocumentCl
     for (const auto& track : document.tracks) {
         Track prepared;
         if (!gains.empty()) prepared.gain = levels.at(track.id.value);
+        // Mute/solo resolve to zero gain at preparation; pan maps percent to
+        // the engine's balance law. Edits rebuild the plan.
+        if (!SessionDocument::audible(document, track.id)) prepared.gain = 0;
+        prepared.pan = static_cast<float>(track.mix.pan) / static_cast<float>(TrackMix::pan_limit);
         for (const auto& clip : document.clips) if (clip.track == track.id)
             prepared.clips.push_back(*content.at(clip.id.value));
         plan.tracks.push_back(std::move(prepared));

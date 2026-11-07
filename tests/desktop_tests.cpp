@@ -6,6 +6,7 @@
 #include <QQuickItem>
 #include <QtEndian>
 #include <cmath>
+#include <algorithm>
 #include <array>
 #include <functional>
 #include <limits>
@@ -365,35 +366,141 @@ private slots:
         const auto path=directory.filePath("mix.wav");
         ProjectSettings settings;settings.tempo=137;settings.levels={70,40};
         settings.step_count=1;settings.steps[0]={true,69,50,100};
-        exportProjectWav(path,settings,1);
+        const auto identities=defaultTemplateIdentities();
+        exportProjectWav(path,settings,identities,1);
         QFile file(path);QVERIFY(file.open(QIODevice::ReadOnly));const auto bytes=file.readAll();file.close();
         const auto frames=(48000ULL*60*4+136)/137;
-        QCOMPARE(bytes.size(),static_cast<qsizetype>(44+frames*2));
+        QCOMPARE(bytes.size(),static_cast<qsizetype>(44+frames*4));
         QCOMPARE(bytes.first(4),QByteArray("RIFF"));QCOMPARE(bytes.mid(8,8),QByteArray("WAVEfmt "));
         QCOMPARE(qFromLittleEndian<quint32>(bytes.constData()+24),48000U);
-        QCOMPARE(qFromLittleEndian<quint16>(bytes.constData()+22),1);
+        QCOMPARE(qFromLittleEndian<quint16>(bytes.constData()+22),2);
+        QCOMPARE(qFromLittleEndian<quint32>(bytes.constData()+28),192000U);
+        QCOMPARE(qFromLittleEndian<quint16>(bytes.constData()+32),4);
         QCOMPARE(qFromLittleEndian<quint16>(bytes.constData()+34),16);
+        // Centered tracks: both channels equal the original mono template mix.
         const auto plan=prepareProject(settings);fl_live::Engine engine(plan);
         QCOMPARE(engine.schedule({fl_live::CommandKind::launch,0,0,0}),fl_live::ScheduleResult::accepted);
         QCOMPARE(engine.schedule({fl_live::CommandKind::launch,0,1,0}),fl_live::ScheduleResult::accepted);engine.start();
         std::vector<float> expected(static_cast<std::size_t>(frames));engine.process(expected);
-        for (std::size_t i=0;i<expected.size();++i)
-            QCOMPARE(qFromLittleEndian<qint16>(bytes.constData()+44+i*2),static_cast<qint16>(std::lround(expected[i]*32767.0F)));
-        QVERIFY_EXCEPTION_THROWN(exportProjectWav(path,settings,1),std::runtime_error);
+        for (std::size_t i=0;i<expected.size();++i) {
+            const auto value=static_cast<qint16>(std::lround(expected[i]*32767.0F));
+            QCOMPARE(qFromLittleEndian<qint16>(bytes.constData()+44+i*4),value);
+            QCOMPARE(qFromLittleEndian<qint16>(bytes.constData()+46+i*4),value);
+        }
+        QVERIFY_EXCEPTION_THROWN(exportProjectWav(path,settings,identities,1),std::runtime_error);
         QVERIFY(file.open(QIODevice::ReadOnly));QCOMPARE(file.readAll(),bytes);file.close();
         const auto invalid=directory.filePath("invalid.wav");
-        QVERIFY_EXCEPTION_THROWN(exportProjectWav(invalid,settings,0),std::invalid_argument);
-        QVERIFY_EXCEPTION_THROWN(exportProjectWav(invalid,settings,17),std::invalid_argument);
+        QVERIFY_EXCEPTION_THROWN(exportProjectWav(invalid,settings,identities,0),std::invalid_argument);
+        QVERIFY_EXCEPTION_THROWN(exportProjectWav(invalid,settings,identities,17),std::invalid_argument);
         QVERIFY(!QFile::exists(invalid));
-        settings.levels={0,0};exportProjectWav(directory.filePath("silent.wav"),settings,1);
+        settings.levels={0,0};exportProjectWav(directory.filePath("silent.wav"),settings,identities,1);
         QFile silent(directory.filePath("silent.wav"));QVERIFY(silent.open(QIODevice::ReadOnly));silent.seek(44);
-        QCOMPARE(silent.readAll(),QByteArray(static_cast<qsizetype>(frames*2),'\0'));
+        QCOMPARE(silent.readAll(),QByteArray(static_cast<qsizetype>(frames*4),'\0'));
         Session session;session.setTempo(150);const auto projectPath=session.projectPath();const auto undo=session.undoText();
         QVERIFY(session.exportWav(directory.filePath("session.wav"),1));
         QVERIFY(session.dirty());QCOMPARE(session.projectPath(),projectPath);QCOMPARE(session.undoText(),undo);
         session.play();QVERIFY(!session.exportWav(invalid,1));session.tick();
         QVERIFY(!session.exportWav(invalid,1));QVERIFY(!QFile::exists(invalid));
         session.stop();session.tick();QVERIFY(session.exportWav(invalid,1));
+    }
+    void mixerControlsAndExport() {
+        // Independent per-track mono renders, mixed with the declared balance
+        // law and mute/solo policy, are compared with each exported channel.
+        ProjectSettings settings;settings.tempo=150;settings.levels={60,30};settings.step_count=2;
+        const auto trackRender=[&](std::size_t track,std::size_t frames) {
+            auto plan=prepareProject(settings);auto one=plan;one.tracks={plan.tracks[track]};
+            fl_live::Engine engine(one);
+            if(engine.schedule({fl_live::CommandKind::launch,0,0,0})!=fl_live::ScheduleResult::accepted)throw std::runtime_error("schedule");
+            engine.start();std::vector<float> out(frames);engine.process(out);return out;
+        };
+        const auto pcm=[](float v){return static_cast<qint16>(std::lround(std::clamp(v,-1.0F,1.0F)*32767.0F));};
+        const auto check=[&](Session& session,const QString& path,std::array<float,2> left,std::array<float,2> right) {
+            QVERIFY(session.exportWav(path,1));
+            QFile file(path);QVERIFY(file.open(QIODevice::ReadOnly));const auto bytes=file.readAll();
+            const auto frames=static_cast<std::size_t>((bytes.size()-44)/4);
+            const auto a=trackRender(0,frames),m=trackRender(1,frames);
+            for(std::size_t i=0;i<frames;++i) {
+                QCOMPARE(qFromLittleEndian<qint16>(bytes.constData()+44+i*4),pcm(left[0]*a[i]+left[1]*m[i]));
+                QCOMPARE(qFromLittleEndian<qint16>(bytes.constData()+46+i*4),pcm(right[0]*a[i]+right[1]*m[i]));
+            }
+        };
+        QTemporaryDir directory;
+        Session session;session.setTempo(150);session.setLevel(0,60);session.setLevel(1,30);session.setStepCount(2);
+        const auto audio=session.trackIds()[0].toString(),midi=session.trackIds()[1].toString();
+        check(session,directory.filePath("center.wav"),{1,1},{1,1});
+        QVERIFY(session.setPan(audio,-100));QVERIFY(session.setPan(midi,40));
+        QCOMPARE(session.pans(),(QVariantList{-100,40}));QCOMPARE(session.undoText(),QString("Undo track 2 pan"));
+        check(session,directory.filePath("pan.wav"),{1,0.6F},{0,1});
+        QVERIFY(session.setMute(audio,true));check(session,directory.filePath("mute.wav"),{0,0.6F},{0,1});
+        QVERIFY(session.setSolo(audio,true));check(session,directory.filePath("mute-beats-solo.wav"),{0,0},{0,0});
+        QVERIFY(session.setMute(audio,false));check(session,directory.filePath("solo.wav"),{1,0},{0,0});
+        QVERIFY(session.setSolo(midi,true));check(session,directory.filePath("two-solos.wav"),{1,0.6F},{0,1});
+        QCOMPARE(session.solos(),(QVariantList{true,true}));QCOMPARE(session.mutes(),(QVariantList{false,false}));
+        // Refusals keep state and history.
+        const auto undo=session.undoText();
+        QVERIFY(!session.setPan(audio,101));QVERIFY(!session.setPan("999",0));QVERIFY(!session.setMute("x",true));
+        QCOMPARE(session.pans(),(QVariantList{-100,40}));QCOMPARE(session.undoText(),undo);
+        QVERIFY(session.setPan(audio,-100));QCOMPARE(session.undoText(),undo); // no-op edit adds no history
+        session.play();QVERIFY(!session.setSolo(audio,false));session.tick();QVERIFY(!session.setSolo(audio,false));
+        session.stop();session.tick();
+        // Undo walks back each mixer step; Save/Open retains IDs and values.
+        session.undo();QCOMPARE(session.solos(),(QVariantList{true,false}));
+        session.undo();QCOMPARE(session.mutes(),(QVariantList{true,false}));
+        session.redo();session.redo();QCOMPARE(session.solos(),(QVariantList{true,true}));
+        const auto path=directory.filePath("mixer.json");QVERIFY(session.saveProject(path));QVERIFY(!session.dirty());
+        const auto saved=readAuthoredProject(path);
+        QCOMPARE(saved.identities.tracks[0].mix,(fl_live::TrackMix{-100,false,true}));
+        QCOMPARE(saved.identities.tracks[1].mix,(fl_live::TrackMix{40,false,true}));
+        QFile raw(path);QVERIFY(raw.open(QIODevice::ReadOnly));QVERIFY(raw.readAll().contains("track-mixer-v1"));
+        Session reopened;QVERIFY(reopened.loadProject(path));
+        QCOMPARE(reopened.pans(),(QVariantList{-100,40}));QCOMPARE(reopened.solos(),(QVariantList{true,true}));
+        QCOMPARE(reopened.trackIds(),session.trackIds());QVERIFY(!reopened.dirty());
+        check(reopened,directory.filePath("reopened.wav"),{1,0.6F},{0,1});
+        reopened.setSolo(audio,false);reopened.setSolo(midi,false);reopened.setPan(audio,0);reopened.setPan(midi,0);
+        QVERIFY(reopened.dirty());
+        // Back at defaults the file is identity-only again.
+        const auto plain=directory.filePath("plain.json");QVERIFY(reopened.saveProject(plain));
+        QFile plainFile(plain);QVERIFY(plainFile.open(QIODevice::ReadOnly));QVERIFY(!plainFile.readAll().contains("track-mixer-v1"));
+    }
+    void qmlMixerInput() {
+        Session session;
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("session",&session);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+        QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* root,const QString& name)->QQuickItem* {
+            if(root->objectName()==name && root->isVisible())return root;
+            for(auto* child:root->childItems())if(auto* match=findItem(child,name))return match;
+            return nullptr;
+        };
+        auto click=[&](const char* name) {
+            auto* item=findItem(window->contentItem(),QString::fromUtf8(name));QVERIFY(item);
+            QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());
+        };
+        auto* pan=findItem(window->contentItem(),"pan1");QVERIFY(pan);
+        QCOMPARE(pan->property("displayText").toString(),QString("C"));
+        pan->forceActiveFocus();QTest::keyClick(window,Qt::Key_Down);
+        QCOMPARE(session.pans(),(QVariantList{0,-5}));QCOMPARE(pan->property("displayText").toString(),QString("L5"));
+        // Typed entry in L/R notation.
+        QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier);
+        for(const char c:QByteArray("R35"))QTest::keyClick(window,c);
+        QTest::keyClick(window,Qt::Key_Return);
+        QTRY_COMPARE(session.pans(),(QVariantList{0,35}));
+        click("mute0");QCOMPARE(session.mutes(),(QVariantList{true,false}));
+        click("solo1");QCOMPARE(session.solos(),(QVariantList{false,true}));
+        QVERIFY(findItem(window->contentItem(),"mute0")->property("checked").toBool());
+        findItem(window->contentItem(),"solo0")->forceActiveFocus();QTest::keyClick(window,Qt::Key_Space);
+        QCOMPARE(session.solos(),(QVariantList{true,true}));
+        click("undoButton");QCOMPARE(session.solos(),(QVariantList{false,true}));
+        QVERIFY(!findItem(window->contentItem(),"solo0")->property("checked").toBool());
+        click("undoButton");click("undoButton");QCOMPARE(session.mutes(),(QVariantList{false,false}));QCOMPARE(session.solos(),(QVariantList{false,false}));
+        click("redoButton");QCOMPARE(session.mutes(),(QVariantList{true,false}));
+        session.play();session.tick();
+        QVERIFY(!findItem(window->contentItem(),"pan1")->property("enabled").toBool());
+        QVERIFY(!findItem(window->contentItem(),"mute0")->property("enabled").toBool());
+        session.stop();session.tick();
+        QVERIFY(window->grabWindow().save("desktop-track-mixer.png"));
     }
     void historyAndSavedState() {
         QTemporaryDir directory;

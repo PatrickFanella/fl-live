@@ -15,10 +15,22 @@ using TrackId = DocumentId<struct TrackIdTag>;
 using ClipId = DocumentId<struct ClipIdTag>;
 using SceneId = DocumentId<struct SceneIdTag>;
 enum class TrackKind { audio, midi };
+// Mixer switches and pan, in whole percent so files round-trip exactly.
+// Pan -100..100 maps to the engine's balance law. A track is audible when it
+// is not muted and either no track is soloed or it is soloed itself; mute
+// wins over solo. Gain stays with the musical content owner.
+struct TrackMix {
+    static constexpr int pan_limit = 100;
+    int pan = 0;
+    bool mute = false;
+    bool solo = false;
+    bool operator==(const TrackMix&) const = default;
+};
 struct DocumentTrack {
     TrackId id;
     std::string name;
     TrackKind kind;
+    TrackMix mix{};
     bool operator==(const DocumentTrack&) const = default;
 };
 // Identity/ownership metadata only. Media and note content are separate work.
@@ -71,6 +83,9 @@ public:
     void deleteTrack(TrackId id);
     void deleteClip(ClipId id);
     void deleteScene(SceneId id);
+    void setTrackMix(TrackId id, TrackMix mix);
+    // Whether a track contributes to the mix under the mute/solo policy.
+    static bool audible(const DocumentSnapshot& snapshot, TrackId id);
     void setSlot(SceneId scene, TrackId track, ClipId clip);
     void clearSlot(SceneId scene, TrackId track);
 private:

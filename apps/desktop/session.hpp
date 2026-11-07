@@ -36,6 +36,9 @@ class Session final : public QObject {
     Q_PROPERTY(int tempo READ tempo NOTIFY changed)
     Q_PROPERTY(QVariantList levels READ levels NOTIFY changed)
     Q_PROPERTY(QVariantList pitches READ pitches NOTIFY changed)
+    Q_PROPERTY(QVariantList pans READ pans NOTIFY changed)
+    Q_PROPERTY(QVariantList mutes READ mutes NOTIFY changed)
+    Q_PROPERTY(QVariantList solos READ solos NOTIFY changed)
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY changed)
     Q_PROPERTY(bool canRedo READ canRedo NOTIFY changed)
     Q_PROPERTY(QString undoText READ undoText NOTIFY changed)
@@ -92,6 +95,13 @@ public:
     int tempo() const { return settings_.tempo; }
     QVariantList levels() const;
     QVariantList pitches() const;
+    QVariantList pans() const;
+    QVariantList mutes() const;
+    QVariantList solos() const;
+    // Stopped mixer edits on track IDs; each is one Undo step and persists.
+    Q_INVOKABLE bool setPan(const QString& trackId, int value);
+    Q_INVOKABLE bool setMute(const QString& trackId, bool value);
+    Q_INVOKABLE bool setSolo(const QString& trackId, bool value);
     bool dirty() const { return settings_ != saved_settings_ || identities_->tracks != saved_identities_->tracks ||
         identities_->clips != saved_identities_->clips || identities_->scenes != saved_identities_->scenes; }
     bool canUndo() const { return canEdit() && history_cursor_ > 0; }
@@ -144,7 +154,7 @@ private:
     const fl_live::PipeWireConfig config_;
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
-    enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete, scene_copy, scene_order };
+    enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete, scene_copy, scene_order, track_pan, track_mute, track_solo };
     struct HistoryEntry {
         ProjectSettings settings;
         Identities identities;
@@ -164,6 +174,8 @@ private:
     void pushHistory(EditKind kind, int index);
     enum class NameKind { track, clip, scene };
     bool rename(const QString& id, const QString& name, NameKind kind);
+    enum class MixField { pan, mute, solo };
+    bool editMix(const QString& trackId, MixField field, int value);
     bool sceneAction(const QString& id, const QString& policy, bool stop);
     std::uint64_t scene_serial_ = 0;
     bool scene_stop_ = false;

@@ -4,7 +4,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <stdexcept>
 
 namespace fl_live {
@@ -48,9 +50,15 @@ std::string name(const QJsonValue& value) {
 QByteArray encodeDocumentMetadata(const DocumentSnapshot& state) {
     SessionDocument::validate(state);
     QJsonArray tracks, clips, scenes;
-    for (const auto& track : state.tracks)
-        tracks.append(QJsonObject{{"id", identity(track.id.value)}, {"name", name(track.name)},
-            {"kind", track.kind == TrackKind::audio ? "audio" : "midi"}});
+    // Mixer fields are written only when used, so identity-only files keep
+    // their original bytes and readers that predate the mixer still open them.
+    const bool mixer = std::any_of(state.tracks.begin(), state.tracks.end(), [](const auto& t) { return t.mix != TrackMix{}; });
+    for (const auto& track : state.tracks) {
+        QJsonObject object{{"id", identity(track.id.value)}, {"name", name(track.name)},
+            {"kind", track.kind == TrackKind::audio ? "audio" : "midi"}};
+        if (mixer) object.insert("mix", QJsonObject{{"pan", track.mix.pan}, {"mute", track.mix.mute}, {"solo", track.mix.solo}});
+        tracks.append(object);
+    }
     for (const auto& clip : state.clips)
         clips.append(QJsonObject{{"id", identity(clip.id.value)}, {"track", identity(clip.track.value)}, {"name", name(clip.name)}});
     for (const auto& scene : state.scenes) {
@@ -60,7 +68,8 @@ QByteArray encodeDocumentMetadata(const DocumentSnapshot& state) {
         scenes.append(QJsonObject{{"id", identity(scene.id.value)}, {"name", name(scene.name)}, {"slots", entries}});
     }
     const auto bytes = QJsonDocument(QJsonObject{{"format", "fl-live-session-metadata"}, {"version", 1},
-        {"required_features", QJsonArray{"session-identities-v1"}}, {"next_id", identity(state.next_id)},
+        {"required_features", mixer ? QJsonArray{"session-identities-v1", "track-mixer-v1"} : QJsonArray{"session-identities-v1"}},
+        {"next_id", identity(state.next_id)},
         {"tracks", tracks}, {"clips", clips}, {"scenes", scenes}}).toJson(QJsonDocument::Compact);
     if (bytes.size() > document_metadata_byte_limit) throw std::invalid_argument("Metadata exceeds the 4 MiB limit");
     return bytes;
@@ -73,15 +82,25 @@ DocumentSnapshot decodeDocumentMetadata(const QByteArray& bytes) {
     const auto root = fields(json.object(), {"format", "version", "required_features", "next_id", "tracks", "clips", "scenes"});
     if (root["format"] != "fl-live-session-metadata" || !root["version"].isDouble() || root["version"].toDouble() != 1)
         throw std::invalid_argument("Unsupported metadata format/version");
-    const auto features = array(root["required_features"], 1);
-    if (features.size() != 1 || features[0] != "session-identities-v1") throw std::invalid_argument("Unsupported required metadata feature");
+    const auto features = array(root["required_features"], 2);
+    const bool mixer = features == QJsonArray{"session-identities-v1", "track-mixer-v1"};
+    if (!mixer && features != QJsonArray{"session-identities-v1"}) throw std::invalid_argument("Unsupported required metadata feature");
     DocumentSnapshot state;
     state.next_id = identity(root["next_id"]);
     for (const auto& value : array(root["tracks"], SessionDocument::track_limit)) {
-        const auto track = fields(value, {"id", "name", "kind"});
+        const auto track = mixer ? fields(value, {"id", "name", "kind", "mix"}) : fields(value, {"id", "name", "kind"});
         const auto kind = track["kind"];
         if (kind != "audio" && kind != "midi") throw std::invalid_argument("Unsupported metadata track kind");
-        state.tracks.push_back({TrackId{identity(track["id"])}, name(track["name"]), kind == "audio" ? TrackKind::audio : TrackKind::midi});
+        TrackMix mix;
+        if (mixer) {
+            const auto values = fields(track["mix"], {"pan", "mute", "solo"});
+            const auto pan = values["pan"].toDouble();
+            if (!values["pan"].isDouble() || pan != std::floor(pan) || pan < -TrackMix::pan_limit || pan > TrackMix::pan_limit ||
+                !values["mute"].isBool() || !values["solo"].isBool())
+                throw std::invalid_argument("Invalid metadata track mix");
+            mix = {static_cast<int>(pan), values["mute"].toBool(), values["solo"].toBool()};
+        }
+        state.tracks.push_back({TrackId{identity(track["id"])}, name(track["name"]), kind == "audio" ? TrackKind::audio : TrackKind::midi, mix});
     }
     for (const auto& value : array(root["clips"], SessionDocument::clip_limit)) {
         const auto clip = fields(value, {"id", "track", "name"});
