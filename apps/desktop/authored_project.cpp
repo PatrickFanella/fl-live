@@ -315,6 +315,6 @@ AuthoredProject readAuthoredProject(const QString& path) {
 }
 void writeAuthoredProject(const QString& path,const AuthoredProject& project) {
     const auto bytes=encodeAuthoredProject(project);QSaveFile file(path);file.setDirectWriteFallback(false);
-    if(!file.open(QIODevice::WriteOnly) || file.write(bytes)!=bytes.size() || !file.commit())
+    if(!file.open(QIODevice::WriteOnly) || !fl_live::commitDurably(file,bytes))
         throw std::runtime_error("Cannot save authored project atomically; previous file was preserved");
 }
