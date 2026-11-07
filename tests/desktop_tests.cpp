@@ -2072,6 +2072,40 @@ private slots:
         QCOMPARE(clips(1).size(),after.size()+1);
         session.undo();QCOMPARE(clips(1),after);
     }
+    // #49: panic and clip edits while recording. Panic silences playback at
+    // once but keeps recording; deleting the playing clip on an armed track
+    // is an ordinary edit; Stop still finishes every take and a note held
+    // through the panic is closed with the take, so nothing is left sounding.
+    void recordingThroughPanicAndEdits() {
+        QTemporaryDir directory;Session session;
+        const auto audio=session.trackIds()[0].toString(),midi=session.trackIds()[1].toString();
+        const auto clips=[&](int t){QStringList r;for(const auto& c:session.trackClips()[t].toList())r.append(c.toMap()["id"].toString());return r;};
+        QVERIFY(session.saveProject(directory.filePath("panic.json")));
+        // A second audio clip so the playing one can be deleted.
+        QVERIFY(session.addClip(audio));const auto spare=clips(0).last();const auto playing=clips(0).first();
+        QVERIFY(session.setArmed(audio,true));QVERIFY(session.setArmed(midi,true));
+        QVERIFY(session.launchClip(playing));QVERIFY(session.launchClip(clips(1).first()));
+        QVERIFY(session.record());session.tick();session.tick();QVERIFY(session.running());
+        QCOMPARE(session.activeClipIds()[1].toString(),clips(1).first());QVERIFY(session.activeVoices()>0);
+        QVERIFY(session.previewMidi(0x90,62,100)); // held through the panic
+        for(int i=0;i<10;++i)session.tick();
+        // The playing clip on the armed track can be deleted mid-take, while running.
+        QCOMPARE(session.activeClipIds()[0].toString(),playing);
+        QVERIFY(session.deleteClip(playing));session.tick();session.tick();QCOMPARE(clips(0),(QStringList{spare}));
+        QVERIFY(session.running());QVERIFY(session.recording());
+        session.panic();session.tick();
+        QVERIFY(!session.running());QCOMPARE(session.activeVoices(),0);QVERIFY(session.recording());
+        for(int i=0;i<10;++i)session.tick();
+        session.stop();session.tick();QVERIFY(!session.recording());
+        QVERIFY(session.message().startsWith("Recorded 2 takes as new clips"));QVERIFY(session.message().contains("1 note still held"));
+        QCOMPARE(clips(0).size(),2);QCOMPARE(clips(1).size(),2);
+        // The recorded note plays and a panic leaves no voice behind.
+        QVERIFY(session.selectClip(clips(1).last()));QCOMPARE(session.pianoNotes().size(),qsizetype(1));
+        QVERIFY(session.launchClip(clips(1).last()));session.play();for(int i=0;i<4;++i)session.tick();
+        session.panic();session.tick();QCOMPARE(session.activeVoices(),0);QVERIFY(!session.running());
+        // Undo removes both takes in one step; the deletion before it stays.
+        session.undo();QCOMPARE(clips(0),(QStringList{spare}));QCOMPARE(clips(1).size(),1);
+    }
     // #48: a crash while recording leaves the take as a .part file with an
     // unfinished header and a journal naming its track. Opening the project
     // lists it; Recover takes writes a finished file, adds it as a clip in one

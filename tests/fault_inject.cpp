@@ -2,6 +2,7 @@
 // regular files under $FL_LIVE_FAULT_DIR, and only while $FL_LIVE_FAULT names
 // an operation, so stdio, Qt event descriptors and other files are untouched.
 //   write  - allow 512 bytes per descriptor, then fail with ENOSPC
+//   slow   - every write sleeps 100 ms, then succeeds (a disk that falls behind)
 //   sync   - fsync/fdatasync fail with EIO
 //   rename - publishing into the directory fails with EIO: rename/renameat/
 //            renameat2 (overwrite) and linkat (Qt's O_TMPFILE path for new files)
@@ -53,6 +54,7 @@ ssize_t write(int fd, const void* buffer, size_t count) {
         if (result > 0) used += static_cast<std::size_t>(result);
         return result;
     }
+    if (active("slow") && targeted(fd)) usleep(100000);
     if (fd >= 0) written[static_cast<std::size_t>(fd) % written.size()] = 0;
     return next(fd, buffer, count);
 }

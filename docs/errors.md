@@ -18,6 +18,7 @@ Every failure the desktop can report names what it was working on, and says what
 | Server or output lost while recording | "… Audio is stopped; your project and history are kept. … N take(s) will be added as clips after Retry audio." | The document and every finished take file | Restore the server, then **Retry audio** |
 | Recording input lost (node removed) | "The recording input was lost (PipeWire remote R). Recorded N take(s) as new clips. Arm a track again to reopen it." | The takes, as clips; playback continues | Arm a track again |
 | MIDI take with no notes, or notes past 16 bars, beyond 16 sounding or beyond 1,024 | "No notes were played on TRACK" or "TRACK kept the first 16 bars: …" / "left out N notes …" | Every note that fits, as a clip | Record shorter or thinner takes |
+| The disk falls behind while recording | "Recorded N take(s) as new clips. NAME dropped N frames when the disk fell behind." | Every block that fit, in order, as a clip | Record to a faster disk or shorten takes |
 | A full control queue | "Control queue full. Try again, or use Silence now." | Everything, including an edit made at that moment | Try again; **Silence now** always works |
 
 Plugins are not hosted yet, so there are no plugin failures to report; plugin failures belong to #72.
