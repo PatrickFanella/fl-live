@@ -156,6 +156,19 @@ public:
     // stream is recorded.
     QVariantList armed() const;
     Q_INVOKABLE bool setArmed(const QString& trackId, bool armed);
+    // Input monitoring (docs/recording.md): an armed audio track with Monitor
+    // on plays the input through the output at its level, pan and mute.
+    Q_PROPERTY(QVariantList monitored READ monitored NOTIFY changed)
+    QVariantList monitored() const;
+    Q_INVOKABLE bool setMonitored(const QString& trackId, bool on);
+    // Input choice: the node each input stream links to (empty: wait for an
+    // external link). Changing one reopens that stream if it is open.
+    Q_PROPERTY(QString inputTarget READ inputTarget NOTIFY changed)
+    Q_PROPERTY(QString midiInputTarget READ midiInputTarget NOTIFY changed)
+    QString inputTarget() const { return QString::fromStdString(input_target_); }
+    QString midiInputTarget() const { return QString::fromStdString(midi_input_target_); }
+    Q_INVOKABLE bool setInputTarget(const QString& node);
+    Q_INVOKABLE bool setMidiInputTarget(const QString& node);
     bool recording() const { return !takes_.empty() || !midi_takes_.empty(); }
     // Preview only: feeds one MIDI message to the armed MIDI tracks' takes at
     // the simulated clock, standing in for the MIDI input in tests.
@@ -393,10 +406,21 @@ private:
     struct Take { fl_live::TrackId track; std::unique_ptr<fl_live::CaptureTake> take; std::optional<std::int64_t> transport_origin; };
     std::vector<Take> takes_;
     // Fans one input block out to every take; fixed for a recording's life.
+    std::string input_target_ = config_.input_target, midi_input_target_ = config_.midi_input_target;
+    bool chooseInput(std::string& target, const QString& node, bool midi);
+    fl_live::InputMonitor monitor_;
+    std::set<std::uint64_t> monitored_;
+    std::uint64_t monitor_version_ = 0;
+    struct { const void* content = nullptr; const void* identities = nullptr; std::uint64_t version = ~std::uint64_t{0}; } monitor_key_;
+    void updateMonitor();
     struct Fanout final : fl_live::CaptureSink {
         std::vector<fl_live::CaptureTake*> takes;
         void cycle(std::uint64_t frame, std::uint32_t frames) noexcept override { for (auto* t : takes) t->cycle(frame, frames); }
-        void capture(std::span<const float> interleaved) noexcept override { for (auto* t : takes) t->capture(interleaved); }
+        fl_live::InputMonitor* monitor = nullptr;
+        void capture(std::span<const float> interleaved) noexcept override {
+            if (monitor) monitor->capture(interleaved);
+            for (auto* t : takes) t->capture(interleaved);
+        }
     } fanout_;
     std::unique_ptr<fl_live::PipeWireCapture> input_;
     QString ack_report_; // shown instead of the generic acknowledgement once the stop renders

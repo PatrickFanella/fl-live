@@ -23,7 +23,7 @@ static ProjectSettings readAuthoredSettings(const QString& path) { const auto p 
 // output in the parent fixture. This is not native input or hardware QA.
 int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
-    if (argc != 2 && argc != 3 && !(argc == 5 && std::string_view(argv[2]) == "--record-loopback") && !(argc == 4 && (std::string_view(argv[2]) == "--record" || std::string_view(argv[2]) == "--record-loss" || std::string_view(argv[2]) == "--record-midi" || std::string_view(argv[2]) == "--record-placement"))) return 2;
+    if (argc != 2 && argc != 3 && !(argc == 5 && std::string_view(argv[2]) == "--record-loopback") && !(argc == 4 && (std::string_view(argv[2]) == "--record" || std::string_view(argv[2]) == "--record-loss" || std::string_view(argv[2]) == "--record-midi" || std::string_view(argv[2]) == "--record-placement" || std::string_view(argv[2]) == "--monitor"))) return 2;
     try {
         fl_live::PipeWireConfig config;
         config.remote = argv[1]; config.node_group = "pipewire.test";
@@ -51,6 +51,18 @@ int main(int argc, char** argv) {
                                {"file", files.size() == 1 ? project.filePath("recordings/" + files[0]) : QString()},
                                {"selected_is_take", session.selectedClips()[0].toString() != clicks}};
             std::cout << QJsonDocument(result).toJson(QJsonDocument::Compact).toStdString() << std::endl;
+            return 0;
+        }
+        if (argc == 4 && std::string_view(argv[2]) == "--monitor") {
+            // Input monitoring (#43): the armed audio track with Monitor on,
+            // level 50% and pan -50, plays the input through the output.
+            const auto track = session.trackIds()[0].toString();
+            session.setLevel(0, 50);
+            if (!session.setInputTarget("fixture-source") || !session.setPan(track, -50) || !session.setArmed(track, true) || !session.setMonitored(track, true)) return 1;
+            std::cout << "{\"ready\": true}" << std::endl;
+            std::string line;
+            while (std::getline(std::cin, line) && line != "stop") {}
+            std::cout << "{\"done\": true}" << std::endl;
             return 0;
         }
         if (argc == 4 && std::string_view(argv[2]) == "--record-placement") {

@@ -1,5 +1,6 @@
 #pragma once
 #include "fl_live/capture.hpp"
+#include "fl_live/input_monitor.hpp"
 #include "fl_live/controller.hpp"
 #include <memory>
 #include <string>
@@ -39,6 +40,9 @@ public:
     PipeWireBackend(const PipeWireBackend&) = delete;
     PipeWireBackend& operator=(const PipeWireBackend&) = delete;
     [[nodiscard]] BackendStatus status() const noexcept;
+    // Input monitoring: the output callback mixes `monitor` in after the
+    // engine renders. Returns once the data thread has left the previous one.
+    void setMonitor(InputMonitor* monitor) noexcept;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
