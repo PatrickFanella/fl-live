@@ -416,6 +416,7 @@ QString Session::editName(const HistoryEntry& entry) {
     case EditKind::audio_relink: return QString("track %1 audio relink").arg(entry.index+1);
     case EditKind::assets_collect: return "audio collection";
     case EditKind::automation: return QString("track %1 automation").arg(entry.index+1);
+    case EditKind::synth: return "synth "+QString::fromLatin1(entry.index==0 ? "waveform" : entry.index==1 ? "attack" : entry.index==2 ? "decay" : entry.index==3 ? "sustain" : "release");
     default: return {};
     }
 }
@@ -1237,4 +1238,27 @@ bool Session::clearAutomation(const QString& trackId, const QString& parameter) 
         edit(next, EditKind::automation, static_cast<int>(*index));
         return true;
     } catch (const std::exception& error) { message_ = QString::fromUtf8(error.what()); emit changed(); return false; }
+}
+QVariantList Session::synth() const {
+    SynthSettings value;
+    const auto found=std::find_if(content_->clips.begin(),content_->clips.end(),[&](const auto& c){return c.clip==pattern_clip_;});
+    if(pattern_clip_.value && found!=content_->clips.end())value=found->synth;
+    return {value.waveform,value.attack_ms,value.decay_ms,value.sustain,value.release_ms};
+}
+bool Session::setSynth(const QString& field,int value) {
+    if(!editable())return false;
+    try {
+        static const QStringList fields{"waveform","attack","decay","sustain","release"};
+        const auto index=fields.indexOf(field);
+        if(index<0)throw std::invalid_argument("Unknown synth setting");
+        if(patternTrackIndex()<0)throw std::invalid_argument("Add or choose a MIDI track to edit its synth");
+        auto next=*content_;
+        auto& clip=*std::find_if(next.clips.begin(),next.clips.end(),[&](const auto& c){return c.clip==pattern_clip_;});
+        int* targets[]={&clip.synth.waveform,&clip.synth.attack_ms,&clip.synth.decay_ms,&clip.synth.sustain,&clip.synth.release_ms};
+        *targets[index]=value;
+        validateSynth(clip.synth);
+        if(next==*content_)return true;
+        edit(next,EditKind::synth,static_cast<int>(index));
+        return *content_==next;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }

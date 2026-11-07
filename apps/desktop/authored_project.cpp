@@ -202,6 +202,9 @@ void validateContent(const SessionContent& content,const fl_live::DocumentSnapsh
         if(std::count_if(content.clips.begin(),content.clips.end(),[&](const auto& c){return c.clip==clip.id;})!=1)
             throw std::invalid_argument("Duplicate clip content");
         validatePattern(value.pattern);
+        validateSynth(value.synth);
+        if(trackOf(identities,clip.id).kind!=fl_live::TrackKind::midi && value.synth!=SynthSettings{})
+            throw std::invalid_argument("Only MIDI clips have synth settings");
         const bool wav=value.audio==AudioSource::wav;
         if(value.audio!=AudioSource::pulse && value.audio!=AudioSource::empty && !wav)throw std::invalid_argument("Unknown audio source");
         if(wav!=!value.asset.isEmpty() || (!value.asset.isEmpty() && (!QDir::isAbsolutePath(value.asset) || value.asset.size()>asset_path_limit)))
@@ -220,7 +223,7 @@ std::vector<fl_live::DocumentClipSource> contentSources(const SessionContent& co
     for(const auto& clip:identities.clips) {
         const auto& value=clipContent(content,clip.id);
         const auto kind=std::find_if(identities.tracks.begin(),identities.tracks.end(),[&](const auto& t){return t.id==clip.track;})->kind;
-        if(kind==fl_live::TrackKind::midi)result.push_back({clip.id,patternClip(value.pattern,content.tempo)});
+        if(kind==fl_live::TrackKind::midi)result.push_back({clip.id,patternClip(value.pattern,content.tempo,value.synth)});
         else if(value.audio==AudioSource::pulse)result.push_back({clip.id,pulseClip(content.tempo)});
         else if(value.media) {
             // Copy only the selected source frames; the engine loops or stops
@@ -274,7 +277,14 @@ QByteArray encodeAuthoredProject(const AuthoredProject& project,const QString& b
     for(const auto& clip:project.identities.clips) {
         const auto& value=clipContent(project.content,clip.id);
         if(trackOf(project.identities,clip.id).kind==fl_live::TrackKind::midi)
-            clips.append(QJsonObject{{"id",idText(clip.id.value)},{"pattern",encodePattern(value.pattern)}});
+        {
+            QJsonObject object{{"id",idText(clip.id.value)},{"pattern",encodePattern(value.pattern)}};
+            static const char* waves[]={"sine","triangle","square","saw"};
+            if(value.synth!=SynthSettings{})
+                object.insert("synth",QJsonObject{{"waveform",waves[value.synth.waveform]},{"attack_ms",value.synth.attack_ms},
+                    {"decay_ms",value.synth.decay_ms},{"sustain",value.synth.sustain},{"release_ms",value.synth.release_ms}});
+            clips.append(object);
+        }
         else if(value.audio==AudioSource::wav) {
             QJsonObject object{{"id",idText(clip.id.value)},{"audio","wav"},{"path",value.asset}};
             if(ranges)object.insert("range",QJsonObject{{"start",static_cast<double>(value.range_start)},
@@ -286,9 +296,10 @@ QByteArray encodeAuthoredProject(const AuthoredProject& project,const QString& b
     }
     const auto session=QJsonDocument::fromJson(fl_live::encodeDocumentMetadata(project.identities)).object();
     const bool automated=!project.content.automation.empty();
+    const bool synths=std::any_of(project.content.clips.begin(),project.content.clips.end(),[](const auto& c){return c.synth!=SynthSettings{};});
     QJsonObject root{{"format","fl-live-project"},{"version",4},
         {"required_features",[&]{QJsonArray f{"general-session-v1"};if(ranges)f.append("clip-ranges-v1");if(relative)f.append("asset-relative-v1");
-            if(automated)f.append("automation-v1");return f;}()},
+            if(automated)f.append("automation-v1");if(synths)f.append("synth-v1");return f;}()},
         {"tempo",project.content.tempo},
         {"session",session},{"tracks",tracks},{"clips",clips}};
     if(automated) {
@@ -313,12 +324,14 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
     if(!root["version"].isDouble() || root["version"].toDouble()!=4)return decodeTemplate(bytes,root);
     const auto features=root["required_features"].toArray();
     const bool ranges=features.contains("clip-ranges-v1"),relativePaths=features.contains("asset-relative-v1"),automated=features.contains("automation-v1");
+    const bool synths=features.contains("synth-v1");
     const auto v4=automated ? exact(root,{"format","version","required_features","tempo","session","tracks","clips","automation"})
                             : exact(root,{"format","version","required_features","tempo","session","tracks","clips"});
     QJsonArray canonical{"general-session-v1"};
     if(ranges)canonical.append("clip-ranges-v1");
     if(relativePaths)canonical.append("asset-relative-v1");
     if(automated)canonical.append("automation-v1");
+    if(synths)canonical.append("synth-v1");
     if(features!=canonical)throw std::invalid_argument("Unsupported required project feature");
     if(!v4["session"].isObject())throw std::invalid_argument("Project requires a session object");
     AuthoredProject project;
@@ -338,8 +351,16 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
         const auto object=value.toObject();
         ClipContent clip;
         if(object.contains("pattern")) {
-            const auto fields=exact(value,{"id","pattern"});
+            const bool hasSynth=synths && object.contains("synth");
+            const auto fields=hasSynth ? exact(value,{"id","pattern","synth"}) : exact(value,{"id","pattern"});
             clip.clip=fl_live::ClipId{idValue(fields["id"])};clip.pattern=decodePattern(fields["pattern"]);
+            if(hasSynth) {
+                const auto synth=exact(fields["synth"],{"waveform","attack_ms","decay_ms","sustain","release_ms"});
+                const QStringList waves{"sine","triangle","square","saw"};
+                if(!synth["waveform"].isString() || !waves.contains(synth["waveform"].toString()))throw std::invalid_argument("Unsupported waveform");
+                clip.synth={static_cast<int>(waves.indexOf(synth["waveform"].toString())),integer(synth["attack_ms"],0,10000),
+                    integer(synth["decay_ms"],0,10000),integer(synth["sustain"],0,100),integer(synth["release_ms"],0,10000)};
+            }
             if(trackOf(project.identities,clip.clip).kind!=fl_live::TrackKind::midi)throw std::invalid_argument("Pattern on an audio clip");
         } else {
             const auto source=object["audio"].toString();

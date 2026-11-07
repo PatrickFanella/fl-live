@@ -19,7 +19,7 @@ This page separates what has been measured from what is planned or unqualified. 
 | Mix | Stereo mix, balance-law pan, mute/solo, mono downmix | Offline and private graph: [stereo output](../validation/stereo-output.json), [track mixer](../validation/track-mixer.json) | Sends, buses, effects, latency compensation (#92) |
 | Tracks | Up to 64 audio/MIDI tracks, one clip each; add, duplicate, delete, rename with Undo | Offscreen UI: [general tracks](../validation/general-session-tracks.json), [D2 journey](../validation/d2-session-journey.json) | More than one clip per track; Arrangement view (#91) |
 | Scenes | Up to 256 scenes; create, copy, order, delete; Immediate and One bar launch/stop | Offscreen UI: [scene management](../validation/scene-management.json), [copy and order](../validation/scene-copy-order.json) | Follow actions, scene tempo |
-| MIDI | 1–16 quarter-note steps per MIDI clip with pitch, velocity and gate; a built-in sine instrument | Offline and offscreen UI: [step editor](../validation/midi-step-editor.json) | Piano roll and free note positions (#35, #36), a usable synth or sampler (#40), MIDI input |
+| MIDI | 1–16 quarter-note steps per MIDI clip with pitch, velocity and gate; a [built-in synth](instrument.md) with four waveforms, ADSR and a 16-voice overload policy | Offline and offscreen UI: [step editor](../validation/midi-step-editor.json), [synth](../validation/builtin-synth.json) | Piano roll and free note positions (#35, #36), filters, band-limited oscillators, a sampler, MIDI input |
 | Audio files | WAV only: 8/16/24/32-bit PCM or 32/64-bit float, mono or stereo, 48 kHz; source/loop ranges; waveform view | Offline and offscreen UI: [WAV import](../validation/wav-import.json), [clip ranges](../validation/clip-ranges.json) | Resampling, warping, other formats, other session rates |
 | Asset references | Absolute path plus project-relative recovery; Relink; Collect into the project folder; never substitutes or overwrites | Offscreen UI: [asset policy](../validation/asset-relink-collect.json) | Search for moved files by content |
 | Projects | Version 4 JSON; versions 1–3 migrate; synced atomic saves; fault-injected and killed saves keep a complete file | Offline: [atomic saves](../validation/atomic-save-faults.json) | Power-loss and network-filesystem behavior |
@@ -36,6 +36,6 @@ This page separates what has been measured from what is planned or unqualified. 
 ## Known gaps that affect everyday use
 
 - Edits are made while stopped; changes during playback are #54.
-- The built-in instrument is a test tone without an envelope, not a production synth.
+- The built-in synth is basic: naive oscillators and a linear envelope, no filter.
 - Imported audio must already be at 48 kHz.
 - No license has been chosen, so nothing here is a release.

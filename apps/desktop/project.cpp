@@ -63,6 +63,19 @@ fl_live::MidiClip patternClip(const StepPattern& pattern, int tempo) {
     }
     return midi;
 }
+void validateSynth(const SynthSettings& s) {
+    if (s.waveform < 0 || s.waveform > 3) throw std::invalid_argument("Waveform must be sine, triangle, square or saw");
+    for (int ms : {s.attack_ms, s.decay_ms, s.release_ms})
+        if (ms < 0 || ms > 10000) throw std::invalid_argument("Envelope times must be 0 to 10000 ms");
+    if (s.sustain < 0 || s.sustain > 100) throw std::invalid_argument("Sustain must be 0 to 100 percent");
+}
+fl_live::MidiClip patternClip(const StepPattern& pattern, int tempo, const SynthSettings& synth) {
+    validateSynth(synth);
+    auto clip = patternClip(pattern, tempo);
+    clip.instrument = {static_cast<fl_live::Waveform>(synth.waveform), static_cast<fl_live::Frame>(synth.attack_ms) * 48,
+        static_cast<fl_live::Frame>(synth.decay_ms) * 48, static_cast<float>(synth.sustain) / 100, static_cast<fl_live::Frame>(synth.release_ms) * 48};
+    return clip;
+}
 fl_live::SessionPlan prepareProject(const ProjectSettings& s) {
     validate(s);
     return {48000, static_cast<std::uint32_t>(s.tempo * 1000),

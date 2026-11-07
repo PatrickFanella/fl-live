@@ -1,0 +1,50 @@
+{
+  "verified_at": "2026-11-07T09:23:52.218350+00:00",
+  "base": "PR #129 head",
+  "issues": [
+    40
+  ],
+  "scope": "Built-in synth: waveforms, linear ADSR, voice overload policy, persistence and UI",
+  "environment": "Kvant, pinned CI image, docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 21,
+      "total": 21,
+      "note": "One earlier run had a single failure that did not reproduce on rerun (output not captured)"
+    },
+    "release": {
+      "passed": 7,
+      "total": 7
+    },
+    "engine-only": {
+      "passed": 5,
+      "total": 5
+    },
+    "pipewire-sanitize": {
+      "passed": 15,
+      "total": 15
+    },
+    "document-io-sanitize": {
+      "passed": 8,
+      "total": 8
+    }
+  },
+  "verified_behaviors": [
+    "Independent oscillator x envelope fixture (A4, A/D/S/R) within 2e-6 at blocks 1/64/257/512; defaults reproduce the original sine exactly",
+    "Velocity scales linearly; square/saw/triangle shapes at known phases; release continues across the loop boundary",
+    "16 voices under overload with quietest-releasing/oldest stealing; stop clears releasing voices; zero intercepted allocations",
+    "synth-v1 persistence with exact fields; malformed settings and synth on audio clips refused",
+    "Actual QML edits, Undo/Redo, Save/Open, duplicate copies the synth; float export matches an independent triangle x envelope render"
+  ],
+  "source_sha256": {
+    "include/fl_live/engine.hpp": "a6d07aea33d684b44fcf431b0a5fe2f57c7e278aece6d0ac837126b6e6b6429f",
+    "src/engine.cpp": "f1fe21f85418a2660bd438c9f74727664beea5bacfc5c81dba117cca4bb261fa",
+    "apps/desktop/project.cpp": "5d6c0dd5aa4ee23879d60833df3bbffe992de1989f761eab0e5c479aba316cf2",
+    "apps/desktop/authored_project.cpp": "1918cc32c7bb4980f402483bbabb7066f86049f407014dcfc4c1f8eee35a55fb",
+    "apps/desktop/session.cpp": "bac7c7bfcaa922252113331ead4281f092ee6a30fc7cbbdc10c29c9bf97900ea",
+    "apps/desktop/Main.qml": "96ab2ba1f17cceace1f37ba8ab007921b5104744e4a6102e58ccc9691aa35115",
+    "tests/engine_tests.cpp": "af566401b16647f02c02fa27d066e8df54fe031a1a49433608a6c1390df2ad73",
+    "tests/desktop_tests.cpp": "b383238acb2745be23248b0f054c4378715781b98ee808bfc65b25cac2fae2b6"
+  },
+  "limits": "Naive aliasing oscillators, no filter or modulation; offline and offscreen checks only."
+}

@@ -35,6 +35,17 @@ void validatePattern(const StepPattern& pattern);
 // whole BPM; every boundary is rounded upward independently.
 fl_live::AudioClip pulseClip(int tempo);
 fl_live::MidiClip patternClip(const StepPattern& pattern, int tempo);
+// Built-in synth settings of a MIDI clip in user units; see engine Instrument.
+struct SynthSettings {
+    int waveform = 0;   // 0 sine, 1 triangle, 2 square, 3 saw
+    int attack_ms = 0;  // 0..10000
+    int decay_ms = 0;   // 0..10000
+    int sustain = 100;  // percent
+    int release_ms = 0; // 0..10000
+    bool operator==(const SynthSettings&) const = default;
+};
+void validateSynth(const SynthSettings& synth);
+fl_live::MidiClip patternClip(const StepPattern& pattern, int tempo, const SynthSettings& synth);
 fl_live::SessionPlan prepareProject(const ProjectSettings& settings);
 ProjectSettings readProject(const QString& path);
 void writeProject(const QString& path, const ProjectSettings& settings);

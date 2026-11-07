@@ -63,6 +63,7 @@ class Session final : public QObject {
     Q_PROPERTY(QVariantList trackKinds READ trackKinds NOTIFY changed)
     Q_PROPERTY(QVariantList trackSources READ trackSources NOTIFY changed)
     Q_PROPERTY(int patternTrackIndex READ patternTrackIndex NOTIFY changed)
+    Q_PROPERTY(QVariantList synth READ synth NOTIFY changed)
     Q_PROPERTY(bool importing READ importing NOTIFY changed)
     Q_PROPERTY(QVariantList clipFrames READ clipFrames NOTIFY changed)
     Q_PROPERTY(QVariantList recoveryCandidates READ recoveryCandidates NOTIFY recoveryChanged)
@@ -108,6 +109,10 @@ public:
     // The step editor shows one MIDI clip; choose it by track. -1 when none.
     Q_INVOKABLE bool editPattern(const QString& trackId);
     int patternTrackIndex() const;
+    // Built-in synth of the MIDI clip in the step editor:
+    // [waveform, attack_ms, decay_ms, sustain, release_ms]. Stopped edit, one Undo step.
+    QVariantList synth() const;
+    Q_INVOKABLE bool setSynth(const QString& field, int value);
     // WAV decoding runs on a worker; the result is applied as one Undo step
     // once transport is stopped. One import at a time.
     Q_INVOKABLE bool importAudio(const QString& trackId, const QString& path);
@@ -239,7 +244,7 @@ private:
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
     enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete, scene_copy, scene_order, track_pan, track_mute, track_solo,
-        track_create, track_duplicate, track_delete, audio_import, clip_range, audio_relink, assets_collect, automation };
+        track_create, track_duplicate, track_delete, audio_import, clip_range, audio_relink, assets_collect, automation, synth };
     struct HistoryEntry {
         Content content;
         Identities identities;

@@ -36,10 +36,24 @@ struct Note {
     std::uint8_t pitch;
     float velocity;
 };
+// Built-in instrument of a MIDI clip. Naive (aliasing) oscillators; linear
+// envelope segments in frames: attack 0->1, decay 1->sustain, hold at
+// sustain until the note ends, then release from the current level to 0.
+// Defaults reproduce the original fixed sine: no attack/decay/release.
+enum class Waveform : std::uint8_t { sine, triangle, square, saw };
+struct Instrument {
+    Waveform waveform = Waveform::sine;
+    Frame attack = 0;
+    Frame decay = 0;
+    float sustain = 1.0F;
+    Frame release = 0;
+    bool operator==(const Instrument&) const = default;
+};
 struct MidiClip {
     Frame length;
     std::vector<Note> notes; // ordered by start; half-open durations
     bool loop = true;
+    Instrument instrument{};
 };
 using Clip = std::variant<AudioClip, MidiClip>;
 // Automation breakpoint at a transport frame (frames since the song start).
@@ -96,6 +110,7 @@ public:
     static constexpr std::size_t voices_per_track = 16;
     static constexpr std::size_t max_output_channels = 2;
     static constexpr std::size_t automation_points_capacity = 4096;
+    static constexpr Frame envelope_frame_limit = 480000; // each segment, 10 s at 48 kHz
     // Declared interpolation, shared by rendering and tests.
     [[nodiscard]] static float automationValue(std::span<const AutomationPoint> points, Frame at, std::size_t& cursor) noexcept;
     explicit Engine(const SessionPlan& plan);
@@ -118,7 +133,18 @@ public:
     [[nodiscard]] std::size_t active_voices() const noexcept;
     [[nodiscard]] std::array<TrackStatus, track_capacity> track_statuses() const noexcept;
 private:
-    struct Voice { Frame remaining = 0; double phase = 0; double step = 0; float level = 0; };
+    struct Voice {
+        Frame remaining = 0;     // held frames left before release
+        double phase = 0;
+        double step = 0;
+        float level = 0;         // velocity scale
+        Frame age = 0;           // frames since note start
+        Frame released = 0;      // frames into the release
+        float release_from = 0;  // envelope level when the release began
+        bool releasing = false;
+        bool active = false;
+    };
+    [[nodiscard]] static float heldEnvelope(const Instrument& instrument, Frame age) noexcept;
     struct Runtime {
         std::optional<std::size_t> clip;
         Frame launched = 0;
