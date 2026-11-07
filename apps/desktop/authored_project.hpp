@@ -12,6 +12,7 @@ enum class AudioSource { pulse, empty, wav };
 struct ClipContent {
     fl_live::ClipId clip;
     StepPattern pattern;                // MIDI clips
+    SynthSettings synth;                // MIDI clips
     AudioSource audio = AudioSource::pulse; // audio clips
     QString asset;                      // absolute path, audio == wav only
     // Decoded asset; not persisted. Null means missing or not yet loaded,

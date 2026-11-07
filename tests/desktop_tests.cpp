@@ -1438,6 +1438,47 @@ private slots:
         const auto w=readWav(directory.filePath("lane.wav"));const auto source=pulseClip(120);
         for(std::size_t f=1;f<96000;f+=3001)QCOMPARE(w.samples[2*f],static_cast<float>(static_cast<double>(f)/96000.0)*source.samples[f%source.samples.size()]);
     }
+    void qmlSynthEditing() {
+        QTemporaryDir directory;
+        Session session;session.setTempo(120);QVERIFY(session.setMute(session.trackIds()[0].toString(),true));
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* r,const QString& name)->QQuickItem* {
+            if(r->objectName()==name && r->isVisible())return r;
+            for(auto* c:r->childItems())if(auto* m=findItem(c,name))return m;
+            return nullptr;
+        };
+        auto type=[&](const char* name,const char* text){auto* item=findItem(window->contentItem(),name);QVERIFY2(item,name);item->forceActiveFocus();
+            QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier);for(const char* c=text;*c;++c)QTest::keyClick(window,*c);QTest::keyClick(window,Qt::Key_Return);};
+        auto* wave=findItem(window->contentItem(),"synthWaveform");QVERIFY(wave);wave->forceActiveFocus();QTest::keyClick(window,Qt::Key_Down);
+        QTRY_COMPARE(session.synth()[0].toInt(),1);QCOMPARE(session.undoText(),QString("Undo synth waveform"));
+        type("synthAttack","100");type("synthSustain","50");type("synthRelease","200");
+        QCOMPARE(session.synth(),(QVariantList{1,100,0,50,200}));QCOMPARE(session.undoText(),QString("Undo synth release"));
+        QVERIFY(!session.setSynth("sustain",101));QVERIFY(!session.setSynth("volume",1));QCOMPARE(session.undoText(),QString("Undo synth release"));
+        session.undo();QCOMPARE(session.synth()[4].toInt(),0);session.redo();
+        QVERIFY(window->grabWindow().save("desktop-synth.png"));
+        // Export: the first step (C4, gate 75%) through triangle and the envelope.
+        QVERIFY(session.exportAudio(directory.filePath("synth.wav"),1,1,0,1,"float32"));QTRY_VERIFY(!session.exporting());
+        const auto w=readWav(directory.filePath("synth.wav"));
+        const double step=440.0*std::exp2((60.0-69.0)/12.0)/48000.0;double phase=0,worst=0;
+        for(std::size_t t=0;t<24000;++t) {
+            const double env=t<4800 ? static_cast<double>(static_cast<float>(t)/4800.0F) : t<18000 ? 0.5 : 0.5*(1-static_cast<double>(t-18000)/9600.0);
+            // Velocity 70% (x0.1 instrument scale), level 25%; centered, so mono equals each channel.
+            const double expected=(4*std::abs(phase-0.5)-1)*0.07*env*0.25;
+            worst=std::max(worst,std::abs(w.samples[t]-expected));
+            phase+=step;phase-=std::floor(phase);
+        }
+        QVERIFY2(worst<1e-5,qPrintable(QString("synth export differs by %1").arg(worst)));
+        // Save/Open keeps the synth; another MIDI track has its own default synth.
+        QVERIFY(session.saveProject(directory.filePath("synth.json")));
+        {QFile f(directory.filePath("synth.json"));QVERIFY(f.open(QIODevice::ReadOnly));QVERIFY(f.readAll().contains("synth-v1"));}
+        Session reopened;QVERIFY(reopened.loadProject(directory.filePath("synth.json")));QCOMPARE(reopened.synth(),(QVariantList{1,100,0,50,200}));
+        QVERIFY(reopened.addTrack("midi"));QVERIFY(reopened.editPattern(reopened.trackIds()[2].toString()));
+        QCOMPARE(reopened.synth(),(QVariantList{0,0,0,100,0}));
+        QVERIFY(reopened.duplicateTrack(reopened.trackIds()[1].toString()));QVERIFY(reopened.editPattern(reopened.trackIds()[3].toString()));
+        QCOMPARE(reopened.synth(),(QVariantList{1,100,0,50,200})); // duplicates copy the synth
+    }
     void qmlMixerInput() {
         Session session;
         QQmlApplicationEngine engine;

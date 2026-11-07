@@ -53,6 +53,11 @@ void validate(const SessionPlan& plan) {
                 const auto& midi = std::get<MidiClip>(clip);
                 if (midi.length == 0 || midi.notes.size() > Engine::notes_per_clip_capacity)
                     throw std::invalid_argument("invalid MIDI length or note count");
+                const auto& in = midi.instrument;
+                if (static_cast<int>(in.waveform) > static_cast<int>(Waveform::saw) || in.attack > Engine::envelope_frame_limit ||
+                    in.decay > Engine::envelope_frame_limit || in.release > Engine::envelope_frame_limit ||
+                    !std::isfinite(in.sustain) || in.sustain < 0 || in.sustain > 1)
+                    throw std::invalid_argument("invalid instrument waveform or envelope");
                 Frame previous = 0;
                 for (const auto& note : midi.notes) {
                     if (note.start < previous || note.start >= midi.length || note.duration == 0 ||
@@ -167,6 +172,13 @@ float Engine::automationValue(std::span<const AutomationPoint> points, Frame at,
     return static_cast<float>(static_cast<double>(a.value) + (static_cast<double>(b.value) - static_cast<double>(a.value)) * t);
 }
 
+float Engine::heldEnvelope(const Instrument& in, Frame age) noexcept {
+    if (age < in.attack) return static_cast<float>(age) / static_cast<float>(in.attack);
+    if (age < in.attack + in.decay)
+        return 1 - (1 - in.sustain) * static_cast<float>(age - in.attack) / static_cast<float>(in.decay);
+    return in.sustain;
+}
+
 Engine::StereoSample Engine::render_track(std::size_t index) noexcept {
     auto& state = runtime_[index];
     if (!state.clip) return {};
@@ -188,21 +200,51 @@ Engine::StereoSample Engine::render_track(std::size_t index) noexcept {
     }
     const auto& midi = std::get<MidiClip>(clip);
     if (!midi.loop && age >= midi.length) { state = Runtime{}; return {}; }
+    const auto& instrument = midi.instrument;
     const auto local = age % midi.length;
-    if (local == 0) { state.next_note = 0; state.voices = {}; }
+    // Loop restart resets the note cursor; sounding voices keep their own
+    // durations and releases. Stop and replacement still clear every voice.
+    if (local == 0) state.next_note = 0;
     while (state.next_note < midi.notes.size() && midi.notes[state.next_note].start == local) {
         const auto& note = midi.notes[state.next_note++];
-        auto it = std::find_if(state.voices.begin(), state.voices.end(), [](const Voice& v) { return v.remaining == 0; });
-        // Validated plans never exceed the fixed voice capacity.
-        if (it != state.voices.end()) *it = Voice{note.duration, 0, steps_[note.pitch], note.velocity * 0.1F};
+        // Overload policy: a free voice; else the quietest releasing voice;
+        // else the oldest voice. Ties take the lowest index.
+        auto it = std::find_if(state.voices.begin(), state.voices.end(), [](const Voice& v) { return !v.active; });
+        if (it == state.voices.end()) {
+            float quietest = 2;
+            for (auto candidate = state.voices.begin(); candidate != state.voices.end(); ++candidate) {
+                if (!candidate->releasing) continue;
+                const float now = candidate->release_from * (1 - static_cast<float>(candidate->released) / static_cast<float>(instrument.release));
+                if (now < quietest) { quietest = now; it = candidate; }
+            }
+        }
+        if (it == state.voices.end())
+            it = std::max_element(state.voices.begin(), state.voices.end(), [](const Voice& a, const Voice& b) { return a.age < b.age; });
+        *it = Voice{note.duration, 0, steps_[note.pitch], note.velocity * 0.1F, 0, 0, 0, false, true};
     }
     float value = 0;
     for (auto& voice : state.voices) {
-        if (!voice.remaining) continue;
-        value += static_cast<float>(std::sin(voice.phase * 2.0 * std::numbers::pi)) * voice.level;
+        if (!voice.active) continue;
+        double osc = 0;
+        switch (instrument.waveform) {
+        case Waveform::sine: osc = std::sin(voice.phase * 2.0 * std::numbers::pi); break;
+        case Waveform::triangle: osc = 4.0 * std::abs(voice.phase - 0.5) - 1.0; break;
+        case Waveform::square: osc = voice.phase < 0.5 ? 1.0 : -1.0; break;
+        case Waveform::saw: osc = 2.0 * voice.phase - 1.0; break;
+        }
+        const float envelope = voice.releasing
+            ? voice.release_from * (1 - static_cast<float>(voice.released) / static_cast<float>(instrument.release))
+            : heldEnvelope(instrument, voice.age);
+        value += static_cast<float>(osc) * voice.level * envelope;
         voice.phase += voice.step;
         voice.phase -= std::floor(voice.phase);
-        --voice.remaining;
+        ++voice.age;
+        if (voice.releasing) {
+            if (++voice.released >= instrument.release) voice.active = false;
+        } else if (--voice.remaining == 0) {
+            if (instrument.release == 0) voice.active = false;
+            else { voice.releasing = true; voice.released = 0; voice.release_from = heldEnvelope(instrument, voice.age); }
+        }
     }
     return {left_gain * value, right_gain * value};
 }
@@ -261,7 +303,7 @@ std::size_t Engine::active_voices() const noexcept {
     std::size_t count = 0;
     for (const auto& state : runtime_)
         count += static_cast<std::size_t>(std::count_if(state.voices.begin(), state.voices.end(),
-            [](const Voice& v) { return v.remaining != 0; }));
+            [](const Voice& v) { return v.active; }));
     return count;
 }
 } // namespace fl_live

@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <numbers>
+#include <tuple>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -315,6 +317,65 @@ void automation_contract() {
     for (std::size_t i = 0; i < bad.tracks[0].pan_automation.size(); ++i) bad.tracks[0].pan_automation[i].at = i;
     invalid([&] { Engine e(bad); });
 }
+// Independent statement of the declared envelope (linear A/D/S/R in frames).
+double expected_envelope(Frame a, Frame d, double sustain, Frame r, Frame held, Frame t) {
+    const auto hold = [&](Frame x) { return x < a ? static_cast<double>(static_cast<float>(x) / static_cast<float>(a))
+        : x < a + d ? 1 - (1 - sustain) * static_cast<double>(x - a) / static_cast<double>(d) : sustain; };
+    if (t < held) return hold(t);
+    if (r == 0 || t >= held + r) return 0;
+    return hold(held) * (1 - static_cast<double>(t - held) / static_cast<double>(r));
+}
+void instrument_contract() {
+    // One A4 note, velocity 0.8, held 4000 frames, in a 12000-frame clip.
+    SessionPlan plan;
+    Instrument in{Waveform::sine, 480, 960, 0.5F, 1200};
+    plan.tracks.push_back(Track{1, {MidiClip{12000, {{0, 4000, 69, 0.8F}}, true, in}}});
+    const std::array launch{Command{CommandKind::launch, 0, 0, 0}};
+    const auto reference = render_channels(plan, launch, 1, 6000, 1);
+    for (auto block : {64U, 257U, 512U}) require(render_channels(plan, launch, block, 6000, 1) == reference, "instrument differs by block size");
+    double worst = 0;
+    for (Frame t = 0; t < 6000; ++t) {
+        const double env = expected_envelope(480, 960, 0.5, 1200, 4000, t);
+        const double expected = std::sin(2 * std::numbers::pi * 440.0 / 48000.0 * static_cast<double>(t)) * 0.08 * env;
+        worst = std::max(worst, std::abs(reference[t] - expected));
+    }
+    require(worst < 2e-6, "envelope or pitch differs from the independent fixture");
+    require(reference[5200] == 0 && reference[5999] == 0, "release must end at note end plus release");
+    // Velocity scales linearly; waveforms follow their declared shapes.
+    auto quiet = plan; std::get<MidiClip>(quiet.tracks[0].clips[0]).notes[0].velocity = 0.4F;
+    const auto half = render_channels(quiet, launch, 257, 6000, 1);
+    for (Frame t = 0; t < 6000; t += 37) require(std::abs(half[t] - reference[t] / 2) < 1e-7, "velocity must scale linearly");
+    for (auto [wave, at, value] : {std::tuple{Waveform::square, Frame{10}, 0.08F}, std::tuple{Waveform::square, Frame{70}, -0.08F},
+                                   std::tuple{Waveform::saw, Frame{0}, -0.08F}, std::tuple{Waveform::triangle, Frame{0}, 0.08F}}) {
+        auto shaped = plan; auto& clip = std::get<MidiClip>(shaped.tracks[0].clips[0]);
+        clip.instrument = Instrument{wave, 0, 0, 1, 0};
+        const auto out = render_channels(shaped, launch, 64, 200, 1);
+        require(std::abs(out[at] - value) < 1e-6, "waveform shape");
+    }
+    // A release crosses the loop boundary instead of being cut.
+    auto looping = plan; auto& clip = std::get<MidiClip>(looping.tracks[0].clips[0]);
+    clip.length = 4500; clip.notes[0].duration = 4400;
+    const auto wrap = render_channels(looping, launch, 257, 4700, 1);
+    require(wrap[4550] != 0, "release tail must continue across the loop boundary");
+    // Overload: 16 sustained notes plus releasing ones; a new note steals the
+    // quietest releasing voice, never more than 16 voices sound.
+    SessionPlan busy;
+    MidiClip crowd{20000, {}, true, Instrument{Waveform::sine, 0, 0, 1, 8000}};
+    for (int n = 0; n < 16; ++n) crowd.notes.push_back({static_cast<Frame>(n), 1000, static_cast<std::uint8_t>(40 + n), 1});
+    crowd.notes.push_back({2000, 100, 90, 1});
+    busy.tracks.push_back(Track{1, {crowd}});
+    Engine engine(busy);
+    require(engine.schedule(launch[0]) == ScheduleResult::accepted, "launch");
+    engine.start();
+    std::vector<float> out(2048);
+    require(engine.process(out, 1) && engine.active_voices() == 16, "sixteen voices sound, the extra note stole one");
+    // Stop and replacement still cut every voice at once.
+    engine.stop(); require(engine.active_voices() == 0, "stop must clear releasing voices");
+    // Refusals.
+    auto bad = plan; std::get<MidiClip>(bad.tracks[0].clips[0]).instrument.sustain = 1.5F; invalid([&] { Engine e(bad); });
+    std::get<MidiClip>(bad.tracks[0].clips[0]).instrument = Instrument{Waveform::sine, Engine::envelope_frame_limit + 1}; invalid([&] { Engine e(bad); });
+    std::get<MidiClip>(bad.tracks[0].clips[0]).instrument = Instrument{static_cast<Waveform>(9)}; invalid([&] { Engine e(bad); });
+}
 void controller_allocation_contract() {
     const auto plan = audio_plan();
     RenderController controller(plan);
@@ -343,9 +404,9 @@ void controller_allocation_contract() {
 }
 int main() {
     try {
-        grid_contract(); audio_contract(); midi_contract(); stereo_contract(); automation_contract(); queue_contract(); validation_contract();
+        grid_contract(); audio_contract(); midi_contract(); stereo_contract(); automation_contract(); instrument_contract(); queue_contract(); validation_contract();
         controller_allocation_contract();
-        std::cout << "PASS: grid, audio, MIDI, stereo/pan, automation, command bounds, validation; process allocations=" << render_allocations << '\n';
+        std::cout << "PASS: grid, audio, MIDI, stereo/pan, automation, instrument envelopes and voice stealing, command bounds, validation; process allocations=" << render_allocations << '\n';
         return 0;
     } catch (const std::exception& e) {
         watch_allocations = false;

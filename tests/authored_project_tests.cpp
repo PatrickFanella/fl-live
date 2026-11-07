@@ -296,7 +296,25 @@ void automationLanes() {
     project.content.automation.clear();
     CHECK(!QJsonDocument::fromJson(encodeAuthoredProject(project)).object().contains("automation"));
 }
+void synthSettings() {
+    auto project=general();
+    auto& riff=*std::find_if(project.content.clips.begin(),project.content.clips.end(),[&](const auto& c){return c.clip==project.identities.clips[3].id;});
+    riff.synth={3,5,120,40,800};
+    const auto bytes=encodeAuthoredProject(project);
+    const auto root=QJsonDocument::fromJson(bytes).object();
+    CHECK(root["required_features"].toArray().contains("synth-v1"));
+    CHECK(decodeAuthoredProject(bytes).content==project.content);
+    const auto sources=contentSources(project.content,project.identities);
+    const auto& clip=std::get<fl_live::MidiClip>(std::find_if(sources.begin(),sources.end(),[&](const auto& s){return s.id==riff.clip;})->content);
+    CHECK((clip.instrument==fl_live::Instrument{fl_live::Waveform::saw,240,5760,0.4F,38400}));
+    const auto bad=[&](auto edit){auto r=root;edit(r);rejects([&]{decodeAuthoredProject(QJsonDocument(r).toJson());});};
+    const auto synth=[&](const char* key,QJsonValue v){bad([&](auto& r){auto a=r["clips"].toArray();auto c=a[3].toObject();auto s=c["synth"].toObject();s[key]=v;c["synth"]=s;a[3]=c;r["clips"]=a;});};
+    synth("waveform","noise");synth("sustain",101);synth("attack_ms",-1);synth("release_ms",10001);synth("extra",1);
+    bad([](auto& r){r["required_features"]=QJsonArray{"general-session-v1"};});
+    auto audioSynth=project.content;audioSynth.clips[0].synth.attack_ms=5;rejects([&]{validateContent(audioSynth,project.identities);});
+}
 int main(){try{
+    synthSettings();
     automationLanes();
     relativeAssets();
     legacyMigration();generalRoundTrip();generalRejection();clipRanges();

@@ -444,6 +444,22 @@ ApplicationWindow {
                     RowLayout {
                         Layout.fillWidth: true
                         Label { objectName: "patternTitle"; text: "PATTERN · " + (session.trackNames[session.patternTrackIndex] || ""); textFormat: Text.PlainText; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                        ComboBox { objectName: "synthWaveform"; model: ["Sine", "Triangle", "Square", "Saw"]; currentIndex: session.synth[0]; enabled: session.canEdit; Layout.preferredWidth: 100; onActivated: function(i) { session.setSynth("waveform", i) }; Accessible.name: "Synth waveform" }
+                        Repeater {
+                            model: [["A", "attack", 1, 10000], ["D", "decay", 2, 10000], ["S %", "sustain", 3, 100], ["R", "release", 4, 10000]]
+                            RowLayout {
+                                required property var modelData
+                                spacing: 2
+                                Label { text: modelData[0]; color: "#9daabd" }
+                                SpinBox {
+                                    objectName: "synth" + modelData[1].charAt(0).toUpperCase() + modelData[1].slice(1)
+                                    from: 0; to: modelData[3]; stepSize: modelData[1] === "sustain" ? 5 : 10; editable: true
+                                    value: session.synth[modelData[2]]; enabled: session.canEdit; Layout.preferredWidth: 78
+                                    onValueModified: session.setSynth(modelData[1], value)
+                                    Accessible.name: "Synth " + modelData[1] + (modelData[1] === "sustain" ? " percent" : " in milliseconds")
+                                }
+                            }
+                        }
                         Label { text: "Quarter-note steps" }
                         SpinBox { objectName: "stepCount"; from: 1; to: 16; value: session.stepCount; enabled: session.canEdit; onValueModified: session.setStepCount(value); Accessible.name: "Pattern length in quarter notes" }
                     }
