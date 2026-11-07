@@ -1,4 +1,5 @@
 #pragma once
+#include "fl_live/capture.hpp"
 #include "fl_live/controller.hpp"
 #include <memory>
 #include <string>
@@ -31,6 +32,32 @@ public:
     PipeWireBackend(const PipeWireBackend&) = delete;
     PipeWireBackend& operator=(const PipeWireBackend&) = delete;
     [[nodiscard]] BackendStatus status() const noexcept;
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+// An audio input stream (docs/recording.md). It connects to the explicit
+// remote as node "fl-live-input" with one (MONO) or two (FL/FR) F32 ports
+// and links only where told (target, autoconnect or an external link). Each
+// buffer goes to the current sink on PipeWire's data thread; without a sink
+// input is discarded. Frame counts are per channel.
+struct CaptureStreamStatus {
+    int state;
+    int error;
+    std::uint64_t callbacks;
+    std::uint64_t frames;
+    std::uint64_t bad_buffers;
+};
+class PipeWireCapture {
+public:
+    explicit PipeWireCapture(PipeWireConfig config);
+    ~PipeWireCapture();
+    PipeWireCapture(const PipeWireCapture&) = delete;
+    PipeWireCapture& operator=(const PipeWireCapture&) = delete;
+    // Control side. Returns once the data thread can no longer be inside the
+    // previous sink, so that sink may be finished or destroyed afterwards.
+    void setSink(CaptureSink* sink) noexcept;
+    [[nodiscard]] CaptureStreamStatus status() const noexcept;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

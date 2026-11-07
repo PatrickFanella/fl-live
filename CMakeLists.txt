@@ -110,6 +110,13 @@ if(BUILD_TESTING)
         find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
         add_executable(live-quantum-probe tests/live_quantum_probe.cpp)
         target_link_libraries(live-quantum-probe PRIVATE fl_live_pipewire)
+        if(TARGET fl_live_media)
+            add_executable(capture-probe tests/capture_probe.cpp)
+            target_link_libraries(capture-probe PRIVATE fl_live_pipewire fl_live_media)
+            add_test(NAME pipewire-capture COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_capture.py $<TARGET_FILE:capture-probe>)
+            set_tests_properties(pipewire-capture PROPERTIES TIMEOUT 60)
+        endif()
         add_test(NAME pipewire-frame-coded-control COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_integration.py $<TARGET_FILE:fl-live-play>
             --quantum 257 --live-probe $<TARGET_FILE:live-quantum-probe> --no-quantum-changes)
