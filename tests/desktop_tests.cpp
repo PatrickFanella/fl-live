@@ -703,7 +703,7 @@ private slots:
         QCOMPARE(session.trackSources()[2].toString(),QString("loop.wav · 0.00 s · stereo"));
         QCOMPARE(session.undoText(),QString("Undo track 3 audio import"));
         QVERIFY(session.importAudio(ids[2].toString(),directory.filePath("absent.wav")));QTRY_VERIFY(!session.importing());
-        QVERIFY(session.message().startsWith("Import failed"));QCOMPARE(session.trackSources()[2].toString(),QString("loop.wav · 0.00 s · stereo"));
+        QVERIFY(session.message().startsWith("Could not import absent.wav"));QCOMPARE(session.trackSources()[2].toString(),QString("loop.wav · 0.00 s · stereo"));
         const auto rate=directory.filePath("rate.wav");writeWav(rate,1,44100,{1,2,3});
         QVERIFY(session.importAudio(ids[2].toString(),rate));QTRY_VERIFY(!session.importing());
         QVERIFY(session.message().contains("44100 Hz"));QCOMPARE(session.undoText(),QString("Undo track 3 audio import"));
@@ -1837,6 +1837,61 @@ private slots:
         ui.exportTo(session,directory.filePath("undone.wav"),"2");QTRY_VERIFY(!session.exporting());
         QVERIFY(readWav(directory.filePath("undone.wav")).samples==first);
     }
+    // #82: every supported failure names the affected file or audio remote,
+    // says what to do, and keeps the document, its history and decoded media.
+    void actionableFailures() {
+        QTemporaryDir directory;
+        {   // Missing audio server: the remote is named, Retry audio offered, Save still works.
+            fl_live::PipeWireConfig config;config.remote=directory.filePath("absent-remote").toStdString();config.target="studio-out";
+            Session s(config);QVERIFY(!s.audioAvailable());
+            for(const char* part:{"absent-remote","studio-out","Retry audio","project and history are kept"})QVERIFY2(s.message().contains(part),qPrintable(s.message()));
+            QVERIFY(s.saveProject(directory.filePath("offline.json")));
+        }
+        const auto loop=directory.filePath("loop.wav");writeWav(loop,2,48000,{1000,-1000,2000,-2000,3000,-3000});
+        Session session;const auto pulse=session.trackIds()[0].toString();
+        QVERIFY(session.importAudio(pulse,loop));QTRY_VERIFY(!session.importing());session.tick();
+        session.setTempo(133);session.setLevel(0,40);
+        const auto project=directory.filePath("song.json");QVERIFY(session.saveProject(project));session.setLevel(1,30);
+        const auto snapshot=[&]{return QVariantList{session.tempo(),session.levels(),session.trackSources(),session.undoText(),session.dirty(),session.projectPath()};};
+        const auto expect=[&](const QVariantList& before,std::initializer_list<const char*> parts){
+            for(const char* part:parts)QVERIFY2(session.message().contains(part),qPrintable(session.message()));
+            QCOMPARE(snapshot(),before);QVERIFY(session.trackSources()[0].toString().startsWith("loop.wav")); // decoded media kept
+        };
+        // Save failures: a missing folder, an existing other file.
+        auto before=snapshot();
+        QVERIFY(!session.saveProject(directory.filePath("no-folder/elsewhere.json")));expect(before,{"Could not save elsewhere.json","edits are kept","save again"});
+        QVERIFY(!session.saveProject(loop));expect(before,{"Could not save loop.wav","already exists","edits are kept"});
+        QVERIFY(session.saveProject(project));before=snapshot();
+        // Open failures: missing, malformed, a future feature, a cyclic device chain.
+        const auto write=[&](const QString& name,const QByteArray& bytes){const auto p=directory.filePath(name);QFile f(p);
+            if(!f.open(QIODevice::WriteOnly))throw std::runtime_error("fixture");f.write(bytes);return p;};
+        auto future=QJsonDocument::fromJson([&]{QFile f(project);if(!f.open(QIODevice::ReadOnly))throw std::runtime_error("read");return f.readAll();}()).object();
+        {auto features=future["required_features"].toArray();features.append("time-travel-v1");future["required_features"]=features;}
+        for(const auto& [file,reason]:std::vector<std::pair<QString,QString>>{
+                {directory.filePath("absent.json"),"regular project file"},{write("broken.json","{not json"),"not a valid JSON"},
+                {write("future.json",QJsonDocument(future).toJson()),"Unsupported required project feature"}}) {
+            QVERIFY(!session.loadProject(file));
+            expect(before,{"Could not open","unchanged","choose another"});
+            QVERIFY2(session.message().contains(QFileInfo(file).fileName()) && session.message().contains(reason),qPrintable(session.message()));
+        }
+        // Import failure: the file and reason are named; the track keeps its audio.
+        const auto odd=directory.filePath("odd-rate.wav");writeWav(odd,1,44100,{1,2,3});
+        QVERIFY(session.importAudio(pulse,odd));QTRY_VERIFY(!session.importing());session.tick();
+        expect(before,{"Could not import odd-rate.wav","48000","track is unchanged","choose a supported WAV"});
+        // Export failures: an existing file is never replaced; a missing folder fails in the background.
+        const auto loopBytes=[&]{QFile f(loop);if(!f.open(QIODevice::ReadOnly))throw std::runtime_error("read");return f.readAll();}();
+        QVERIFY(session.exportAudio(loop,1,1,0,2,"pcm16"));QTRY_VERIFY(!session.exporting());
+        expect(before,{"Could not export loop.wav","choose another path"});QCOMPARE([&]{QFile f(loop);if(!f.open(QIODevice::ReadOnly))throw std::runtime_error("read");return f.readAll();}(),loopBytes);
+        QVERIFY(!session.exportAudio(directory.filePath("bad.wav"),1,1,0,2,"mp3"));expect(before,{"Could not export bad.wav","Nothing was written"});
+        QVERIFY(session.exportAudio(directory.filePath("gone/out.wav"),1,1,0,2,"pcm16"));QTRY_VERIFY(!session.exporting());
+        expect(before,{"Could not export out.wav","choose another path"});QVERIFY(!QFile::exists(directory.filePath("gone/out.wav")));
+        // Missing media on open: named, playable as silence, and repaired by Relink.
+        QVERIFY(QFile::rename(loop,directory.filePath("moved-away.wav")));
+        Session reopened;QVERIFY(reopened.loadProject(project));
+        QVERIFY(reopened.message().contains("loop.wav") && reopened.message().contains("relink or import"));
+        QVERIFY(reopened.relinkAudio(reopened.trackIds()[0].toString(),directory.filePath("moved-away.wav")));QTRY_VERIFY(!reopened.importing());reopened.tick();
+        QVERIFY(reopened.trackSources()[0].toString().startsWith("moved-away.wav"));
+    }
     // #83: the musical workflow with the keyboard only. Every control is
     // reached by Tab from wherever focus is, must show visible focus inside
     // the window, and the resulting document and export are checked.
@@ -1971,6 +2026,47 @@ private slots:
         QTRY_COMPARE(session.activeClipIds()[1],session.selectedClips()[1]); // the launch button plays the selected clip
         QVERIFY(ui.item("clip1")->property("highlighted").toBool());
         ui.click("stopButton");QTRY_VERIFY(!session.running());
+    }
+    // #28/#29 on a general session: four tracks and three scenes. Requested,
+    // queued and active feedback follows render acknowledgements; refused and
+    // engine-rejected scene requests leave no false requested or active state.
+    void generalSceneFeedback() {
+        Session session;session.setTempo(137);QVERIFY(session.addTrack("audio"));QVERIFY(session.addTrack("midi"));
+        const auto tracks=session.trackIds();const auto clips=session.clipIds();const auto full=session.sceneId();
+        QVERIFY(session.setSceneIncluded(tracks[2].toString(),true));QVERIFY(session.setSceneIncluded(tracks[3].toString(),true));
+        QVERIFY(session.createScene());const auto pair=session.sceneId();
+        QVERIFY(session.setSceneIncluded(tracks[0].toString(),true));QVERIFY(session.setSceneIncluded(tracks[3].toString(),true));
+        QVERIFY(session.createScene());const auto none=session.sceneId(); // no slots: launching stops every track
+        const auto launchedAll=QVariantList{clips[0],clips[1],clips[2],clips[3]};
+        // One bar while playing: requested until acknowledged, queued until the boundary, then active.
+        QVERIFY(session.selectScene(full));session.play();for(int i=0;i<5;++i)session.tick();QVERIFY(session.running());
+        QVERIFY(session.launchScene(full,"one-bar"));
+        QCOMPARE(session.sceneState(),QString("Launch requested"));for(const auto& s:session.clipStates())QCOMPARE(s.toString(),QString("Launch requested"));
+        session.tick();QCOMPARE(session.sceneState(),QString("Stopped · actions queued"));
+        for(const auto& s:session.clipStates())QCOMPARE(s.toString(),QString("Launch queued"));
+        QTRY_COMPARE_WITH_TIMEOUT(session.sceneState(),QString("Active"),5000);QCOMPARE(session.activeClipIds(),launchedAll);
+        // Immediate replacement: the pair keeps tracks 1 and 4 and stops 2 and 3 in the same block.
+        QVERIFY(session.selectScene(pair));QVERIFY(session.launchScene(pair,"immediate"));session.tick();
+        QCOMPARE(session.sceneState(),QString("Active"));QCOMPARE(session.activeClipIds(),(QVariantList{clips[0],QString{},QString{},clips[3]}));
+        // A full control queue refuses the scene request; nothing claims it was requested.
+        session.panic();session.tick();QVERIFY(!session.running());
+        int queued=0;while(session.launchClip(clips[0].toString()))++queued;QCOMPARE(queued,int(fl_live::Engine::command_capacity));
+        QVERIFY(!session.launchScene(none,"immediate"));QVERIFY(session.message().contains("Control queue full"));
+        QVERIFY(session.selectScene(none));QVERIFY(!session.sceneState().contains("requested"));
+        // The 64 queued launches fill the engine's action queue; a scene needing four more is rejected as a whole.
+        session.tick();QCOMPARE(session.clipStates()[0].toString(),QString("Launch queued"));
+        QVERIFY(session.selectScene(full));QVERIFY(session.launchScene(full,"immediate"));QCOMPARE(session.sceneState(),QString("Launch requested"));
+        session.tick();
+        QVERIFY(session.message().contains("rejected"));
+        QVERIFY(!session.sceneState().contains("requested"));QVERIFY(!session.sceneState().startsWith("Active"));
+        for(int t=1;t<4;++t)QCOMPARE(session.clipStates()[t].toString(),QString("Stopped")); // no partial admission, no false indicator
+        QCOMPARE(session.activeClipIds(),(QVariantList{QString{},QString{},QString{},QString{}}));
+        // Recovery: panic clears the engine queue and the same scene launches.
+        session.panic();session.tick();QVERIFY(session.launchScene(full,"immediate"));session.play();session.tick();session.tick();
+        QCOMPARE(session.sceneState(),QString("Active"));QCOMPARE(session.activeClipIds(),launchedAll);
+        // Unknown scenes and policies are refused without any requested state.
+        QVERIFY(!session.launchScene("999","immediate"));QVERIFY(!session.launchScene(full,"later"));QCOMPARE(session.sceneState(),QString("Active"));
+        session.stop();session.tick();
     }
     void qmlRelinkMissingAudio() {
         QTemporaryDir root;const auto audio=root.filePath("a.wav"),project=root.filePath("p.json");
