@@ -74,6 +74,19 @@ At startup, every snapshot whose session is no longer running appears as a banne
 
 Save can run during playback because it serializes GUI-owned source settings and immutable identity metadata. Position, active clips, queued launches, Undo/Redo history and selected editor step are not persisted. Open starts stopped at bar 1, beat 1 and selects step 1; launch clips again before playing.
 
+### Recovery and export through the UI
+
+`qmlRecoveryExportJourney` (#65) drives one project through the production QML with typed paths and clicks only, and decodes every export with the test's own WAV reader:
+
+1. Import a stereo WAV into a project folder, change two levels, Save, and export two bars as float32.
+2. Move the whole project folder. Open finds the audio through its project-relative path and says so. The new location is an unsaved change, so a second Open is refused until Save. The export matches the first one sample for sample.
+3. Delete the WAV and Open again. The clip reads "Missing: loop.wav" and the status line says missing audio plays as silence. Relink to a copy elsewhere; the export matches again.
+4. Export onto the first export's path: refused, the existing file is byte-identical, and the document and Undo history are unchanged. Exporting into a folder that does not exist fails the same way and leaves no file.
+5. Start a 64-bar export and press Cancel: no file and no `.part` file remain.
+6. Save the repair, Open it in a fresh session and window, and export: the same samples again.
+
+Crash recovery through the Restore banner after a real abort is covered by `autosaveAndCrashRecovery`. Interrupted and fault-injected saves are covered by `atomic-save-faults`. The [receipt](../validation/recovery-export-journey.json) lists the three together.
+
 ## Ownership and verification
 
 Settings, JSON, sample generation and graph allocation stay on the GUI thread. A replacement validates a new immutable plan/controller before joining the old backend, then attaches a replacement backend and swaps owners. Old graph destruction occurs only after its callbacks have joined. Validation failures leave the previous graph intact. Backend replacement failure preserves the old document/history with audio stopped; saving and explicit Retry audio remain available.

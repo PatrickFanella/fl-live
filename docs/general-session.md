@@ -46,6 +46,8 @@ When the control queue is full, Launch, Stop and scene actions report "Control q
 
 Tempo changes, Open, New, Restore, Collect audio, Export, WAV import and Relink still require stopped transport; the tempo field and those buttons are disabled while playing. A tempo change by Undo/Redo while playing is refused with "Stop transport to change the tempo. Other edits apply while playing." The document and history stay unchanged. Edits made while stopped still rebuild the session at the start, as before.
 
+`qmlPlaybackEditJourney` walks the whole path through the QML. It launches both clips and presses Play, then, while playing, draws a level ramp, mutes a track and toggles a step. It undoes with the button, presses Ctrl+. (Silence now), saves and reopens. The float export follows the drawn ramp sample for sample. The [receipt](../validation/playback-edit-journey.json) records it.
+
 ## Project files (version 4)
 
 Save writes `fl-live-project` version 4 with required feature `general-session-v1`:

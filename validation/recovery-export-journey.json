@@ -1,0 +1,35 @@
+{
+  "verified_at": "2026-11-07T10:20:40.791363+00:00",
+  "base": "main after PR #134",
+  "issues": [
+    65
+  ],
+  "scope": "Project create/save/move/reopen, missing-asset repair, export failure and cancellation through the production QML; crash recovery and interrupted saves by reference",
+  "environment": "Kvant, pinned CI image, docker --network none, Qt offscreen platform",
+  "gates": {
+    "desktop": {
+      "passed": 24,
+      "total": 24
+    },
+    "qmlRecoveryExportJourney repeats": {
+      "passed": 3,
+      "total": 3
+    }
+  },
+  "verified_behaviors": [
+    "Import, level edits, Save and a float32 two-bar export through typed paths and clicks; the export is decoded by the test's own reader",
+    "Moving the project folder: Open reports the audio found inside the project folder, leaves the change unsaved (a second Open is refused until Save) and exports identical samples",
+    "Deleted audio opens as 'Missing: loop.wav' with a status message; Relink to a copy elsewhere restores identical samples",
+    "Export onto an existing file is refused with that file byte-identical; export into a missing folder fails with no file; document and Undo history unchanged",
+    "Cancel during a 64-bar export leaves neither the file nor a .part file",
+    "Saving the repair and opening it in a fresh session and window exports identical samples",
+    "By reference: autosaveAndCrashRecovery restores through the banner after a real abort; atomic-save-faults covers fault-injected and killed saves"
+  ],
+  "source_sha256": {
+    "tests/desktop_tests.cpp": "00e8088c7c717bb21cd1a9eea35654b3a07c00816542836598785a723cb66c1b",
+    "apps/desktop/session.cpp": "42c855b8446db65a405502da173ba8b72c57874bd04425d0aff8d68a3ef6d4fd",
+    "apps/desktop/Main.qml": "3af25dabd9ec126b8201d181d3b8cd093a96a9766c3def369329950881d25b6a",
+    "apps/desktop/authored_project.cpp": "1918cc32c7bb4980f402483bbabb7066f86049f407014dcfc4c1f8eee35a55fb"
+  },
+  "limits": "Offscreen Qt platform with synthetic input; native Wayland input, file dialogs and physical audio remain unqualified (#22)."
+}
