@@ -1,0 +1,57 @@
+{
+  "verified_at": "2026-11-07T07:48:19.633186+00:00",
+  "base": "PR #110 stereo engine (f4d4f6d) plus PR for #30 WAV import (331d541)",
+  "issues": [
+    34
+  ],
+  "scope": "Track pan, mute and solo with stereo desktop output, Undo, persistence and stereo export through the mixer",
+  "environment": "Kvant, pinned CI image (Qt 6.12.0, PipeWire 1.6.9), docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 18,
+      "total": 18
+    },
+    "release": {
+      "passed": 7,
+      "total": 7
+    },
+    "document-io-sanitize": {
+      "passed": 7,
+      "total": 7
+    },
+    "engine-only": {
+      "passed": 5,
+      "total": 5,
+      "note": "run earlier on this branch"
+    },
+    "pipewire-sanitize": {
+      "passed": 15,
+      "total": 15,
+      "note": "run earlier on this branch"
+    }
+  },
+  "verified_behaviors": [
+    "TrackMix (pan -100..100, mute, solo) lives on each document track; duplicate copies it; deleting the last soloed track releases solo",
+    "Render preparation applies mute/solo as zero gain and pan through the engine balance law; four-track per-channel output matches an independent oracle for pan, mute, solo, mute-beats-solo at blocks 1 and 257",
+    "Metadata adds required feature track-mixer-v1 only when a mix differs from default; identity-only files keep their bytes; malformed mix fields and feature/field mismatches are refused",
+    "Desktop renders stereo (PipeWire FL/FR, stereo silent preview); pan/mute/solo are stopped edits with Undo/Redo, refused while playing or out of range, and persist through Save/Open",
+    "Stereo export decoded per channel equals independent per-track renders mixed with the declared law for center, pan, mute, mute-beats-solo, solo and two solos",
+    "Actual offscreen keyboard pan entry (arrow and typed R35), pointer mute/solo, keyboard solo, Undo/Redo and disabled controls while playing",
+    "Private PipeWire workflow: QML solo and hard-left pan on the MIDI track; independent stereo capture has A4 at peak 0.02 on the left and exact silence on the right"
+  ],
+  "source_sha256": {
+    "include/fl_live/session_document.hpp": "1cce5f5985374db0bee6f7970c30d3b3a8831dafc7a5cf21ee21b02e7dcd338a",
+    "src/session_document.cpp": "e29c3135257c5f1b8ba9802cc812215bde89494a1441fb9c3ea12335135a4a5e",
+    "src/document_io.cpp": "3fc1020539fdc8e9569b3ed6856581e64b45208aeb6cacfd23a8ae1abae555c6",
+    "src/document_render.cpp": "6da9a08b7d343950fa2bf987c95a9442e1bf5631da747547002d7008c78d7435",
+    "apps/desktop/session.cpp": "407b54bc05a75c1353ebcc220c0868a3ca36ba23dbef3d3538702f7746a6c805",
+    "apps/desktop/export.cpp": "9798a1487159631f9a24fae3946e76ed49eca201c3c21043290fba858ae6c49d",
+    "apps/desktop/Main.qml": "5f4a790862a09e389eaf8359be9a8479f199d23e610bd0687f28a49221318abc",
+    "tests/document_render_tests.cpp": "6bf59fc90946254f94860903f08af63405baf5d13594356b4a22f138f5e3b394",
+    "tests/document_io_tests.cpp": "b94311271820c11c0633485892e5a2aa1f764a52de4368e151759f91b34d3421",
+    "tests/desktop_tests.cpp": "39ea69ce1cfd935266cf019db1296cdaba9ee7d7397611e72b2ae4aa5b142d8b",
+    "tests/desktop_backend_probe.cpp": "2d9b2846e029581e122c0c7e2df93e46b9a9374e1df4da5bd520607cbe927f95",
+    "tests/pipewire_integration.py": "355855f8800aa5c88ffd34e341957bd058505e83d3651bb9672462050b71575d"
+  },
+  "limits": "Mixer edits are stopped edits (playback edits are #54). Offline, offscreen and private software-graph results; physical output, native Wayland and latency remain unqualified."
+}

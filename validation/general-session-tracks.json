@@ -1,0 +1,50 @@
+{
+  "verified_at": "2026-11-07T07:54:08.055617+00:00",
+  "base": "export branch 7ac4829 (stacked: PR #110 stereo, #30 import, #34 mixer, #63 export)",
+  "issues": [
+    27,
+    26,
+    30,
+    56,
+    64
+  ],
+  "scope": "General Session of up to 64 audio/MIDI tracks with one clip each: add/duplicate/delete with Undo, per-MIDI-clip patterns, worker WAV import into audio tracks, version 4 project format with v1-v3 migration, missing-asset handling, four-track export",
+  "environment": "Kvant, pinned CI image (Qt 6.12.0, PipeWire 1.6.9, libsndfile 1.2.2), docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 18,
+      "total": 18,
+      "desktop_tests": "33 Qt test functions passed"
+    },
+    "document-io-sanitize": {
+      "passed": 7,
+      "total": 7
+    },
+    "release": {
+      "passed": 7,
+      "total": 7
+    }
+  },
+  "verified_behaviors": [
+    "v1/v2/v3 projects open and migrate to general content; migrated content renders sample-identical audio to the template plan at blocks 1/64/257",
+    "Version 4 round trip of two audio and two MIDI tracks covering pulse, empty and imported sources, IDs above 2^53; exact-field rejection of malformed content",
+    "Add audio/MIDI track, Duplicate (fresh IDs, copied pattern, level, mixer and scene slot, shared audio) and Delete (editor falls back to the first MIDI track) with Undo/Redo restoring IDs; deleting every track leaves a valid project",
+    "64-track limit: the 65th add or duplicate is refused without history change; a full project saves and reopens",
+    "Worker import of a stereo WAV applies as one Undo step; refused files change nothing; an import finishing during playback waits for Stop",
+    "Four-track stereo export compared channel by channel with independent per-track renders; Save/Open re-export is byte-identical",
+    "A missing WAV opens as silence with a visible message and the project stays clean",
+    "Actual offscreen pointer input: Add audio/MIDI track, Import, Edit pattern, step edit, Duplicate, Delete, Undo, clip launch and Play"
+  ],
+  "source_sha256": {
+    "apps/desktop/authored_project.hpp": "b905ee65b2563f23c29aa777b014e6f1bba0405f1079e6bc80536e22774992bb",
+    "apps/desktop/authored_project.cpp": "c4f5b6c737b6dc87b237c8a73b741d5c2e9c48074eb3d45db14e93c130d00e83",
+    "apps/desktop/project.cpp": "0e8311ce7233876521fdb553795f5914a43df3f3d56b2567f3538053e7a087a2",
+    "apps/desktop/session.hpp": "c25a3c6e0cfd0c8e174c2894364d365953b88a934fc9a2a469a3ab61449ce98d",
+    "apps/desktop/session.cpp": "16d75df654d714c69316be6294c2b8e64f17a8f3ff535765a2b668674f6392a9",
+    "apps/desktop/export.cpp": "0123d9fb7a07d644186b7d7bebb0306d3a9e971e13aed3fd558da91d1a8409c4",
+    "apps/desktop/Main.qml": "de302d4bd93329d0a2060cdf9b6d550ead92d6beea82d84a303c8b549dac58a1",
+    "tests/authored_project_tests.cpp": "1753cde4682140732d9ad08a983f4868d5706a8679ed07cbb358116bdcd78c74",
+    "tests/desktop_tests.cpp": "c333893d4e82923099729ab3f827251cb714a16d229657d1918c6b09e39388ac"
+  },
+  "limits": "One clip per track in this desktop slice. Assets are referenced by absolute path; relinking/copy policy is #60. Offline and offscreen results only; the D2 journey qualification (#37), native Wayland and physical audio remain open."
+}

@@ -57,6 +57,65 @@ float expected(std::size_t frame) {
         value+=static_cast<float>(std::sin(2*std::numbers::pi*440*std::exp2(-9.0/12)*static_cast<double>(age-1)/48000))*0.025F;
     return value;
 }
+// Independent per-track oracle for the fixture schedule in render().
+std::array<float,4> perTrack(std::size_t frame) {
+    if (frame<17) return {};
+    const auto age=frame-17;
+    const float pulse[]={0.25F,-0.125F,0.5F};
+    const float a=frame<91 ? pulse[age%3] : frame<150 ? -0.25F : 0;
+    const float b=age%2 ? -0.0625F : 0.0625F;
+    const auto local=age%17;
+    const float m=local>=2 && local<7 ? static_cast<float>(std::sin(2*std::numbers::pi*440*static_cast<double>(local-2)/48000))*0.05F : 0;
+    const float n=age>=1 && age<9 ? static_cast<float>(std::sin(2*std::numbers::pi*440*std::exp2(-9.0/12)*static_cast<double>(age-1)/48000))*0.025F : 0;
+    return {a,m,b,n}; // document track order
+}
+void mixerPolicy() {
+    struct Case { const char* name; std::array<TrackMix,4> mix; std::array<float,4> left, right; };
+    // Gains per track for each channel under the balance law and mute/solo policy.
+    const Case cases[]={
+        {"pan",{TrackMix{-100},TrackMix{25},TrackMix{50},TrackMix{}},{1,0.75F,0.5F,1},{0,1,1,1}},
+        {"mute",{TrackMix{},TrackMix{},TrackMix{0,true},TrackMix{}},{1,1,0,1},{1,1,0,1}},
+        {"solo",{TrackMix{},TrackMix{-50,false,true},TrackMix{},TrackMix{0,false,true}},{0,1,0,1},{0,0.5F,0,1}},
+        {"mute beats solo",{TrackMix{0,false,true},TrackMix{0,true,true},TrackMix{},TrackMix{}},{1,0,0,0},{1,0,0,0}},
+    };
+    for (const auto& c : cases) {
+        Fixture f;
+        const TrackId ids[]={f.a,f.m,f.b,f.n};
+        for (std::size_t t=0;t<4;++t) f.document.setTrackMix(ids[t],c.mix[t]);
+        const DocumentRenderPlan prepared(f.document.snapshot(),f.sources,48000,137125);
+        for (auto block : {1U,257U}) {
+            Engine engine(prepared.plan());
+            for (auto id : {f.ca,f.cm,f.cb,f.cn}) CHECK(engine.schedule(*prepared.launch(id,17))==ScheduleResult::accepted);
+            CHECK(engine.schedule(*prepared.launch(f.replacement,91))==ScheduleResult::accepted);
+            CHECK(engine.schedule(*prepared.stop(f.a,150))==ScheduleResult::accepted);
+            engine.start();
+            std::vector<float> stereo(1000);
+            for (std::size_t i=0;i<stereo.size();i+=2*block)
+                CHECK(engine.process(std::span(stereo).subspan(i,std::min<std::size_t>(2*block,stereo.size()-i)),2));
+            for (std::size_t frame=0;frame<500;++frame) {
+                const auto values=perTrack(frame);
+                float left=0,right=0;
+                for (std::size_t t=0;t<4;++t) { left+=c.left[t]*values[t]; right+=c.right[t]*values[t]; }
+                if (std::abs(stereo[2*frame]-left)>0.000001F || std::abs(stereo[2*frame+1]-right)>0.000001F)
+                    throw std::runtime_error(std::string("mixer policy mismatch: ")+c.name);
+            }
+        }
+    }
+    Fixture f;
+    CHECK(SessionDocument::audible(f.document.snapshot(),f.a));
+    f.document.setTrackMix(f.b,TrackMix{0,false,true});
+    CHECK(!SessionDocument::audible(f.document.snapshot(),f.a) && SessionDocument::audible(f.document.snapshot(),f.b));
+    const auto before=f.document.snapshot();
+    rejects([&]{f.document.setTrackMix(f.a,TrackMix{101});});
+    rejects([&]{f.document.setTrackMix(f.a,TrackMix{-101});});
+    rejects([&]{f.document.setTrackMix(TrackId{1},TrackMix{});});
+    CHECK(f.document.snapshot()==before);
+    // Duplicates keep mixer settings; deleting the only soloed track releases solo.
+    const auto copy=f.document.duplicateTrack(f.b);
+    CHECK(std::find_if(f.document.snapshot().tracks.begin(),f.document.snapshot().tracks.end(),[&](const auto& t){return t.id==copy;})->mix.solo);
+    f.document.deleteTrack(f.b);f.document.deleteTrack(copy);
+    CHECK(SessionDocument::audible(f.document.snapshot(),f.a));
+}
 void fourTracksAndReordering() {
     Fixture f;
     const DocumentRenderPlan original(f.document.snapshot(),f.sources,48000,137125);
@@ -170,7 +229,7 @@ void stoppedDeletionAndOwnership() {
 }
 int main() {
     try {
-        fourTracksAndReordering();quantizedFeedback();rejectionAndBudgets();stoppedDeletionAndOwnership();
-        std::cout<<"PASS: stable document/render mapping, four-track audio, budgets and stopped cleanup\n";return 0;
+        fourTracksAndReordering();mixerPolicy();quantizedFeedback();rejectionAndBudgets();stoppedDeletionAndOwnership();
+        std::cout<<"PASS: stable document/render mapping, four-track audio, mixer pan/mute/solo, budgets and stopped cleanup\n";return 0;
     } catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}
 }

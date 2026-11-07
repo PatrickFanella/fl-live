@@ -10,7 +10,7 @@
 #include <QTemporaryDir>
 #include <iostream>
 
-static ProjectSettings readAuthoredSettings(const QString& path) { return readAuthoredProject(path).settings; }
+static ProjectSettings readAuthoredSettings(const QString& path) { const auto p = readAuthoredProject(path); return templateView(p.content, p.identities); }
 
 // Invoked only by the owned private-server fixture. Exercises stopped graph
 // replacement; optional workflow mode drives QML signals and captures software
@@ -106,6 +106,13 @@ int main(int argc, char** argv) {
             invoke("selectedGate", "valueModified", 100);
             invoke("level1", "valueModified", 40);
             invoke("level0", "valueModified", 0); // Isolate MIDI in the independent capture.
+            // Hard left: the right channel must stay silent. invoke() treats
+            // negative values as "no value", so set the property directly.
+            auto* pan=find(window->contentItem(),"pan1");if(!pan)return 1;
+            pan->setProperty("value",-100);invoke("pan1","valueModified");
+            auto* solo=find(window->contentItem(),"solo1");if(!solo)return 1;
+            solo->setProperty("checked",true);invoke("solo1","clicked");
+            if(session.pans()[1].toInt()!=-100 || !session.solos()[1].toBool())return 1;
             auto* inclusion=find(window->contentItem(),"sceneIncluded0");if(!inclusion)return 1;
             inclusion->setProperty("checked",false);invoke("sceneIncluded0","clicked");
             if(session.sceneIncluded()[0].toBool() || !session.sceneIncluded()[1].toBool())return 1;

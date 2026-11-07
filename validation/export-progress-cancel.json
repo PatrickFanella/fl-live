@@ -1,0 +1,34 @@
+{
+  "verified_at": "2026-11-07T07:49:17.856814+00:00",
+  "base": "track mixer branch bf42a94 (stacked on PR #110 and the #30 import PR)",
+  "issues": [
+    63
+  ],
+  "scope": "Background export with progress, actual-UI cancellation, partial-file cleanup and no-replace publishing",
+  "environment": "Kvant, pinned CI image (Qt 6.12.0), docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 18,
+      "total": 18,
+      "note": "Two consecutive clean runs. Four further runs each had one private-graph capture failure (pipewire-private-graph, -reference-control or -frame-coded-control), the pre-#111 dropped-cycle flake; this branch predates that retry. desktop-session passed in every run."
+    }
+  },
+  "verified_behaviors": [
+    "Export runs on a worker from a copy of the document taken at start; edits, Undo and transport stay available; a second export is refused while one runs",
+    "Actual QML: Export shows a progress bar and Cancel export; clicking Cancel during a 192-second export removes NAME.part, leaves no destination and keeps edits, Undo/Redo, path, unsaved state and transport",
+    "A 1 MiB RLIMIT_FSIZE makes the write fail mid-stream; the partial file is removed and the message says so",
+    "A stale NAME.part from a crash is never reused or overwritten; export refuses with an actionable message",
+    "A file created at the destination during export is never replaced (link() refuses); the partial file is removed",
+    "An export started before further edits is byte-identical to one rendered from the restored state",
+    "Destroying a session during export cancels and joins the worker and leaves no files"
+  ],
+  "source_sha256": {
+    "apps/desktop/export.cpp": "d6c52405f8a29f6b248f8447e52a4ea84a5e9cf2ada0e5bc0f94b0cccdfa2639",
+    "apps/desktop/authored_project.hpp": "425b433305b3763adc735564b70fdf850fece815e9430aeffc2f6f6c178c2c6f",
+    "apps/desktop/session.cpp": "e953f5b23ef7858fc532db5bc4041e2008f9e5d8ce112ca5200b258ab6a8b351",
+    "apps/desktop/session.hpp": "8e46bb6df811fec1f4f5125d6c90772c75abc39dfdf8fcf5dff53543b51a0f0c",
+    "apps/desktop/Main.qml": "bd8ce76c0b7d168b888e8f771753333cf535d29577c8c96dc149fe2f2df49827",
+    "tests/desktop_tests.cpp": "6443208b852f28a38ea7da383841d50c2d4a1ebae957eb732acac8883c75862f"
+  },
+  "limits": "Process kill during export can leave NAME.part (documented recovery). Real disk-full and network filesystems were not tested."
+}

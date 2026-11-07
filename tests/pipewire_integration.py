@@ -490,34 +490,40 @@ context.objects = [
                     env=dict(env, QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software"),
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 ready(player)
+                # The desktop renders stereo; capture both channels separately.
                 capture = subprocess.Popen(["pw-cat", "--remote", remote, "--record", "--raw", "--format", "f32",
-                    "--rate", "48000", "--channels", "1", "--channel-map", "MONO", "--target", "0",
+                    "--rate", "48000", "--channels", "2", "--channel-map", "FL,FR", "--target", "0",
                     "--sample-count", "144000", "--properties",
                     "{ node.name = fixture-desktop-capture node.group = pipewire.test node.always-process = true }", "-"],
                     env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                until(lambda: configure_node("fl-live-output", "Output"))
-                until(lambda: configure_node("fixture-desktop-capture", "Input"))
-                subprocess.run(["pw-link", "--remote", remote,
-                    until(lambda: port("--output", "fl-live-output:")),
-                    until(lambda: port("--input", "fixture-desktop-capture:"))],
-                    env=env, check=True, capture_output=True, timeout=2)
+                until(lambda: configure_node("fl-live-output", "Output", 2))
+                until(lambda: configure_node("fixture-desktop-capture", "Input", 2))
+                for channel in ("FL", "FR"):
+                    subprocess.run(["pw-link", "--remote", remote,
+                        until(lambda: port("--output", f"fl-live-output:output_{channel}")),
+                        until(lambda: port("--input", f"fixture-desktop-capture:input_{channel}"))],
+                        env=env, check=True, capture_output=True, timeout=2)
                 player.stdin.write("g"); player.stdin.flush()
                 audio, errors = capture.communicate(timeout=5)
-                assert capture.returncode in (0, 1) and not errors and len(audio)==144000*4
-                samples = struct.unpack("<144000f", audio)
+                assert capture.returncode in (0, 1) and not errors and len(audio)==144000*2*4
+                interleaved = struct.unpack("<288000f", audio)
+                samples, right = interleaved[0::2], interleaved[1::2]
                 # Independent pitch/gain check, away from the quantized launch.
-                # One 200ms step repeats a 440Hz sine at 0.1*0.5*0.4 gain.
+                # One 200ms step repeats a 440Hz sine at 0.1*0.5*0.4 gain; the
+                # MIDI track is soloed and panned hard left through QML.
                 tail = samples[72000:96000]
                 peak = max(abs(v) for v in tail)
                 pitch = verify_a4(tail)
                 assert 0.0199 < peak < 0.0201, peak
+                assert all(v == 0 for v in right), "hard-left pan leaked into the right channel"
                 assert all(v == 0 for v in samples[132000:]), "audio after acknowledged stop"
                 output, errors = player.communicate(timeout=5)
                 assert player.returncode == 0, (output, errors)
                 assert "QML edits, atomic scene launch, scene stop while transport runs and acknowledged transport stop" in output
                 desktop_workflow = dict(frames=144000, peak=peak, pitch=pitch, stopped_silence_frames=12000,
                                         scene_active_tracks=1, excluded_audio_track_stopped=True, scene_stop_keeps_transport=True,
-                                        scene_arrangement_copy=True, scene_order_checked=True)
+                                        scene_arrangement_copy=True, scene_order_checked=True,
+                                        channels=2, midi_pan=-100, midi_solo=True, right_channel_silent=True)
 
             # A second actual client must report the loss of this owned server
             # and exit; this does not touch any pre-existing server or stream.

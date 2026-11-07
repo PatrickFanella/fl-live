@@ -39,6 +39,8 @@ void SessionDocument::validate(const DocumentSnapshot& state) {
         identity(track.id); nameValid(track.name);
         if (track.kind != TrackKind::audio && track.kind != TrackKind::midi)
             throw std::invalid_argument("Unknown track kind");
+        if (track.mix.pan < -TrackMix::pan_limit || track.mix.pan > TrackMix::pan_limit)
+            throw std::invalid_argument("Track pan must be -100 to 100 percent");
         tracks.emplace(track.id.value, 0);
     }
     for (const auto& clip : state.clips) {
@@ -90,6 +92,15 @@ void SessionDocument::renameClip(ClipId id, std::string name) {
 }
 void SessionDocument::renameScene(SceneId id, std::string name) {
     mutate([&](auto& state) { find(state.scenes, id).name = std::move(name); });
+}
+void SessionDocument::setTrackMix(TrackId id, TrackMix mix) {
+    mutate([&](auto& state) { find(state.tracks, id).mix = mix; });
+}
+bool SessionDocument::audible(const DocumentSnapshot& state, TrackId id) {
+    const auto& track = find(state.tracks, id);
+    if (track.mix.mute) return false;
+    const bool soloing = std::any_of(state.tracks.begin(), state.tracks.end(), [](const auto& t) { return t.mix.solo; });
+    return !soloing || track.mix.solo;
 }
 void SessionDocument::setSlot(SceneId scene, TrackId track, ClipId clip) {
     mutate([&](auto& state) {

@@ -10,11 +10,11 @@ While stopped with no pending control acknowledgements, choose Rename beside a t
 
 Each committed rename is one document-history entry. Undo/Redo restore names and IDs alongside tempo/levels/pattern settings. Renaming to the existing name adds no history entry. The dialog starts a fresh text-undo boundary on every opening, including when the previous text equals the current name. Standard document shortcuts are disabled while it is open so text Undo cannot change the project beneath it.
 
-The grid remains the declared authored template: one audio track, one MIDI track, one clip per track and 1–256 scenes with independently included/excluded clips. Scene launch/stop now offers explicit Immediate/One bar timing; see [scene controls](scene-controls.md). Scene creation/deletion and selection now use the same document and persistence path. Track/clip management, scene duplication and arbitrary media remain work under issue #27 and its dependent units. Metadata documents with other valid shapes are rejected by this template's file/preparation adapter rather than partially opened.
+Superseded for track structure by [general Session tracks](general-session.md): projects now hold up to 64 audio or MIDI tracks with one clip each, saved as version 4. The rest of this page describes the template-era identity integration and the version 3 files that still open. At the time, the grid was the declared authored template: one audio track, one MIDI track, one clip per track and 1–256 scenes with independently included/excluded clips. Scene launch/stop now offers explicit Immediate/One bar timing; see [scene controls](scene-controls.md). Scene creation/deletion and selection now use the same document and persistence path. Track/clip management, scene duplication and arbitrary media remain work under issue #27 and its dependent units. Metadata documents with other valid shapes are rejected by this template's file/preparation adapter rather than partially opened.
 
 ## Version 3 authored project files
 
-Desktop Save now writes `fl-live-project` version 3 with exactly these fields:
+Desktop Save wrote `fl-live-project` version 3 until version 4 replaced it; version 3 files still open and migrate. They have exactly these fields:
 
 | Field | Contract |
 |---|---|
@@ -24,7 +24,7 @@ Desktop Save now writes `fl-live-project` version 3 with exactly these fields:
 | `settings` | The complete source-settings object, canonically written in existing v2 form |
 | `session` | The complete version-1 Session metadata object, including IDs and allocation cursor |
 
-The Qt Core `fl_live_authored_project` adapter reads legacy v1/v2 projects through the retained source parser and supplies deterministic initial identities. A subsequent desktop Save writes v3. Old source-only readers reject v3 safely. The source-only `readProject`/`writeProject` functions remain for legacy source fixtures; desktop persistence uses `readAuthoredProject`/`writeAuthoredProject` so names are not silently discarded.
+The Qt Core `fl_live_authored_project` adapter reads legacy v1/v2 projects through the retained source parser and supplies deterministic initial identities. A subsequent desktop Save now writes v4. Old source-only readers reject v3 safely. The source-only `readProject`/`writeProject` functions remain for legacy source fixtures; desktop persistence uses `readAuthoredProject`/`writeAuthoredProject` so names are not silently discarded.
 
 Input/output is capped at 4 MiB plus 64 KiB. Source settings and metadata retain their own validation and byte limits. Unknown root fields, future versions/features, malformed source/metadata and unsupported template shapes fail before graph/document replacement. Saving validates and encodes before atomic `QSaveFile` replacement with direct-write fallback disabled. The existing normalized-path ownership guard still controls overwrite/Save As. A standalone metadata file is not an authored musical project and both readers reject the other format.
 

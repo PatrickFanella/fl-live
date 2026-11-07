@@ -23,11 +23,21 @@ struct ProjectSettings {
     }();
     bool operator==(const ProjectSettings&) const = default;
 };
+// One MIDI clip's 1-16 quarter-note steps. Hidden steps beyond step_count are
+// retained so shortening and lengthening a pattern is lossless.
+struct StepPattern {
+    int step_count = ProjectSettings{}.step_count;
+    std::array<MidiStep, 16> steps = ProjectSettings{}.steps;
+    bool operator==(const StepPattern&) const = default;
+};
+void validatePattern(const StepPattern& pattern);
+// Authored content shared by the template and general projects. Tempo is in
+// whole BPM; every boundary is rounded upward independently.
+fl_live::AudioClip pulseClip(int tempo);
+fl_live::MidiClip patternClip(const StepPattern& pattern, int tempo);
 fl_live::SessionPlan prepareProject(const ProjectSettings& settings);
 ProjectSettings readProject(const QString& path);
 void writeProject(const QString& path, const ProjectSettings& settings);
 QByteArray encodeProjectSettings(const ProjectSettings& settings);
 ProjectSettings decodeProjectSettings(const QByteArray& bytes);
 
-// Both template clips start at frame zero; hard end, no effect tails.
-void exportProjectWav(const QString& path, const ProjectSettings& settings, int bars);
