@@ -14,6 +14,7 @@
 #include <functional>
 #include <map>
 #include <QStringList>
+#include <QLockFile>
 
 // QObject and the sole command producer live on the GUI thread. Preview renders
 // there too; a connected backend exclusively owns processing instead.
@@ -64,6 +65,7 @@ class Session final : public QObject {
     Q_PROPERTY(int patternTrackIndex READ patternTrackIndex NOTIFY changed)
     Q_PROPERTY(bool importing READ importing NOTIFY changed)
     Q_PROPERTY(QVariantList clipFrames READ clipFrames NOTIFY changed)
+    Q_PROPERTY(QVariantList recoveryCandidates READ recoveryCandidates NOTIFY recoveryChanged)
     Q_PROPERTY(QVariantList clipRanges READ clipRanges NOTIFY changed)
     Q_PROPERTY(double exportProgress READ exportProgress NOTIFY changed)
 public:
@@ -117,6 +119,22 @@ public:
     // NAME-assets/ beside the saved project, never overwriting a file, and
     // repoints the clips as one Undo step. Source files are not modified.
     Q_INVOKABLE bool collectAssets();
+    // Crash recovery. While there are unsaved edits, the session writes an
+    // autosave snapshot to the recovery folder (FL_LIVE_RECOVERY_DIR, or the
+    // per-user application data folder) every autosave_interval_ms, never to
+    // the project file. A manual save or a normal shutdown removes it. Each
+    // snapshot from a session that is no longer running is a candidate:
+    // {file, project, time, valid, reason}. Restore loads a valid one as
+    // unsaved work for its original project path; Discard deletes one file.
+    // Invalid snapshots are listed with a reason and never removed silently.
+    static constexpr int autosave_interval_ms = 30000;
+    static QString recoveryDirectory();
+    QVariantList recoveryCandidates() const;
+    Q_INVOKABLE bool restoreRecovery(const QString& file);
+    Q_INVOKABLE bool discardRecovery(const QString& file);
+    Q_INVOKABLE void refreshRecovery();
+    bool autosaveNow();
+    QString autosaveFile() const { return autosave_file_; }
     // Imported clips: decoded frames per track (0 if none), and [start, end,
     // loop] in source frames. setClipRange takes an exclusive end frame and is
     // one Undo step. waveform returns bins x [min, max] of the whole source,
@@ -187,6 +205,7 @@ signals:
     void projectPathChanged();
     void documentChanged();
     void sceneSelectionChanged();
+    void recoveryChanged();
 private:
     struct Prepared {
         const fl_live::DocumentRenderPlan mapped;
@@ -265,6 +284,13 @@ private:
     std::shared_ptr<ExportJob> export_job_;
     std::thread export_thread_;
     void finishExport();
+    QTimer autosave_timer_;
+    QString autosave_file_;
+    std::unique_ptr<QLockFile> autosave_lock_;
+    Content autosaved_content_;
+    Identities autosaved_identities_;
+    QVariantList recovery_candidates_;
+    void removeAutosave();
     QTimer timer_;
     fl_live::RenderStatus status_{};
     std::uint64_t serial_ = 0;

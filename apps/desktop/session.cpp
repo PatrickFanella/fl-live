@@ -3,6 +3,13 @@
 #include <algorithm>
 #include <QDir>
 #include <QFileInfo>
+#include <QDateTime>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSaveFile>
+#include <QStandardPaths>
+#include <QUuid>
+#include "fl_live/document_io.hpp"
 #include <stdexcept>
 #include <cmath>
 
@@ -31,9 +38,26 @@ Session::Session(fl_live::PipeWireConfig config, QObject* parent)
     timer_.setInterval(10);
     connect(&timer_, &QTimer::timeout, this, &Session::tick);
     timer_.start();
+    // One snapshot file per running session, guarded by a lock so other
+    // instances never offer a live session's snapshot for recovery.
+    const auto folder = recoveryDirectory();
+    if (QDir().mkpath(folder)) {
+        const auto name = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        autosave_file_ = QDir(folder).filePath(name + ".fl-live-recovery.json");
+        autosave_lock_ = std::make_unique<QLockFile>(QDir(folder).filePath(name + ".lock"));
+        autosave_lock_->setStaleLockTime(0);
+        if (!autosave_lock_->tryLock(0)) { autosave_lock_.reset(); autosave_file_.clear(); }
+    }
+    autosave_timer_.setInterval(autosave_interval_ms);
+    connect(&autosave_timer_, &QTimer::timeout, this, [this] { (void)autosaveNow(); });
+    autosave_timer_.start();
+    refreshRecovery();
 }
 Session::~Session() {
     timer_.stop();
+    autosave_timer_.stop();
+    removeAutosave(); // a normal shutdown is not a crash
+    if (autosave_lock_) autosave_lock_->unlock();
     if (export_job_) export_job_->progress.cancel.store(true);
     if (export_thread_.joinable()) export_thread_.join();
     // Prepared's backend is destroyed before its controller and immutable plan.
@@ -506,6 +530,7 @@ bool Session::saveProject(const QString& path) {
         project_path_ = owned_path_ = target;
         saved_content_ = content_;
         saved_identities_ = identities_;
+        removeAutosave();
         message_ = "Project saved";
         emit projectPathChanged();
         emit changed();
@@ -992,4 +1017,119 @@ bool Session::collectAssets() {
             .arg(QFileInfo(folder).fileName()).arg(copied).arg(reused);
         emit changed();return true;
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+
+// ---- Autosave and crash recovery -----------------------------------------
+QString Session::recoveryDirectory() {
+    const auto configured = qEnvironmentVariable("FL_LIVE_RECOVERY_DIR");
+    if (!configured.isEmpty()) return QDir::cleanPath(configured);
+    return QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)).filePath("fl-live/recovery");
+}
+void Session::removeAutosave() {
+    if (!autosave_file_.isEmpty()) QFile::remove(autosave_file_);
+    autosaved_content_.reset(); autosaved_identities_.reset();
+}
+bool Session::autosaveNow() {
+    if (autosave_file_.isEmpty() || !dirty()) return false;
+    if (autosaved_content_ == content_ && autosaved_identities_ == identities_) return true; // unchanged since last snapshot
+    try {
+        auto persisted = *identities_; persisted.next_id = next_identity_;
+        const auto project = QJsonDocument::fromJson(encodeAuthoredProject({*content_, persisted})).object();
+        const auto bytes = QJsonDocument(QJsonObject{{"format", "fl-live-recovery"}, {"version", 1},
+            {"project_path", owned_path_}, {"saved_at", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
+            {"project", project}}).toJson();
+        QSaveFile file(autosave_file_); file.setDirectWriteFallback(false);
+        if (!file.open(QIODevice::WriteOnly) || !fl_live::commitDurably(file, bytes)) return false;
+        autosaved_content_ = content_; autosaved_identities_ = identities_;
+        return true;
+    } catch (const std::exception&) { return false; } // never interrupts editing
+}
+namespace {
+struct Snapshot { AuthoredProject project; QString projectPath; QString time; };
+Snapshot readSnapshot(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("cannot be read");
+    constexpr qint64 limit = 8 * 1024 * 1024;
+    if (file.size() > limit) throw std::invalid_argument("is too large");
+    QJsonParseError error;
+    const auto json = QJsonDocument::fromJson(file.read(limit + 1), &error);
+    if (error.error != QJsonParseError::NoError || !json.isObject()) throw std::invalid_argument("is incomplete or not JSON");
+    const auto root = json.object();
+    if (root.size() != 5 || root["format"] != "fl-live-recovery" || root["version"] != 1 || !root["project"].isObject() ||
+        !root["project_path"].isString() || !root["saved_at"].isString())
+        throw std::invalid_argument("is not a supported recovery snapshot");
+    return {decodeAuthoredProject(QJsonDocument(root["project"].toObject()).toJson()), root["project_path"].toString(), root["saved_at"].toString()};
+}
+}
+void Session::refreshRecovery() {
+    QVariantList result;
+    const QDir folder(recoveryDirectory());
+    for (const auto& name : folder.entryList({"*.fl-live-recovery.json"}, QDir::Files, QDir::Time)) {
+        const auto path = folder.filePath(name);
+        if (path == autosave_file_) continue;
+        // A held lock means that session is still running; a stale lock (dead
+        // process) or no lock means it ended without cleaning up.
+        QLockFile lock(folder.filePath(name.chopped(QStringLiteral(".fl-live-recovery.json").size()) + ".lock"));
+        lock.setStaleLockTime(0);
+        if (!lock.tryLock(0)) continue;
+        lock.unlock();
+        QVariantMap entry{{"file", path}, {"valid", true}, {"reason", QString()}};
+        try {
+            const auto snapshot = readSnapshot(path);
+            entry["project"] = snapshot.projectPath;
+            entry["time"] = snapshot.time;
+            entry["tracks"] = static_cast<int>(snapshot.project.identities.tracks.size());
+        } catch (const std::exception& error) {
+            entry["valid"] = false; entry["project"] = QString(); entry["time"] = QFileInfo(path).lastModified().toUTC().toString(Qt::ISODate);
+            entry["reason"] = name + " " + QString::fromUtf8(error.what());
+        }
+        result.append(entry);
+    }
+    recovery_candidates_ = result;
+    emit recoveryChanged();
+}
+QVariantList Session::recoveryCandidates() const { return recovery_candidates_; }
+bool Session::restoreRecovery(const QString& file) {
+    if (dirty()) { message_ = "Save or discard your current edits before restoring recovered work."; emit changed(); return false; }
+    if (!editable()) return false;
+    try {
+        const auto known = std::any_of(recovery_candidates_.begin(), recovery_candidates_.end(),
+            [&](const auto& c) { return c.toMap()["file"].toString() == file && c.toMap()["valid"].toBool(); });
+        if (!known) throw std::invalid_argument("Choose a valid recovery snapshot from the list");
+        auto snapshot = readSnapshot(file);
+        const auto report = resolveAssets(snapshot.project.content, snapshot.project.relative,
+            snapshot.projectPath.isEmpty() ? QString() : QFileInfo(snapshot.projectPath).absolutePath());
+        auto identities = std::make_shared<const fl_live::DocumentSnapshot>(snapshot.project.identities);
+        pattern_clip_ = {};
+        if (!replace(std::make_shared<const SessionContent>(std::move(snapshot.project.content)), identities)) return false;
+        next_identity_ = snapshot.project.identities.next_id;
+        restoreSceneSelection(snapshot.project.identities.scenes[0].id);
+        // Recovered work stays unsaved; Save writes it to its original project.
+        saved_content_ = std::make_shared<const SessionContent>();
+        saved_identities_ = std::make_shared<const fl_live::DocumentSnapshot>();
+        owned_path_ = snapshot.projectPath;
+        if (!snapshot.projectPath.isEmpty()) project_path_ = snapshot.projectPath;
+        selected_step_ = 0;
+        history_[0] = {content_, identities_, EditKind::none, -1, selected_scene_};
+        history_cursor_ = 0; history_size_ = 1;
+        // Keep the old snapshot until this session's own copy is on disk.
+        if (autosaveNow()) QFile::remove(file);
+        message_ = "Restored unsaved work from " + snapshot.time + ". Save to keep it" +
+            (snapshot.projectPath.isEmpty() ? QStringLiteral(".") : " in " + QFileInfo(snapshot.projectPath).fileName() + ".");
+        if (!report.missing.isEmpty()) message_ += " Missing audio plays as silence: " + report.missing.join("; ");
+        refreshRecovery();
+        emit projectPathChanged();
+        emit changed();
+        return true;
+    } catch (const std::exception& error) { message_ = QString::fromUtf8(error.what()); emit changed(); return false; }
+}
+bool Session::discardRecovery(const QString& file) {
+    const auto known = std::any_of(recovery_candidates_.begin(), recovery_candidates_.end(),
+        [&](const auto& c) { return c.toMap()["file"].toString() == file; });
+    if (!known || !QFile::remove(file)) { message_ = "That recovery snapshot is not available"; emit changed(); return false; }
+    QFile::remove(file.chopped(QStringLiteral(".fl-live-recovery.json").size()) + ".lock");
+    message_ = "Discarded the recovery snapshot";
+    refreshRecovery();
+    emit changed();
+    return true;
 }

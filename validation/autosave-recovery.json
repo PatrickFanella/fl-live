@@ -1,0 +1,36 @@
+{
+  "verified_at": "2026-11-07T08:26:28.813852+00:00",
+  "base": "PR #120 head",
+  "issues": [
+    59
+  ],
+  "scope": "Autosave snapshots outside the project file and startup recovery selection",
+  "environment": "Kvant, pinned CI image (Qt 6.12.0), docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 20,
+      "total": 20,
+      "note": "Two of four runs at load average 33-35 were clean; the others failed only private-graph captures (pipewire-reference-control and similar), the known fixture flake; desktop-session passed every run"
+    },
+    "document-io-sanitize": {
+      "passed": 8,
+      "total": 8
+    }
+  },
+  "verified_behaviors": [
+    "A helper process saves, edits, autosaves and aborts (CrashExit); the project file still holds the manual save",
+    "The crashed snapshot is listed with project path, time and track count; garbage and truncated snapshots are listed invalid with reasons and left in place",
+    "Restore brings back the crashed edits unsaved with the original project path; the project file is unchanged until Save; the restored snapshot is replaced by the session's own",
+    "Restore is refused over unsaved edits or for invalid snapshots; Discard removes only the listed file",
+    "A running session's snapshot (held lock) is not offered to another session; no autosave while clean; normal shutdown removes the snapshot",
+    "Actual pointer click on the banner's Restore button restores a second crashed session"
+  ],
+  "source_sha256": {
+    "apps/desktop/session.cpp": "c52b505d04d324ba8e93d675eef32492999d8ac18b60dd43a014a5d13721c811",
+    "apps/desktop/session.hpp": "7d6856bd40dcfe9740982e8820ab864b3d1de5a6f42d456fafee13de6e88e9f2",
+    "apps/desktop/Main.qml": "d49a89476aac78426b30271cc292fb5ff2b31bfd39000b14b9e4d30ea4a4345a",
+    "tests/desktop_tests.cpp": "e2b52df52497c0b980eca6d5fc82bfc21e0d01544dbfb19150b78e3a52d24d07",
+    "tests/save_fault_probe.cpp": "a80ae3731524fe672484f6d1f3c0ddb1691a81816f5ec4fd21b6e45afc23f6d3"
+  },
+  "limits": "30-second interval; edits made after the last snapshot are lost in a crash. Power loss, full disks and imported audio files themselves (referenced, not copied into snapshots) are not covered."
+}

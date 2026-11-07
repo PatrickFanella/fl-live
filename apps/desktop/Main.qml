@@ -83,6 +83,28 @@ ApplicationWindow {
             Button { objectName: "redoButton"; text: "Redo"; enabled: session.canRedo; onClicked: session.redo(); ToolTip.visible: hovered; ToolTip.text: session.redoText }
             Label { text: session.mode; color: "#e4bc75" }
         }
+        Repeater {
+            // Snapshots left by sessions that ended without a normal shutdown.
+            model: session.recoveryCandidates
+            Rectangle {
+                required property var modelData
+                required property int index
+                Layout.fillWidth: true; implicitHeight: recoveryRow.implicitHeight + 16; radius: 6
+                color: modelData.valid ? "#2c3f35" : "#45352a"
+                RowLayout {
+                    id: recoveryRow
+                    anchors.fill: parent; anchors.margins: 8
+                    Label {
+                        objectName: "recoveryText" + index; Layout.fillWidth: true; wrapMode: Text.WordWrap; textFormat: Text.PlainText
+                        text: modelData.valid
+                            ? "Unsaved work from " + modelData.time + " was found (" + (modelData.project ? modelData.project : "never saved") + ", " + modelData.tracks + " tracks). Restore it, or discard it."
+                            : "A recovery file could not be used: " + modelData.reason + ". It was left in place; discard it when you no longer need it."
+                    }
+                    Button { objectName: "restoreRecovery" + index; text: "Restore"; visible: modelData.valid; enabled: session.canEdit && !session.dirty; onClicked: session.restoreRecovery(modelData.file); ToolTip.visible: hovered; ToolTip.text: "Opens the recovered work unsaved. The project file is not changed until you Save." }
+                    Button { objectName: "discardRecovery" + index; text: "Discard"; onClicked: session.discardRecovery(modelData.file) }
+                }
+            }
+        }
         RowLayout {
             Button { objectName: "playButton"; text: "Play"; enabled: session.audioAvailable; onClicked: session.play() }
             Button { objectName: "retryAudioButton"; text: "Retry audio"; visible: !session.audioAvailable; onClicked: session.reconnectAudio() }

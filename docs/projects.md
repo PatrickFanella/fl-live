@@ -61,6 +61,17 @@ On Linux, Qt writes to an unnamed `O_TMPFILE` and publishes it with `linkat` (ne
 
 `atomic-save-faults` checks this with a test-only `LD_PRELOAD` injector that fails `write` (after 512 bytes, `ENOSPC`), `fsync`/`fdatasync` (`EIO`) or publishing (`rename`/`renameat`/`renameat2`/`linkat`, `EIO`) for files in one directory. Real `Session::saveProject` calls, both overwrite and Save As, must fail and keep the destination bytes, an unrelated neighboring file, the directory listing, tempo/pitch edits, the project path, the unsaved state and Undo/Redo; Undo, Redo and a later save then work. A second stage kills a process with SIGKILL at 40 random points while it alternately saves two 129 KB projects; every time the destination equals one of the two complete saves, and the project reopens through `Session::loadProject`. Power loss, full-disk behavior of a real filesystem, network filesystems and concurrent writers are not covered.
 
+### Autosave and crash recovery
+
+While a session has unsaved edits it writes a recovery snapshot every 30 seconds to a recovery folder: `$FL_LIVE_RECOVERY_DIR` if set, otherwise `~/.local/share/fl-live/recovery/` (the generic per-user data location). It never writes the project file. A snapshot is the full version 4 project wrapped as `{"format": "fl-live-recovery", "version": 1, "project_path", "saved_at", "project"}` and is written through the same synced atomic path as Save. It is rewritten only when the document changed. Each running session owns one snapshot file and holds a lock beside it, so other running instances never offer it. A manual Save or a normal shutdown (including Discard and close) removes the session's snapshot; a crash leaves it.
+
+At startup, every snapshot whose session is no longer running appears as a banner above the transport:
+
+- **Valid:** it shows when it was saved, which project it belongs to and how many tracks it has, with **Restore** and **Discard**. Restore is refused while there are unsaved edits. It opens the recovered work unsaved, with its original project path, so the last manual save stays untouched until you Save. The restored snapshot is deleted only after the session's own snapshot is on disk.
+- **Invalid** (unreadable, incomplete JSON, unsupported or malformed project): it shows the reason and offers only **Discard**. Such files are never removed or restored automatically.
+
+`autosaveAndCrashRecovery` runs a helper that saves a project, edits it, autosaves and aborts. It checks that the project file still holds the manual save, that the crashed session's snapshot and two invalid ones are listed correctly, and that Restore brings back the crashed edits unsaved without touching the project file until Save. It also checks the refusal over unsaved edits, Discard of one file only, that a running session's snapshot is not offered, no autosave when clean, removal on normal shutdown, and Restore through the actual banner button.
+
 Save can run during playback because it serializes GUI-owned source settings and immutable identity metadata. Position, active clips, queued launches, Undo/Redo history and selected editor step are not persisted. Open starts stopped at bar 1, beat 1 and selects step 1; launch clips again before playing.
 
 ## Ownership and verification

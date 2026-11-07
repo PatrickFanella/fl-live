@@ -14,6 +14,8 @@
 #include <functional>
 #include <limits>
 #include <QTemporaryDir>
+#include <QProcess>
+#include <QScopeGuard>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -1018,6 +1020,75 @@ private slots:
         QTRY_COMPARE(session.trackSources()[0].toString(),QString("moved.wav · 0.10 s · mono"));
         QVERIFY(findItem(window->contentItem(),"waveform0"));QVERIFY(session.dirty());
         QVERIFY(!findItem(window->contentItem(),"relinkAudio1")); // MIDI track: no relink
+    }
+    void autosaveAndCrashRecovery() {
+        QTemporaryDir recovery,work;
+        qputenv("FL_LIVE_RECOVERY_DIR",recovery.path().toUtf8());
+        const auto cleanup=qScopeGuard([]{qunsetenv("FL_LIVE_RECOVERY_DIR");});
+        const auto bytesOf=[](const QString& path){QFile f(path);return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();};
+        // A real crash: the probe saves, edits, autosaves and aborts.
+        const auto probe=qEnvironmentVariable("FL_LIVE_SAVE_PROBE");QVERIFY2(!probe.isEmpty(),"FL_LIVE_SAVE_PROBE not set");
+        QProcess crashed;crashed.start(probe,{"crash",work.path()});
+        QVERIFY(crashed.waitForFinished(20000));QCOMPARE(crashed.exitStatus(),QProcess::CrashExit);
+        const auto snapshotPath=QString::fromUtf8(crashed.readAllStandardOutput()).trimmed();
+        QVERIFY(QFile::exists(snapshotPath));QVERIFY(snapshotPath.startsWith(recovery.path()));
+        const auto project=work.filePath("crashed.json");const auto manual=bytesOf(project);
+        QCOMPARE(readAuthoredProject(project).content.tempo,120); // autosave never wrote the project file
+        // Invalid snapshots are listed with a reason and left alone.
+        const auto garbage=QDir(recovery.path()).filePath("garbage.fl-live-recovery.json");
+        {QFile f(garbage);QVERIFY(f.open(QIODevice::WriteOnly));f.write("{\"format\":\"fl-live-recovery\"");}
+        const auto truncated=QDir(recovery.path()).filePath("truncated.fl-live-recovery.json");
+        {QFile f(truncated);QVERIFY(f.open(QIODevice::WriteOnly));f.write(bytesOf(snapshotPath).left(200));}
+        Session session;
+        const auto candidates=session.recoveryCandidates();QCOMPARE(candidates.size(),3);
+        QVariantMap valid;int invalid=0;
+        for(const auto& c:candidates){const auto m=c.toMap();if(m["valid"].toBool())valid=m;else{++invalid;QVERIFY(!m["reason"].toString().isEmpty());}}
+        QCOMPARE(invalid,2);QCOMPARE(valid["file"].toString(),snapshotPath);QCOMPARE(valid["project"].toString(),project);QCOMPARE(valid["tracks"].toInt(),3);
+        QVERIFY(!session.restoreRecovery(garbage));QVERIFY(QFile::exists(garbage));
+        // Restore: the crashed edits come back unsaved; the manual save is unchanged until Save.
+        QVERIFY(session.restoreRecovery(snapshotPath));
+        QCOMPARE(session.tempo(),141);QCOMPARE(session.trackCount(),3);QVERIFY(session.dirty());
+        QCOMPARE(session.projectPath(),project);QCOMPARE(bytesOf(project),manual);
+        QVERIFY(!QFile::exists(snapshotPath));QVERIFY(QFile::exists(session.autosaveFile())); // replaced by this session's own snapshot
+        QCOMPARE(session.recoveryCandidates().size(),2); // only the invalid ones remain listed
+        QVERIFY(session.saveProject(project));QVERIFY(!session.dirty());QCOMPARE(readAuthoredProject(project).content.tempo,141);
+        QVERIFY(!QFile::exists(session.autosaveFile()));
+        // Restoring is refused over unsaved edits; Discard removes one file only.
+        session.setTempo(150);QVERIFY(!session.restoreRecovery(garbage));
+        QVERIFY(session.discardRecovery(garbage));QVERIFY(!QFile::exists(garbage));QVERIFY(QFile::exists(truncated));
+        QVERIFY(!session.discardRecovery(work.filePath("crashed.json")));QVERIFY(QFile::exists(project)); // not a listed snapshot
+        // Autosave only while dirty, never to the project; a running session's
+        // snapshot is not offered to another session.
+        QVERIFY(session.autosaveNow());const auto own=session.autosaveFile();QVERIFY(QFile::exists(own));
+        Session other;
+        for(const auto& c:other.recoveryCandidates())QVERIFY(c.toMap()["file"].toString()!=own);
+        session.undo();QVERIFY(!session.dirty());QVERIFY(!session.autosaveNow());
+        // A normal shutdown removes its snapshot.
+        QString removed;
+        {Session temporary;temporary.setTempo(99);QVERIFY(temporary.autosaveNow());removed=temporary.autosaveFile();QVERIFY(QFile::exists(removed));}
+        QVERIFY(!QFile::exists(removed));
+        QDir dir(recovery.path());QCOMPARE(dir.entryList({"*.fl-live-recovery.json"}).size(),2); // truncated + the live session's
+        // The banner offers Restore for a valid snapshot through the UI.
+        QVERIFY(QDir().mkpath(work.filePath("second")));
+        QProcess again;again.start(probe,{"crash",work.filePath("second")});
+        QVERIFY(again.waitForFinished(20000));QCOMPARE(again.exitStatus(),QProcess::CrashExit);
+        Session fresh;
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&fresh);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* r,const QString& name)->QQuickItem* {
+            if(r->objectName()==name && r->isVisible())return r;
+            for(auto* c:r->childItems())if(auto* m=findItem(c,name))return m;
+            return nullptr;
+        };
+        int validIndex=-1;
+        for(int i=0;i<fresh.recoveryCandidates().size();++i)if(fresh.recoveryCandidates()[i].toMap()["valid"].toBool())validIndex=i;
+        QVERIFY(validIndex>=0);
+        QVERIFY(window->grabWindow().save("desktop-recovery.png"));
+        auto* restore=findItem(window->contentItem(),QString("restoreRecovery%1").arg(validIndex));QVERIFY(restore);
+        QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,restore->mapToScene(QPointF(restore->width()/2,restore->height()/2)).toPoint());
+        QTRY_COMPARE(fresh.tempo(),141);QVERIFY(fresh.dirty());
+        QCOMPARE(fresh.projectPath(),work.filePath("second/crashed.json"));
     }
     void qmlMixerInput() {
         Session session;

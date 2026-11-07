@@ -180,6 +180,7 @@ if(FL_LIVE_BUILD_DESKTOP)
         target_link_libraries(desktop-tests PRIVATE fl_live_session fl_live_document_io Qt6::QuickControls2 Qt6::Test)
         qt_add_resources(desktop-tests "ui" PREFIX "/ui" BASE apps/desktop FILES apps/desktop/Main.qml)
         add_test(NAME desktop-session COMMAND desktop-tests)
-        set_tests_properties(desktop-session PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software" TIMEOUT 60)
+        set_tests_properties(desktop-session PROPERTIES ENVIRONMENT
+            "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;FL_LIVE_SAVE_PROBE=$<TARGET_FILE:save-fault-probe>" TIMEOUT 60)
     endif()
 endif()
