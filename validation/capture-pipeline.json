@@ -1,0 +1,37 @@
+{
+  "verified_at": "2026-11-07T12:28:11.933854+00:00",
+  "base": "main after PR #150",
+  "issues": [
+    44
+  ],
+  "scope": "Capture pipeline: bounded callback handoff, worker-side WAV writes, overflow and write-failure policy",
+  "environment": "Kvant, pinned CI image, docker --network none",
+  "gates": {
+    "capture-tests": {
+      "passed": 3,
+      "total": 3
+    },
+    "thread-sanitizer": {
+      "passed": 2,
+      "total": 2
+    },
+    "address+undefined sanitizer": {
+      "passed": 1,
+      "total": 1
+    }
+  },
+  "verified_behaviors": [
+    "CaptureRing refuses a block that does not fit whole, preserves order and wraps",
+    "400 stereo blocks of 257 frames from a separate capture thread are written bit for bit; the capture thread made 0 allocations and 0 write/pwrite/open/fsync calls (interposed)",
+    "A two-block ring under 200 rapid blocks overflows: written + dropped frames = captured frames; the file is whole blocks in increasing order",
+    "An injected ENOSPC after 20 blocks is reported naming failed.wav.part; finish() keeps a readable .part with exactly the written frames and the first 20 blocks intact; it is not renamed",
+    "A take refuses to replace an existing file"
+  ],
+  "source_sha256": {
+    "include/fl_live/capture.hpp": "bcf7b922bef7a5f85023acd7b01b317a9e3dc7e9521c9022525763af9dd20063",
+    "src/capture.cpp": "c57114c741fa8a489df6345adf20c20e2e852fc27a72838f0c82061371b4f788",
+    "tests/capture_tests.cpp": "5fe1d91b09e16c1295c0d071006e408cb603d3290ca452e53b68d968958d7460",
+    "CMakeLists.txt": "5f4e119c9e403ad848ba95bc166b6537b8cb2162092cceeba21de10b0097093f"
+  },
+  "limits": "Component level only: no PipeWire capture stream, input routing, timestamps or UI yet; the desktop cannot record."
+}
