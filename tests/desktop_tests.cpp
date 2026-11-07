@@ -4,7 +4,10 @@
 #include <QQmlContext>
 #include <QQuickWindow>
 #include <QQuickItem>
+#include <QAccessible>
 #include <QtEndian>
+#include <cstring>
+#include <tuple>
 #include <QFileInfo>
 #include <cmath>
 #include <csignal>
@@ -14,6 +17,8 @@
 #include <functional>
 #include <limits>
 #include <QTemporaryDir>
+#include <QProcess>
+#include <QScopeGuard>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -47,6 +52,26 @@ static std::vector<float> renderClip(const fl_live::Clip& clip,int tempo,std::si
     if(engine.schedule({fl_live::CommandKind::launch,0,0,0})!=fl_live::ScheduleResult::accepted)throw std::runtime_error("schedule");
     engine.start();std::vector<float> stereo(frames*2);(void)engine.process(stereo,2);
     std::vector<float> left(frames);for(std::size_t i=0;i<frames;++i)left[i]=stereo[2*i];return left;
+}
+
+// Independent WAV reader for export checks: header fields and decoded values.
+struct DecodedWav { int format=0,channels=0,bits=0,rate=0,blockAlign=0,byteRate=0; std::vector<float> samples; qsizetype dataBytes=0; };
+static DecodedWav readWav(const QString& path) {
+    QFile file(path);if(!file.open(QIODevice::ReadOnly))throw std::runtime_error("export missing");
+    const auto b=file.readAll();DecodedWav w;
+    if(b.size()<44 || b.left(4)!="RIFF" || b.mid(8,8)!="WAVEfmt " || b.mid(36,4)!="data")throw std::runtime_error("not a canonical WAV");
+    w.format=qFromLittleEndian<quint16>(b.constData()+20);w.channels=qFromLittleEndian<quint16>(b.constData()+22);
+    w.rate=static_cast<int>(qFromLittleEndian<quint32>(b.constData()+24));w.byteRate=static_cast<int>(qFromLittleEndian<quint32>(b.constData()+28));
+    w.blockAlign=qFromLittleEndian<quint16>(b.constData()+32);w.bits=qFromLittleEndian<quint16>(b.constData()+34);
+    w.dataBytes=static_cast<qsizetype>(qFromLittleEndian<quint32>(b.constData()+40));
+    if(w.dataBytes!=b.size()-44 || qFromLittleEndian<quint32>(b.constData()+4)!=static_cast<quint32>(b.size()-8))throw std::runtime_error("size fields");
+    const auto* d=reinterpret_cast<const unsigned char*>(b.constData()+44);
+    for(qsizetype at=0;at<w.dataBytes;at+=w.bits/8) {
+        if(w.format==3 && w.bits==32){float v;std::memcpy(&v,d+at,4);w.samples.push_back(v);}
+        else if(w.bits==16)w.samples.push_back(static_cast<float>(static_cast<qint16>(d[at]|(d[at+1]<<8))));
+        else if(w.bits==24){qint32 v=d[at]|(d[at+1]<<8)|(d[at+2]<<16);if(v&0x800000)v-=0x1000000;w.samples.push_back(static_cast<float>(v));}
+    }
+    return w;
 }
 
 class DesktopTests : public QObject {
@@ -629,7 +654,7 @@ private slots:
         // A missing asset opens as silence with a visible message.
         QVERIFY(QFile::rename(loop,directory.filePath("moved.wav")));
         Session missing;QVERIFY(missing.loadProject(path));
-        QVERIFY(missing.message().contains("missing audio"));QCOMPARE(missing.trackSources()[2].toString(),QString("Missing: loop.wav"));
+        QVERIFY(missing.message().contains("Missing audio"));QCOMPARE(missing.trackSources()[2].toString(),QString("Missing: loop.wav"));
         QVERIFY(!missing.dirty());
         // Duplicate creates new IDs, copies the pattern and scene slot choice.
         QVERIFY(session.setSceneIncluded(ids[3].toString(),true));
@@ -707,6 +732,656 @@ private slots:
         QTRY_COMPARE(session.activeClips()[2].toInt(),0);
         QVERIFY(!findItem(window->contentItem(),"deleteTrack2")->property("enabled").toBool());
         click("stopButton");session.tick();QVERIFY(!session.running());
+    }
+    void clipRangeEditing() {
+        QTemporaryDir directory;const auto ramp=directory.filePath("ramp.wav");
+        // 4800 mono frames (100 ms): a 480-frame ramp repeated ten times.
+        std::vector<qint16> samples(4800);for(std::size_t i=0;i<samples.size();++i)samples[i]=static_cast<qint16>((i%480)*64);
+        writeWav(ramp,1,48000,samples);
+        Session session;QVERIFY(session.addTrack("audio"));const auto track=session.trackIds()[2].toString();
+        QVERIFY(session.importAudio(track,ramp));QTRY_VERIFY(!session.importing());
+        QCOMPARE(session.clipFrames()[2].toDouble(),4800.0);QCOMPARE(session.clipFrames()[0].toDouble(),0.0);
+        QCOMPARE(session.clipRanges()[2],QVariant(QVariantList{0.0,4800.0,true}));
+        const auto peaks=session.waveform(2,10);QCOMPARE(peaks.size(),10);
+        for(const auto& peak:peaks){QCOMPARE(peak.toList()[0].toFloat(),0.0F);QCOMPARE(peak.toList()[1].toFloat(),479.0F*64/32768);}
+        QVERIFY(session.waveform(0,10).isEmpty());QVERIFY(session.waveform(2,0).isEmpty());QVERIFY(session.waveform(9,10).isEmpty());
+        QVERIFY(session.setClipRange(track,480,960,false));
+        QCOMPARE(session.clipRanges()[2],QVariant(QVariantList{480.0,960.0,false}));QCOMPARE(session.undoText(),QString("Undo track 3 clip range"));
+        const auto undo=session.undoText();
+        for(const auto& bad:std::vector<std::array<double,2>>{{960,960},{900,800},{0,4801},{-1,10},{1.5,10},{0,std::nan("")}})
+            QVERIFY(!session.setClipRange(track,bad[0],bad[1],true));
+        QVERIFY(!session.setClipRange(session.trackIds()[0].toString(),0,10,true));
+        QVERIFY(!session.setClipRange(session.trackIds()[1].toString(),0,10,true));
+        QCOMPARE(session.undoText(),undo);QCOMPARE(session.clipRanges()[2],QVariant(QVariantList{480.0,960.0,false}));
+        // Exported audio: the soloed track plays source frames 480..959 once.
+        QVERIFY(session.setSolo(track,true));
+        const auto pcm=[](float v){return static_cast<qint16>(std::lround(std::clamp(v,-1.0F,1.0F)*32767.0F));};
+        const auto exported=[&](const QString& name){QVERIFY(session.exportWav(directory.filePath(name),1));QTRY_VERIFY(!session.exporting());};
+        exported("once.wav");auto frames=readStereo(directory.filePath("once.wav"));
+        for(std::size_t i=0;i<frames.size();++i) {
+            const float source=i<480 ? static_cast<float>(i*64)/32768 : 0.0F;
+            QCOMPARE(frames[i][0],pcm(0.7F*source));QCOMPARE(frames[i][1],pcm(0.7F*source));
+        }
+        QVERIFY(session.setClipRange(track,480,960,true));exported("loop.wav");frames=readStereo(directory.filePath("loop.wav"));
+        for(std::size_t i=0;i<frames.size();i+=97)QCOMPARE(frames[i][0],pcm(0.7F*static_cast<float>((i%480)*64)/32768));
+        // End at the true end of the source is stored as "to the end".
+        QVERIFY(session.setClipRange(track,4000,4800,true));QCOMPARE(session.clipRanges()[2],QVariant(QVariantList{4000.0,4800.0,true}));
+        QVERIFY(session.setClipRange(track,480,960,false));
+        const auto path=directory.filePath("ranges.json");QVERIFY(session.saveProject(path));
+        {QFile file(path);QVERIFY(file.open(QIODevice::ReadOnly));QVERIFY(file.readAll().contains("clip-ranges-v1"));}
+        Session reopened;QVERIFY(reopened.loadProject(path));QCOMPARE(reopened.clipRanges()[2],QVariant(QVariantList{480.0,960.0,false}));
+        // A file that became shorter opens whole, with a message.
+        writeWav(ramp,1,48000,std::vector<qint16>(400,1000));
+        Session shorter;QVERIFY(shorter.loadProject(path));QVERIFY(shorter.message().contains("range reset"));
+        QCOMPARE(shorter.clipRanges()[2],QVariant(QVariantList{0.0,400.0,false})); // loop choice is kept
+        // Re-importing replaces the source and plays it whole.
+        QVERIFY(session.importAudio(track,ramp));QTRY_VERIFY(!session.importing());
+        QCOMPARE(session.clipRanges()[2],QVariant(QVariantList{0.0,400.0,true}));
+        session.undo();QCOMPARE(session.clipRanges()[2],QVariant(QVariantList{480.0,960.0,false}));
+    }
+    void qmlClipRange() {
+        QTemporaryDir directory;const auto ramp=directory.filePath("ramp.wav");
+        std::vector<qint16> samples(48000);for(std::size_t i=0;i<samples.size();++i)samples[i]=static_cast<qint16>(std::sin(static_cast<double>(i)/200)*20000);
+        writeWav(ramp,1,48000,samples);
+        Session session;QVERIFY(session.importAudio(session.trackIds()[0].toString(),ramp));QTRY_VERIFY(!session.importing());
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* root,const QString& name)->QQuickItem* {
+            if(root->objectName()==name && root->isVisible())return root;
+            for(auto* child:root->childItems())if(auto* match=findItem(child,name))return match;
+            return nullptr;
+        };
+        QVERIFY(findItem(window->contentItem(),"waveform0"));QVERIFY(!findItem(window->contentItem(),"waveform1"));
+        auto* start=findItem(window->contentItem(),"rangeStart0");QVERIFY(start);
+        start->forceActiveFocus();QTest::keyClick(window,Qt::Key_Up);
+        QCOMPARE(session.clipRanges()[0],QVariant(QVariantList{48.0,48000.0,true}));
+        auto* end=findItem(window->contentItem(),"rangeEnd0");QVERIFY(end);
+        end->forceActiveFocus();QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier);
+        for(const char c:QByteArray("250"))QTest::keyClick(window,c);
+        QTest::keyClick(window,Qt::Key_Return);
+        QTRY_COMPARE(session.clipRanges()[0],QVariant(QVariantList{48.0,12000.0,true}));
+        auto* loop=findItem(window->contentItem(),"rangeLoop0");
+        QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,loop->mapToScene(QPointF(loop->width()/2,loop->height()/2)).toPoint());
+        QCOMPARE(session.clipRanges()[0],QVariant(QVariantList{48.0,12000.0,false}));
+        QCOMPARE(findItem(window->contentItem(),"waveform0")->property("paintKey").toString().section(':',0,3),QString("48000:48:12000:false"));
+        for(const auto* name:{"rangeLoop0","solo0","importAudio0","deleteTrack0"}) {
+            auto* item=findItem(window->contentItem(),name);QVERIFY2(item,name);
+            QVERIFY2(item->mapToItem(findItem(window->contentItem(),"clip1"),QPointF(item->width(),0)).x()<0,name); // stays left of track 2
+        }
+        QVERIFY(window->grabWindow().save("desktop-clip-range.png"));
+        session.undo();QCOMPARE(session.clipRanges()[0],QVariant(QVariantList{48.0,12000.0,true}));
+        QTRY_VERIFY(findItem(window->contentItem(),"rangeLoop0")->property("checked").toBool());
+    }
+    void qmlD2Journey() {
+        // #37 qualification workload, driven only through the QML: two audio
+        // and two MIDI tracks, four scenes, mixing, Save, close, Open, Export.
+        QTemporaryDir directory;
+        const auto kick=directory.filePath("kick.wav"),pad=directory.filePath("pad.wav");
+        std::vector<qint16> kickSamples(4800),padSamples(9600*2);
+        for(std::size_t i=0;i<kickSamples.size();++i)kickSamples[i]=static_cast<qint16>(16000.0*std::exp(-static_cast<double>(i)/600)*std::sin(static_cast<double>(i)/30));
+        for(std::size_t i=0;i<9600;++i){padSamples[2*i]=static_cast<qint16>(6000*std::sin(static_cast<double>(i)/50));padSamples[2*i+1]=static_cast<qint16>(6000*std::sin(static_cast<double>(i)/45));}
+        writeWav(kick,1,48000,kickSamples);writeWav(pad,2,48000,padSamples);
+        const auto projectPath=directory.filePath("journey.json"),exportPath=directory.filePath("journey.wav");
+        std::vector<QStringList> sceneTracks;QVariantList trackIds;
+        {
+            Session session;
+            QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);
+            engine.load(QUrl("qrc:/ui/Main.qml"));
+            auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+            std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* root,const QString& name)->QQuickItem* {
+                if(root->objectName()==name && root->isVisible())return root;
+                for(auto* child:root->childItems())if(auto* match=findItem(child,name))return match;
+                return nullptr;
+            };
+            auto show=[&](QQuickItem* item) {
+                auto* scroll=findItem(window->contentItem(),"trackScroll");if(!scroll)return;
+                auto* flick=scroll->property("contentItem").value<QQuickItem*>();if(!flick)return;
+                const auto at=item->mapToItem(flick,QPointF(0,0));
+                if(at.x()<0 || at.x()+item->width()>flick->width())
+                    flick->setProperty("contentX",std::max(0.0,flick->property("contentX").toReal()+at.x()-20));
+                QTest::qWait(20);
+            };
+            auto click=[&](const QString& name) {
+                auto* item=findItem(window->contentItem(),name);QVERIFY2(item,qPrintable(name));show(item);
+                QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());
+            };
+            auto focus=[&](const QString& name) {
+                auto* item=findItem(window->contentItem(),name);QVERIFY2(item,qPrintable(name));show(item);item->forceActiveFocus();
+            };
+            auto type=[&](const QString& name,const QString& text,bool enter=true) {
+                focus(name);QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier);for(const QChar c:text)QTest::keyClick(window,c.toLatin1());
+                if(enter)QTest::keyClick(window,Qt::Key_Return);
+            };
+            auto keys=[&](const QString& name,Qt::Key key,int times){focus(name);for(int i=0;i<times;++i)QTest::keyClick(window,key);};
+            // Two audio tracks with imported WAVs, two MIDI tracks with patterns.
+            type("audioPath0",kick,false);click("importAudio0");QTRY_VERIFY(!session.importing());
+            click("addAudioTrack");QTRY_COMPARE(session.trackCount(),3);
+            type("audioPath2",pad,false);click("importAudio2");QTRY_VERIFY(!session.importing());
+            click("addMidiTrack");QTRY_COMPARE(session.trackCount(),4);
+            QCOMPARE(session.trackKinds(),(QVariantList{"audio","midi","audio","midi"}));
+            click("editPattern3");click("step0");click("stepEnabled");keys("selectedPitch",Qt::Key_Down,12);
+            click("step2");click("stepEnabled");keys("selectedGate",Qt::Key_Up,25);
+            click("editPattern1");click("step3");click("stepEnabled"); // rest on the template's fourth step
+            // Mix: tempo, levels, pans, and a clip range on the first audio track.
+            type("tempoSpin","128");QCOMPARE(session.tempo(),128);
+            keys("level2",Qt::Key_Down,10);type("pan2","L40");type("pan3","R20");keys("level1",Qt::Key_Up,15);
+            type("rangeEnd0","50");QCOMPARE(session.clipRanges()[0],QVariant(QVariantList{0.0,2400.0,true}));
+            // Four scenes: template scene plus three arrangements.
+            click("sceneIncluded2");click("sceneIncluded3");
+            click("createScene");click("sceneIncluded2");click("sceneIncluded3");
+            click("copyScene");click("sceneIncluded2");
+            click("createScene");click("sceneIncluded0");
+            QCOMPARE(session.sceneIds().size(),4);
+            trackIds=session.trackIds();
+            for(const auto& id:session.sceneIds()) {
+                QVERIFY(session.selectScene(id.toString()));QStringList included;
+                for(int t=0;t<4;++t)if(session.sceneIncluded()[t].toBool())included.append(trackIds[t].toString());
+                sceneTracks.push_back(included);
+            }
+            QCOMPARE(sceneTracks[0].size(),4);QCOMPARE(sceneTracks[1].size(),2);QCOMPARE(sceneTracks[2].size(),1);QCOMPARE(sceneTracks[3].size(),1);
+            // Launch scenes through the controls (silent preview clock).
+            focus("sceneSelector");QTest::keyClick(window,Qt::Key_Home);
+            QTRY_COMPARE(session.selectedSceneIndex(),0);
+            findItem(window->contentItem(),"sceneTiming")->setProperty("currentIndex",0);
+            click("launchScene");click("playButton");QTRY_COMPARE(session.sceneState(),QString("Active"));
+            QCOMPARE(session.activeClips(),(QVariantList{0,0,0,0}));
+            focus("sceneSelector");QTest::keyClick(window,Qt::Key_Down);QTRY_COMPARE(session.selectedSceneIndex(),1);
+            click("launchScene");QTRY_COMPARE(session.sceneState(),QString("Active"));
+            QCOMPARE(session.activeClips(),(QVariantList{-1,-1,0,0}));
+            click("stopButton");QTRY_VERIFY(!session.running());QTRY_VERIFY(session.canEdit());
+            QVERIFY(window->grabWindow().save("desktop-d2-journey.png"));
+            type("projectFile",projectPath,false);click("saveProjectButton");QVERIFY2(!session.dirty(),qPrintable(session.message()));
+            QVERIFY(window->close());
+        }
+        // Reopen in a fresh session and window.
+        Session session;
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* root,const QString& name)->QQuickItem* {
+            if(root->objectName()==name && root->isVisible())return root;
+            for(auto* child:root->childItems())if(auto* match=findItem(child,name))return match;
+            return nullptr;
+        };
+        auto click=[&](const QString& name) {
+            auto* item=findItem(window->contentItem(),name);QVERIFY2(item,qPrintable(name));
+            auto* flick=findItem(window->contentItem(),"trackScroll")->property("contentItem").value<QQuickItem*>();
+            const auto at=item->mapToItem(flick,QPointF(0,0));
+            if(item->isAncestorOf(flick) || !flick->isAncestorOf(item)){} else if(at.x()<0 || at.x()+item->width()>flick->width())
+                {flick->setProperty("contentX",std::max(0.0,flick->property("contentX").toReal()+at.x()-20));QTest::qWait(20);}
+            QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene(QPointF(item->width()/2,item->height()/2)).toPoint());
+        };
+        auto type=[&](const QString& name,const QString& text) {
+            auto* item=findItem(window->contentItem(),name);QVERIFY2(item,qPrintable(name));item->forceActiveFocus();
+            QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier);for(const QChar c:text)QTest::keyClick(window,c.toLatin1());
+        };
+        type("projectFile",projectPath);click("openProjectButton");
+        QCOMPARE(session.trackIds(),trackIds);QCOMPARE(session.tempo(),128);
+        QCOMPARE(session.trackKinds(),(QVariantList{"audio","midi","audio","midi"}));
+        QCOMPARE(session.trackSources()[0].toString(),QString("kick.wav · 0.10 s · mono"));
+        QCOMPARE(session.trackSources()[2].toString(),QString("pad.wav · 0.20 s · stereo"));
+        QCOMPARE(session.levels(),(QVariantList{70,40,60,70}));QCOMPARE(session.pans(),(QVariantList{0,0,-40,20}));
+        QCOMPARE(session.clipRanges()[0],QVariant(QVariantList{0.0,2400.0,true}));
+        std::size_t scene=0;
+        for(const auto& id:session.sceneIds()) {
+            QVERIFY(session.selectScene(id.toString()));QStringList included;
+            for(int t=0;t<4;++t)if(session.sceneIncluded()[t].toBool())included.append(trackIds[t].toString());
+            QCOMPARE(included,sceneTracks[scene++]);
+        }
+        click("editPattern3");
+        QCOMPARE(session.stepEnabled()[0].toBool(),true);QCOMPARE(session.pitches()[0].toInt(),48);
+        QCOMPARE(session.stepEnabled()[2].toBool(),true);QCOMPARE(session.gates()[2].toInt(),100);
+        click("editPattern1");QCOMPARE(session.stepEnabled()[3].toBool(),false);
+        // Export through the UI and decode independently.
+        type("exportFile",exportPath);findItem(window->contentItem(),"exportBars")->setProperty("value",2);
+        click("exportWavButton");QTRY_VERIFY(!session.exporting());QVERIFY2(QFile::exists(exportPath),qPrintable(session.message()));
+        const auto frames=readStereo(exportPath);QCOMPARE(frames.size(),static_cast<std::size_t>(exportFrames(128,2)));
+        const auto n=frames.size();
+        std::vector<float> kickSource(2400);for(std::size_t i=0;i<2400;++i)kickSource[i]=static_cast<float>(kickSamples[i])/32768;
+        fl_live::AudioClip padClip{{},true,2};for(auto v:padSamples)padClip.samples.push_back(static_cast<float>(v)/32768);
+        StepPattern template1;template1.steps[3].enabled=false;
+        StepPattern bass;for(auto& step:bass.steps)step.enabled=false;bass.steps[0]={true,48,70,75};bass.steps[2]={true,67,70,100};
+        const auto a=renderClip(fl_live::AudioClip{kickSource,true},128,n),b=renderClip(patternClip(template1,128),128,n);
+        const auto d=renderClip(patternClip(bass,128),128,n);
+        const auto pcm=[](float v){return static_cast<int>(std::lround(std::clamp(v,-1.0F,1.0F)*32767.0F));};
+        int worst=0;
+        for(std::size_t i=0;i<n;++i) {
+            const float padLeft=padClip.samples[2*(i%9600)],padRight=padClip.samples[2*(i%9600)+1];
+            // Pad: level 60, pan L40 (right x0.6). Bass: level 70, pan R20 (left x0.8).
+            const float left=0.7F*a[i]+0.4F*b[i]+0.6F*padLeft+0.7F*0.8F*d[i];
+            const float right=0.7F*a[i]+0.4F*b[i]+0.6F*0.6F*padRight+0.7F*d[i];
+            worst=std::max({worst,std::abs(frames[i][0]-pcm(left)),std::abs(frames[i][1]-pcm(right))});
+        }
+        QVERIFY2(worst<=1,qPrintable(QString("export differs from independent renders by %1 LSB").arg(worst)));
+    }
+    void assetRelocationRelinkCollect() {
+        QTemporaryDir root;
+        std::vector<qint16> ramp(4800);for(std::size_t i=0;i<ramp.size();++i)ramp[i]=static_cast<qint16>((i%480)*64);
+        const auto bytesOf=[](const QString& path){QFile f(path);return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();};
+        // A project folder with its audio inside moves as a whole.
+        const auto song=root.filePath("song");QVERIFY(QDir().mkpath(song+"/audio"));
+        writeWav(song+"/audio/loop.wav",1,48000,ramp);
+        {
+            Session session;QVERIFY(session.addTrack("audio"));const auto track=session.trackIds()[2].toString();
+            QVERIFY(session.importAudio(track,song+"/audio/loop.wav"));QTRY_VERIFY(!session.importing());
+            QVERIFY(session.setClipRange(track,480,960,false));QVERIFY(session.saveProject(song+"/song.json"));
+            const auto saved=bytesOf(song+"/song.json");
+            QVERIFY(saved.contains("asset-relative-v1"));QVERIFY(saved.contains("\"relative\": \"audio/loop.wav\""));
+        }
+        QVERIFY(QDir().rename(song,root.filePath("moved")));
+        const auto moved=root.filePath("moved");
+        {
+            Session session;QVERIFY(session.loadProject(moved+"/song.json"));
+            QVERIFY2(session.message().contains("Found moved audio"),qPrintable(session.message()));QVERIFY(session.dirty());
+            QCOMPARE(session.trackSources()[2].toString(),QString("loop.wav · 0.10 s · mono"));
+            QCOMPARE(session.clipRanges()[2],QVariant(QVariantList{480.0,960.0,false}));
+            QVERIFY(session.saveProject(moved+"/song.json"));QVERIFY(!session.dirty());
+            QVERIFY(bytesOf(moved+"/song.json").contains(QFileInfo(moved+"/audio/loop.wav").absoluteFilePath().toUtf8()));
+        }
+        // The saved absolute path wins whenever it exists: copying a project
+        // folder does not silently switch it to the copy's audio.
+        const auto copy=root.filePath("copy");QVERIFY(QDir().mkpath(copy+"/audio"));
+        QVERIFY(QFile::copy(moved+"/song.json",copy+"/song.json"));
+        writeWav(copy+"/audio/loop.wav",1,48000,std::vector<qint16>(4800,500));
+        {
+            Session session;QVERIFY(session.loadProject(copy+"/song.json"));QVERIFY(!session.dirty());
+            QVERIFY(!session.message().contains("moved"));
+            QCOMPARE(session.waveform(2,1)[0].toList()[1].toFloat(),479.0F*64/32768); // the original ramp, not the copy's constant
+        }
+        // Missing audio: relink keeps the range, refuses a file too short for it.
+        QVERIFY(QFile::remove(moved+"/audio/loop.wav"));
+        Session session;QVERIFY(session.loadProject(moved+"/song.json"));
+        QVERIFY(session.message().contains("Missing audio"));QCOMPARE(session.trackSources()[2].toString(),QString("Missing: loop.wav"));
+        const auto track=session.trackIds()[2].toString();
+        const auto shortFile=root.filePath("short.wav");writeWav(shortFile,1,48000,std::vector<qint16>(900,1));
+        QVERIFY(session.relinkAudio(track,shortFile));QTRY_VERIFY(!session.importing());
+        QVERIFY(session.message().startsWith("Relink refused"));QCOMPARE(session.trackSources()[2].toString(),QString("Missing: loop.wav"));
+        QVERIFY(!session.relinkAudio(session.trackIds()[1].toString(),shortFile)); // MIDI track
+        QVERIFY(!session.relinkAudio(session.trackIds()[0].toString(),shortFile)); // built-in pulse
+        const auto replacement=root.filePath("found/loop-found.wav");QVERIFY(QDir().mkpath(root.filePath("found")));writeWav(replacement,1,48000,ramp);
+        QVERIFY(session.relinkAudio(track,replacement));QTRY_VERIFY(!session.importing());
+        QCOMPARE(session.trackSources()[2].toString(),QString("loop-found.wav · 0.10 s · mono"));
+        QCOMPARE(session.clipRanges()[2],QVariant(QVariantList{480.0,960.0,false}));QCOMPARE(session.undoText(),QString("Undo track 3 audio relink"));
+        session.undo();QCOMPARE(session.trackSources()[2].toString(),QString("Missing: loop.wav"));session.redo();
+        // Collect copies outside audio beside the project, never overwriting.
+        const auto existing=moved+"/song-assets/loop-found.wav";QVERIFY(QDir().mkpath(moved+"/song-assets"));
+        {QFile f(existing);QVERIFY(f.open(QIODevice::WriteOnly));f.write("someone else's file");}
+        const auto sourceBytes=bytesOf(replacement);
+        QVERIFY(session.collectAssets());QVERIFY2(session.message().contains("1 copied"),qPrintable(session.message()));
+        QCOMPARE(bytesOf(existing),QByteArray("someone else's file"));QCOMPARE(bytesOf(replacement),sourceBytes);
+        QCOMPARE(bytesOf(moved+"/song-assets/loop-found-2.wav"),sourceBytes);
+        QCOMPARE(session.undoText(),QString("Undo audio collection"));
+        QVERIFY(session.saveProject(moved+"/song.json"));
+        QVERIFY(bytesOf(moved+"/song.json").contains("\"relative\": \"song-assets/loop-found-2.wav\""));
+        QVERIFY(session.collectAssets());QVERIFY(session.message().contains("already inside"));
+        session.undo();QVERIFY(session.dirty()); // back to the outside path
+        QVERIFY(session.collectAssets());QVERIFY2(session.message().contains("0 copied, 1 already there"),qPrintable(session.message()));
+        Session unsaved;QVERIFY(!unsaved.collectAssets());QVERIFY(unsaved.message().contains("Save the project first"));
+    }
+    void qmlRelinkMissingAudio() {
+        QTemporaryDir root;const auto audio=root.filePath("a.wav"),project=root.filePath("p.json");
+        std::vector<qint16> tone(4800);for(std::size_t i=0;i<tone.size();++i)tone[i]=static_cast<qint16>(i%300*50);
+        writeWav(audio,1,48000,tone);
+        {Session s;QVERIFY(s.importAudio(s.trackIds()[0].toString(),audio));QTRY_VERIFY(!s.importing());QVERIFY(s.saveProject(project));}
+        QVERIFY(QFile::remove(audio));
+        Session session;QVERIFY(session.loadProject(project));QCOMPARE(session.trackSources()[0].toString(),QString("Missing: a.wav"));
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* r,const QString& name)->QQuickItem* {
+            if(r->objectName()==name && r->isVisible())return r;
+            for(auto* c:r->childItems())if(auto* m=findItem(c,name))return m;
+            return nullptr;
+        };
+        QCOMPARE(findItem(window->contentItem(),"trackSource0")->property("text").toString(),QString("Missing: a.wav"));
+        const auto moved=root.filePath("moved.wav");writeWav(moved,1,48000,tone);
+        auto* path=findItem(window->contentItem(),"audioPath0");QVERIFY(path);path->forceActiveFocus();
+        for(const QChar c:moved)QTest::keyClick(window,c.toLatin1());
+        auto* relink=findItem(window->contentItem(),"relinkAudio0");QVERIFY(relink);
+        QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,relink->mapToScene(QPointF(relink->width()/2,relink->height()/2)).toPoint());
+        QTRY_COMPARE(session.trackSources()[0].toString(),QString("moved.wav · 0.10 s · mono"));
+        QVERIFY(findItem(window->contentItem(),"waveform0"));QVERIFY(session.dirty());
+        QVERIFY(!findItem(window->contentItem(),"relinkAudio1")); // MIDI track: no relink
+    }
+    void autosaveAndCrashRecovery() {
+        QTemporaryDir recovery,work;
+        qputenv("FL_LIVE_RECOVERY_DIR",recovery.path().toUtf8());
+        const auto cleanup=qScopeGuard([]{qunsetenv("FL_LIVE_RECOVERY_DIR");});
+        const auto bytesOf=[](const QString& path){QFile f(path);return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();};
+        // A real crash: the probe saves, edits, autosaves and aborts.
+        const auto probe=qEnvironmentVariable("FL_LIVE_SAVE_PROBE");QVERIFY2(!probe.isEmpty(),"FL_LIVE_SAVE_PROBE not set");
+        QProcess crashed;crashed.start(probe,{"crash",work.path()});
+        QVERIFY(crashed.waitForFinished(20000));QCOMPARE(crashed.exitStatus(),QProcess::CrashExit);
+        const auto snapshotPath=QString::fromUtf8(crashed.readAllStandardOutput()).trimmed();
+        QVERIFY(QFile::exists(snapshotPath));QVERIFY(snapshotPath.startsWith(recovery.path()));
+        const auto project=work.filePath("crashed.json");const auto manual=bytesOf(project);
+        QCOMPARE(readAuthoredProject(project).content.tempo,120); // autosave never wrote the project file
+        // Invalid snapshots are listed with a reason and left alone.
+        const auto garbage=QDir(recovery.path()).filePath("garbage.fl-live-recovery.json");
+        {QFile f(garbage);QVERIFY(f.open(QIODevice::WriteOnly));f.write("{\"format\":\"fl-live-recovery\"");}
+        const auto truncated=QDir(recovery.path()).filePath("truncated.fl-live-recovery.json");
+        {QFile f(truncated);QVERIFY(f.open(QIODevice::WriteOnly));f.write(bytesOf(snapshotPath).left(200));}
+        Session session;
+        const auto candidates=session.recoveryCandidates();QCOMPARE(candidates.size(),3);
+        QVariantMap valid;int invalid=0;
+        for(const auto& c:candidates){const auto m=c.toMap();if(m["valid"].toBool())valid=m;else{++invalid;QVERIFY(!m["reason"].toString().isEmpty());}}
+        QCOMPARE(invalid,2);QCOMPARE(valid["file"].toString(),snapshotPath);QCOMPARE(valid["project"].toString(),project);QCOMPARE(valid["tracks"].toInt(),3);
+        QVERIFY(!session.restoreRecovery(garbage));QVERIFY(QFile::exists(garbage));
+        // Restore: the crashed edits come back unsaved; the manual save is unchanged until Save.
+        QVERIFY(session.restoreRecovery(snapshotPath));
+        QCOMPARE(session.tempo(),141);QCOMPARE(session.trackCount(),3);QVERIFY(session.dirty());
+        QCOMPARE(session.projectPath(),project);QCOMPARE(bytesOf(project),manual);
+        QVERIFY(!QFile::exists(snapshotPath));QVERIFY(QFile::exists(session.autosaveFile())); // replaced by this session's own snapshot
+        QCOMPARE(session.recoveryCandidates().size(),2); // only the invalid ones remain listed
+        QVERIFY(session.saveProject(project));QVERIFY(!session.dirty());QCOMPARE(readAuthoredProject(project).content.tempo,141);
+        QVERIFY(!QFile::exists(session.autosaveFile()));
+        // Restoring is refused over unsaved edits; Discard removes one file only.
+        session.setTempo(150);QVERIFY(!session.restoreRecovery(garbage));
+        QVERIFY(session.discardRecovery(garbage));QVERIFY(!QFile::exists(garbage));QVERIFY(QFile::exists(truncated));
+        QVERIFY(!session.discardRecovery(work.filePath("crashed.json")));QVERIFY(QFile::exists(project)); // not a listed snapshot
+        // Autosave only while dirty, never to the project; a running session's
+        // snapshot is not offered to another session.
+        QVERIFY(session.autosaveNow());const auto own=session.autosaveFile();QVERIFY(QFile::exists(own));
+        Session other;
+        for(const auto& c:other.recoveryCandidates())QVERIFY(c.toMap()["file"].toString()!=own);
+        session.undo();QVERIFY(!session.dirty());QVERIFY(!session.autosaveNow());
+        // A normal shutdown removes its snapshot.
+        QString removed;
+        {Session temporary;temporary.setTempo(99);QVERIFY(temporary.autosaveNow());removed=temporary.autosaveFile();QVERIFY(QFile::exists(removed));}
+        QVERIFY(!QFile::exists(removed));
+        QDir dir(recovery.path());QCOMPARE(dir.entryList({"*.fl-live-recovery.json"}).size(),2); // truncated + the live session's
+        // The banner offers Restore for a valid snapshot through the UI.
+        QVERIFY(QDir().mkpath(work.filePath("second")));
+        QProcess again;again.start(probe,{"crash",work.filePath("second")});
+        QVERIFY(again.waitForFinished(20000));QCOMPARE(again.exitStatus(),QProcess::CrashExit);
+        Session fresh;
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&fresh);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* r,const QString& name)->QQuickItem* {
+            if(r->objectName()==name && r->isVisible())return r;
+            for(auto* c:r->childItems())if(auto* m=findItem(c,name))return m;
+            return nullptr;
+        };
+        int validIndex=-1;
+        for(int i=0;i<fresh.recoveryCandidates().size();++i)if(fresh.recoveryCandidates()[i].toMap()["valid"].toBool())validIndex=i;
+        QVERIFY(validIndex>=0);
+        QVERIFY(window->grabWindow().save("desktop-recovery.png"));
+        auto* restore=findItem(window->contentItem(),QString("restoreRecovery%1").arg(validIndex));QVERIFY(restore);
+        QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,restore->mapToScene(QPointF(restore->width()/2,restore->height()/2)).toPoint());
+        QTRY_COMPARE(fresh.tempo(),141);QVERIFY(fresh.dirty());
+        QCOMPARE(fresh.projectPath(),work.filePath("second/crashed.json"));
+    }
+    void exportRenderPolicy() {
+        QTemporaryDir directory;
+        Session session;session.setTempo(133); // unsaved edit: the export must use it
+        QVERIFY(session.dirty());
+        const auto bar=exportFrames(133,1),twoBars=exportFrames(133,2);
+        const auto pulse=renderClip(pulseClip(133),133,twoBars),steps=renderClip(patternClip(StepPattern{},133),133,twoBars);
+        // Independent expectation: centered template, levels 70 and 25.
+        const auto mix=[&](std::size_t frame){return 0.7F*pulse[frame]+0.25F*steps[frame];};
+        const auto run=[&](const QString& name,int start,int bars,int tail,int channels,const char* format){
+            QVERIFY(session.exportAudio(directory.filePath(name),start,bars,tail,channels,format));QTRY_VERIFY(!session.exporting());
+            QVERIFY2(QFile::exists(directory.filePath(name)),qPrintable(session.message()));
+        };
+        struct Case{const char* name;int channels;const char* format;int code,bits;float scale;};
+        for(const Case c:{Case{"s16.wav",2,"pcm16",1,16,32767.0F},Case{"m24.wav",1,"pcm24",1,24,8388607.0F},Case{"s32.wav",2,"float32",3,32,0.0F}}) {
+            run(c.name,2,1,100,c.channels,c.format);
+            const auto w=readWav(directory.filePath(c.name));
+            QCOMPARE(w.format,c.code);QCOMPARE(w.bits,c.bits);QCOMPARE(w.channels,c.channels);QCOMPARE(w.rate,48000);
+            QCOMPARE(w.blockAlign,c.channels*c.bits/8);QCOMPARE(w.byteRate,48000*c.channels*c.bits/8);
+            const auto frames=static_cast<std::size_t>(twoBars-bar)+4800; // bar 2 plus a 100 ms tail
+            QCOMPARE(w.samples.size(),frames*static_cast<std::size_t>(c.channels));
+            float worst=0;
+            for(std::size_t f=0;f<frames;++f)for(int ch=0;ch<c.channels;++ch) {
+                const float value=f<twoBars-bar ? mix(static_cast<std::size_t>(bar)+f) : 0.0F; // tail: every track stopped
+                const float expected=c.scale>0 ? static_cast<float>(std::lround(std::clamp(value,-1.0F,1.0F)*c.scale)) : value;
+                worst=std::max(worst,std::abs(w.samples[f*static_cast<std::size_t>(c.channels)+static_cast<std::size_t>(ch)]-expected));
+            }
+            QVERIFY2(worst<=(c.scale>0 ? 1.0F : 1e-7F),qPrintable(QString("%1 differs by %2").arg(c.name).arg(worst)));
+        }
+        // Mono is the (L + R) / 2 downmix: with hard pan the level halves.
+        QVERIFY(session.setPan(session.trackIds()[0].toString(),-100));QVERIFY(session.setMute(session.trackIds()[1].toString(),true));
+        run("pan-mono.wav",1,1,0,1,"float32");run("pan-stereo.wav",1,1,0,2,"float32");
+        const auto mono=readWav(directory.filePath("pan-mono.wav")),stereo=readWav(directory.filePath("pan-stereo.wav"));
+        for(std::size_t f=0;f<static_cast<std::size_t>(bar);f+=101) {
+            QCOMPARE(stereo.samples[2*f+1],0.0F);QCOMPARE(mono.samples[f],(stereo.samples[2*f]+stereo.samples[2*f+1])/2);
+        }
+        // Refused options leave no file and no partial file.
+        const auto refused=directory.filePath("refused.wav");
+        for(const auto& bad:std::vector<std::tuple<int,int,int,int,QString>>{{0,1,0,2,"pcm16"},{257,1,0,2,"pcm16"},{1,0,0,2,"pcm16"},{1,65,0,2,"pcm16"},
+                                                                          {1,1,-1,2,"pcm16"},{1,1,10001,2,"pcm16"},{1,1,0,3,"pcm16"},{1,1,0,2,"mp3"}}) {
+            QVERIFY(!session.exportAudio(refused,std::get<0>(bad),std::get<1>(bad),std::get<2>(bad),std::get<3>(bad),std::get<4>(bad)));
+            QVERIFY(!session.exporting());
+        }
+        QVERIFY(!QFile::exists(refused));QVERIFY(!QFile::exists(refused+".part"));
+        // The longest range stays within the WAV size limit and starts on its bar.
+        session.setTempo(300);QCOMPARE(session.tempo(),300);run("late.wav",256,1,0,1,"pcm16");
+        QCOMPARE(readWav(directory.filePath("late.wav")).samples.size(),static_cast<std::size_t>(exportFrames(300,256)-exportFrames(300,255)));
+        // Actual UI: options chosen with keyboard and the combo boxes.
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* r,const QString& name)->QQuickItem* {
+            if(r->objectName()==name && r->isVisible())return r;
+            for(auto* c:r->childItems())if(auto* m=findItem(c,name))return m;
+            return nullptr;
+        };
+        findItem(window->contentItem(),"exportFile")->setProperty("text",directory.filePath("ui.wav"));
+        findItem(window->contentItem(),"exportStart")->forceActiveFocus();QTest::keyClick(window,Qt::Key_Up);
+        findItem(window->contentItem(),"exportTail")->forceActiveFocus();QTest::keyClick(window,Qt::Key_Up);
+        findItem(window->contentItem(),"exportBars")->forceActiveFocus();for(int i=0;i<3;++i)QTest::keyClick(window,Qt::Key_Down);
+        findItem(window->contentItem(),"exportChannels")->setProperty("currentIndex",1);
+        findItem(window->contentItem(),"exportFormat")->setProperty("currentIndex",1);
+        auto* button=findItem(window->contentItem(),"exportWavButton");
+        QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,button->mapToScene(QPointF(button->width()/2,button->height()/2)).toPoint());
+        QTRY_VERIFY(!session.exporting());
+        const auto ui=readWav(directory.filePath("ui.wav"));
+        QCOMPARE(ui.channels,1);QCOMPARE(ui.bits,24);
+        QCOMPARE(ui.samples.size(),static_cast<std::size_t>(exportFrames(300,2)-exportFrames(300,1))+4800); // bar 2, 1 bar, 100 ms
+    }
+    void bundledExamplesOpen() {
+        // Every shipped example opens cleanly (no missing audio, no
+        // relocation), launches each scene and exports audible stereo.
+        const QDir examples(qEnvironmentVariable("FL_LIVE_EXAMPLES_DIR"));
+        QVERIFY2(examples.exists(),"FL_LIVE_EXAMPLES_DIR not set");
+        const auto files=examples.entryList({"*.json"},QDir::Files);QVERIFY(files.size()>=2);
+        QTemporaryDir out;
+        for(const auto& name:files) {
+            Session session;QVERIFY2(session.loadProject(examples.filePath(name)),qPrintable(name+": "+session.message()));
+            QCOMPARE(session.message(),QString("Project opened. Launch clips, then press Play."));QVERIFY(!session.dirty());
+            for(const auto& source:session.trackSources())QVERIFY(!source.toString().startsWith("Missing"));
+            session.play();
+            for(const auto& scene:session.sceneIds()) {
+                QVERIFY(session.selectScene(scene.toString()));QVERIFY(session.launchScene(scene.toString(),"immediate"));
+                QTRY_COMPARE(session.sceneState(),QString("Active"));
+            }
+            session.stop();QTRY_VERIFY(session.canEdit());
+            QVERIFY(session.exportWav(out.filePath(name+".wav"),2));QTRY_VERIFY(!session.exporting());
+            const auto frames=readStereo(out.filePath(name+".wav"));
+            QVERIFY2(std::any_of(frames.begin(),frames.end(),[](const auto& f){return f[0]!=0 || f[1]!=0;}),qPrintable(name+" exported silence"));
+            QVERIFY(!session.dirty());
+        }
+    }
+    void keyboardContractAndFocus() {
+        QTemporaryDir directory;
+        Session session;
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* r,const QString& name)->QQuickItem* {
+            if(r->objectName()==name && r->isVisible())return r;
+            for(auto* c:r->childItems())if(auto* m=findItem(c,name))return m;
+            return nullptr;
+        };
+        // Shortcut table: every sequence is declared once.
+        QStringList sequences;
+        for(auto* shortcut:window->findChildren<QObject*>()) if(QString(shortcut->metaObject()->className())=="QQuickShortcut") {
+            QStringList own;
+            for(const auto& v:shortcut->property("sequences").toList()) {
+                // Standard keys expand to every platform binding they stand for.
+                if(v.typeId()==QMetaType::Int)for(const auto& k:QKeySequence::keyBindings(static_cast<QKeySequence::StandardKey>(v.toInt())))own.append(k.toString());
+                else own.append(v.toString());
+            }
+            if(own.isEmpty())own.append(QKeySequence(shortcut->property("sequence").toString()).toString());
+            own.removeDuplicates();sequences+=own;
+        }
+        auto unique=sequences;unique.removeDuplicates();
+        QVERIFY2(unique.size()==sequences.size() && sequences.size()>=9,qPrintable(sequences.join(" | ")));
+        // Space toggles transport when no control would consume it.
+        window->contentItem()->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_Space);session.tick();QTRY_VERIFY(session.running());
+        QTest::keyClick(window,Qt::Key_Space);session.tick();QTRY_VERIFY(!session.running());
+        // In a text field, Space and Ctrl+Z are text editing, not transport or history.
+        session.setTempo(121);
+        auto* path=findItem(window->contentItem(),"projectFile");path->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_End);QTest::keyClick(window,Qt::Key_Space);session.tick();
+        QVERIFY(!session.running());QVERIFY(path->property("text").toString().endsWith(" "));
+        QTest::keyClick(window,Qt::Key_Z,Qt::ControlModifier);QCOMPARE(session.tempo(),121);
+        // On a focused button, Space presses that button instead.
+        auto* stopTrack=findItem(window->contentItem(),"stopTrack0");stopTrack->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_Space);session.tick();QVERIFY(!session.running());
+        // Ctrl+S saves to the path field; Ctrl+Shift+A/M add tracks.
+        path->setProperty("text",directory.filePath("keys.json"));window->contentItem()->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_S,Qt::ControlModifier);QVERIFY(QFile::exists(directory.filePath("keys.json")));QVERIFY(!session.dirty());
+        QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier|Qt::ShiftModifier);QTRY_COMPARE(session.trackCount(),3);
+        QTest::keyClick(window,Qt::Key_M,Qt::ControlModifier|Qt::ShiftModifier);QTRY_COMPARE(session.trackCount(),4);
+        QCOMPARE(session.trackKinds(),(QVariantList{"audio","midi","audio","midi"}));
+        // Ctrl+E exports with the row's settings.
+        findItem(window->contentItem(),"exportFile")->setProperty("text",directory.filePath("keys.wav"));
+        window->contentItem()->forceActiveFocus();QTest::keyClick(window,Qt::Key_E,Qt::ControlModifier);
+        QTRY_VERIFY(!session.exporting());QVERIFY(QFile::exists(directory.filePath("keys.wav")));
+        // Keyboard deletion keeps focus on the next track's Delete button,
+        // then on the previous one, then on Add audio track.
+        auto* del=findItem(window->contentItem(),"deleteTrack1");del->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_Space);QTRY_COMPARE(session.trackCount(),3);
+        QTRY_COMPARE(window->activeFocusItem()->objectName(),QString("deleteTrack1"));
+        QCOMPARE(session.trackKinds(),(QVariantList{"audio","audio","midi"}));
+        findItem(window->contentItem(),"deleteTrack2")->forceActiveFocus();
+        QTest::keyClick(window,Qt::Key_Space);QTRY_COMPARE(session.trackCount(),2);
+        QTRY_COMPARE(window->activeFocusItem()->objectName(),QString("deleteTrack1"));
+        QTest::keyClick(window,Qt::Key_Space);QTRY_COMPARE(session.trackCount(),1);
+        QTest::keyClick(window,Qt::Key_Space);QTRY_COMPARE(session.trackCount(),0);
+        QTRY_COMPARE(window->activeFocusItem()->objectName(),QString("addAudioTrack"));
+        // Undo from the keyboard restores tracks; focus stays on a visible control.
+        QTest::keyClick(window,Qt::Key_Z,Qt::ControlModifier);QTRY_COMPARE(session.trackCount(),1);
+        QVERIFY(window->activeFocusItem() && window->activeFocusItem()->isVisible());
+        QTest::keyClick(window,Qt::Key_Z,Qt::ControlModifier|Qt::ShiftModifier);QTRY_COMPARE(session.trackCount(),0);
+        // Shortcuts are inactive while a dialog is open.
+        session.undo();QCOMPARE(session.trackCount(),1);
+        findItem(window->contentItem(),"renameTrack0")->forceActiveFocus();QTest::keyClick(window,Qt::Key_Space);
+        QTRY_VERIFY(window->findChild<QObject*>("renameDialog")->property("visible").toBool());
+        QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier|Qt::ShiftModifier);QCOMPARE(session.trackCount(),1);
+        QTest::keyClick(window,Qt::Key_Escape);QTRY_VERIFY(!window->findChild<QObject*>("renameDialog")->property("visible").toBool());
+        QTRY_COMPARE(window->activeFocusItem()->objectName(),QString("renameTrack0")); // focus returns to the opener
+    }
+    void accessibleNames() {
+        // Every visible interactive control has an accessible name, and no
+        // two controls share one, so a screen reader can tell them apart.
+        Session session;QVERIFY(session.addTrack("audio"));QVERIFY(session.addTrack("midi"));
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        QAccessible::setActive(true);
+        QStringList names,unnamed;int controls=0;
+        std::function<void(QQuickItem*)> walk=[&](QQuickItem* item) {
+            if(!item->isVisible())return;
+            const QString type=item->metaObject()->className();
+            // A ComboBox's own text field is part of the combo, which is named.
+            const bool insideCombo=item->parentItem() && item->parentItem()->inherits("QQuickComboBox");
+            const bool control=!insideCombo && (item->inherits("QQuickAbstractButton") || item->inherits("QQuickSpinBox") ||
+                               item->inherits("QQuickComboBox") || item->inherits("QQuickTextField") || item->inherits("QQuickProgressBar"));
+            if(control) {
+                ++controls;
+                auto* iface=QAccessible::queryAccessibleInterface(item);
+                const auto name=iface ? iface->text(QAccessible::Name) : QString();
+                if(name.trimmed().isEmpty())unnamed.append(type+"/"+item->objectName());else names.append(name);
+                if(iface)QVERIFY2(iface->role()!=QAccessible::NoRole,qPrintable(name));
+            }
+            for(auto* child:item->childItems())walk(child);
+        };
+        walk(window->contentItem());
+        QVERIFY(controls>60);
+        QVERIFY2(unnamed.isEmpty(),qPrintable("unnamed: "+unnamed.join(", ")));
+        QStringList duplicates;for(const auto& n:names)if(names.count(n)>1 && !duplicates.contains(n))duplicates.append(n);
+        QVERIFY2(duplicates.isEmpty(),qPrintable("duplicate names: "+duplicates.join(", ")));
+        // State is exposed too: a checked Mute reports the checked state.
+        QVERIFY(session.setMute(session.trackIds()[0].toString(),true));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* r,const QString& name)->QQuickItem* {
+            if(r->objectName()==name && r->isVisible())return r;
+            for(auto* c:r->childItems())if(auto* m=findItem(c,name))return m;
+            return nullptr;
+        };
+        QTRY_VERIFY(QAccessible::queryAccessibleInterface(findItem(window->contentItem(),"mute0"))->state().checked);
+        QAccessible::setActive(false);
+    }
+    void generalDirtyAndHistoryBoundaries() {
+        QTemporaryDir directory;const auto path=directory.filePath("bounds.json");
+        Session session;QVERIFY(session.addTrack("audio"));QVERIFY(session.addTrack("midi"));
+        QVERIFY(session.saveProject(path));QVERIFY(!session.dirty());
+        // Selection, pattern choice, scene choice and export are not document edits.
+        const auto undo=session.undoText();
+        QVERIFY(session.editPattern(session.trackIds()[3].toString()));session.selectStep(2);
+        QVERIFY(session.createScene());session.undo(); // structure edit then back
+        QVERIFY(!session.dirty());QCOMPARE(session.undoText(),undo);
+        QVERIFY(session.selectScene(session.sceneIds()[0].toString()));
+        QVERIFY(session.exportWav(directory.filePath("x.wav"),1));QTRY_VERIFY(!session.exporting());
+        QVERIFY(!session.dirty());QCOMPARE(session.undoText(),undo);
+        // Returning to saved content clears dirty across structure edits.
+        const auto ids=session.trackIds();
+        QVERIFY(session.deleteTrack(ids[2].toString()));QVERIFY(session.dirty());
+        QVERIFY(session.duplicateTrack(ids[0].toString()));session.undo();session.undo();QVERIFY(!session.dirty());
+        QCOMPARE(session.trackIds(),ids);
+        // Failed operations add no history and keep the document.
+        QVERIFY(!session.deleteTrack("999"));QVERIFY(!session.duplicateTrack("0"));QVERIFY(!session.addTrack("bus"));
+        QVERIFY(!session.setClipRange(ids[1].toString(),0,10,true));QVERIFY(!session.relinkAudio(ids[1].toString(),"/nope.wav"));
+        QCOMPARE(session.undoText(),undo);QVERIFY(!session.dirty());
+        // History stays bounded at 128 across mixed structure and content edits.
+        for(int n=0;n<70;++n){QVERIFY(session.addTrack(n%2 ? "midi" : "audio"));QVERIFY(session.deleteTrack(session.trackIds().last().toString()));}
+        int undos=0;while(session.canUndo() && undos<200){session.undo();++undos;}
+        QCOMPARE(undos,128);QVERIFY(!session.canUndo());QVERIFY(!session.dirty()); // add/delete pairs: equal content is clean
+        int redos=0;while(session.canRedo() && redos<200){session.redo();++redos;}
+        QCOMPARE(redos,128);QCOMPARE(session.trackIds(),ids);QVERIFY(!session.dirty());
+        // New is refused while dirty, then resets path, history and checkpoint.
+        session.setTempo(99);QVERIFY(!session.newProject());QVERIFY(session.message().contains("Save your changes"));QCOMPARE(session.trackCount(),4);
+        session.undo();QVERIFY(session.newProject());
+        QCOMPARE(session.trackCount(),2);QVERIFY(!session.dirty());QVERIFY(!session.canUndo());QCOMPARE(session.tempo(),120);
+        QVERIFY(session.projectPath()!=path);
+        // The new project cannot silently overwrite the file it replaced.
+        QVERIFY(!session.saveProject(path));QVERIFY(session.message().contains("already exists"));
+        QCOMPARE(readAuthoredProject(path).identities.tracks.size(),4u);
+    }
+    void automationIdentityStability() {
+        // Lanes are keyed by stable track IDs through rename, duplicate,
+        // delete, Undo and Save/Open.
+        QTemporaryDir directory;const auto path=directory.filePath("auto.json");
+        auto project=defaultProject();
+        const auto pulse=project.identities.tracks[0].id;
+        project.content.automation={{pulse,AutomatedParameter::level,{{0,0},{400,100}}}};
+        writeAuthoredProject(path,project);
+        Session session;QVERIFY(session.loadProject(path));
+        const auto id=session.trackIds()[0].toString();
+        QVERIFY(session.renameTrack(id,"Swell"));QVERIFY(session.duplicateTrack(id));
+        const auto copy=session.trackIds()[2].toString();
+        QVERIFY(session.saveProject(path));
+        auto saved=readAuthoredProject(path);
+        QCOMPARE(saved.content.automation.size(),2u);
+        QCOMPARE(saved.content.automation[0].track.value,pulse.value);
+        QCOMPARE(QString::number(saved.content.automation[1].track.value),copy);
+        QCOMPARE(saved.content.automation[1].points,saved.content.automation[0].points);
+        QVERIFY(session.deleteTrack(id));QVERIFY(session.saveProject(path));
+        saved=readAuthoredProject(path);
+        QCOMPARE(saved.content.automation.size(),1u);QCOMPARE(QString::number(saved.content.automation[0].track.value),copy);
+        session.undo();QCOMPARE(session.trackIds()[0].toString(),id);
+        QVERIFY(session.saveProject(path));QCOMPARE(readAuthoredProject(path).content.automation.size(),2u);
+        // The rendered export follows the lane: silence at the song start, full level after a bar.
+        session.setTempo(120);QVERIFY(session.setMute(session.trackIds()[1].toString(),true));QVERIFY(session.setMute(copy,true));
+        QVERIFY(session.exportAudio(directory.filePath("auto.wav"),1,2,0,2,"float32"));QTRY_VERIFY(!session.exporting());
+        const auto w=readWav(directory.filePath("auto.wav"));const auto source=pulseClip(120);
+        QCOMPARE(w.samples[0],0.0F);
+        for(std::size_t f=1;f<96000;f+=4999)QCOMPARE(w.samples[2*f],static_cast<float>(static_cast<double>(f)/96000.0)*source.samples[f%source.samples.size()]);
+        for(std::size_t f=96000;f<192000;f+=4999)QCOMPARE(w.samples[2*f],source.samples[f%source.samples.size()]);
     }
     void qmlMixerInput() {
         Session session;

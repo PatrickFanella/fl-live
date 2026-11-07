@@ -1,0 +1,38 @@
+{
+  "verified_at": "2026-11-07T08:18:14.783374+00:00",
+  "base": "PR #119 head",
+  "issues": [
+    60
+  ],
+  "scope": "Asset reference, relocation, relinking and collect-into-project policies for imported audio",
+  "environment": "Kvant, pinned CI image (Qt 6.12.0), docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 20,
+      "total": 20,
+      "desktop_tests": "36 Qt test functions passed",
+      "note": "Two consecutive clean runs; an earlier run failed only because an older test expected the previous lower-case missing-audio message, fixed here"
+    },
+    "document-io-sanitize": {
+      "passed": 8,
+      "total": 8
+    }
+  },
+  "verified_behaviors": [
+    "Relative path recorded only for assets inside the project folder (feature asset-relative-v1); malformed or escaping relative paths refused",
+    "Moved project folder: assets found at the recorded relative location, reported explicitly, project unsaved until Save, range preserved",
+    "Copied project folder: the existing absolute file is used; no silent substitution by the copy's same-named file",
+    "Missing asset: Relink keeps range and loop, refuses a file shorter than the range, is one Undo step; actual pointer/keyboard relink restores playback",
+    "Collect: copies outside assets into NAME-assets/, never overwrites (name collision gets -2), reuses identical bytes, leaves sources untouched, one Undo step, refused before first Save"
+  ],
+  "source_sha256": {
+    "apps/desktop/authored_project.hpp": "7df3b7dd435bda087a1b417cb5d11bca2ca06d816d8ba836c7dde9710d1e8502",
+    "apps/desktop/authored_project.cpp": "14aa16459f85d7705635caa171acbcab3a08f4b5b6046962ce6608dfc91b0176",
+    "apps/desktop/session.hpp": "e4f165b3ea966315b47df95a935c99c4f612685e43d5ca9d6ba4beba4f5f40ec",
+    "apps/desktop/session.cpp": "b5cc0c771ca8b7232466d9f3b26373054385293618a152c9be64a451a19b8cab",
+    "apps/desktop/Main.qml": "646bd645d2cf002d4e360969f2e20555cc0521b3bd094c247081aa4ca0380495",
+    "tests/desktop_tests.cpp": "a82297691cf83f68b31afcc975d78a2baaf80e4e36e7ff8b1887df4ffaa920e1",
+    "tests/authored_project_tests.cpp": "7455d8b3c94846eeda81257a33514bef8c909a9ff201774418c53afab410d01b"
+  },
+  "limits": "No filename search, no embedded media, no non-WAV formats. Offscreen checks only."
+}

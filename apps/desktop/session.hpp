@@ -12,7 +12,9 @@
 #include <optional>
 #include <type_traits>
 #include <functional>
+#include <map>
 #include <QStringList>
+#include <QLockFile>
 
 // QObject and the sole command producer live on the GUI thread. Preview renders
 // there too; a connected backend exclusively owns processing instead.
@@ -62,6 +64,9 @@ class Session final : public QObject {
     Q_PROPERTY(QVariantList trackSources READ trackSources NOTIFY changed)
     Q_PROPERTY(int patternTrackIndex READ patternTrackIndex NOTIFY changed)
     Q_PROPERTY(bool importing READ importing NOTIFY changed)
+    Q_PROPERTY(QVariantList clipFrames READ clipFrames NOTIFY changed)
+    Q_PROPERTY(QVariantList recoveryCandidates READ recoveryCandidates NOTIFY recoveryChanged)
+    Q_PROPERTY(QVariantList clipRanges READ clipRanges NOTIFY changed)
     Q_PROPERTY(double exportProgress READ exportProgress NOTIFY changed)
 public:
     explicit Session(fl_live::PipeWireConfig config = {}, QObject* parent = nullptr);
@@ -107,6 +112,37 @@ public:
     // once transport is stopped. One import at a time.
     Q_INVOKABLE bool importAudio(const QString& trackId, const QString& path);
     Q_INVOKABLE void cancelImport();
+    // Points an imported clip at another file, keeping its range; refused
+    // when the file is shorter than the range. Decodes on the worker.
+    Q_INVOKABLE bool relinkAudio(const QString& trackId, const QString& path);
+    // Copies imported files that live outside the project folder into
+    // NAME-assets/ beside the saved project, never overwriting a file, and
+    // repoints the clips as one Undo step. Source files are not modified.
+    Q_INVOKABLE bool collectAssets();
+    // Crash recovery. While there are unsaved edits, the session writes an
+    // autosave snapshot to the recovery folder (FL_LIVE_RECOVERY_DIR, or the
+    // per-user application data folder) every autosave_interval_ms, never to
+    // the project file. A manual save or a normal shutdown removes it. Each
+    // snapshot from a session that is no longer running is a candidate:
+    // {file, project, time, valid, reason}. Restore loads a valid one as
+    // unsaved work for its original project path; Discard deletes one file.
+    // Invalid snapshots are listed with a reason and never removed silently.
+    static constexpr int autosave_interval_ms = 30000;
+    static QString recoveryDirectory();
+    QVariantList recoveryCandidates() const;
+    Q_INVOKABLE bool restoreRecovery(const QString& file);
+    Q_INVOKABLE bool discardRecovery(const QString& file);
+    Q_INVOKABLE void refreshRecovery();
+    bool autosaveNow();
+    QString autosaveFile() const { return autosave_file_; }
+    // Imported clips: decoded frames per track (0 if none), and [start, end,
+    // loop] in source frames. setClipRange takes an exclusive end frame and is
+    // one Undo step. waveform returns bins x [min, max] of the whole source,
+    // prepared on the GUI thread and cached per decoded clip.
+    QVariantList clipFrames() const;
+    QVariantList clipRanges() const;
+    Q_INVOKABLE bool setClipRange(const QString& trackId, double startFrame, double endFrame, bool loop);
+    Q_INVOKABLE QVariantList waveform(int track, int bins) const;
     bool importing() const { return import_ticket_ != 0 || ready_import_.has_value(); }
     int stepCount() const { return pattern().step_count; }
     int selectedStep() const { return selected_step_; }
@@ -144,12 +180,18 @@ public:
     // Starts a background export of the current document while stopped. The
     // job renders an immutable copy, so later edits, playback and history do
     // not affect it. Completion, cancellation and failure are reported by tick().
-    Q_INVOKABLE bool exportWav(const QString& path, int bars);
+    Q_INVOKABLE bool exportWav(const QString& path, int bars); // bars 1..16 from bar 1, stereo PCM16
+    // startBar is 1-based; channels 1 (mono downmix) or 2; format pcm16,
+    // pcm24 or float32. See ExportOptions for the render policy.
+    Q_INVOKABLE bool exportAudio(const QString& path, int startBar, int bars, int tailMs, int channels, const QString& format);
     Q_INVOKABLE void cancelExport();
     bool exporting() const { return static_cast<bool>(export_job_); }
     double exportProgress() const;
     Q_INVOKABLE bool saveProject(const QString& path);
     Q_INVOKABLE bool loadProject(const QString& path);
+    // Starts the default template project, unsaved and with empty history.
+    // Refused while there are unsaved edits, like Open.
+    Q_INVOKABLE bool newProject();
     bool running() const { return status_.running; }
     bool pending() const { return status_.handled_serial < serial_; }
     QString position() const;
@@ -169,6 +211,7 @@ signals:
     void projectPathChanged();
     void documentChanged();
     void sceneSelectionChanged();
+    void recoveryChanged();
 private:
     struct Prepared {
         const fl_live::DocumentRenderPlan mapped;
@@ -176,7 +219,8 @@ private:
         std::unique_ptr<fl_live::PipeWireBackend> backend;
         Prepared(const SessionContent& content, const fl_live::DocumentSnapshot& identities)
             : mapped(identities, contentSources(content, identities), 48000,
-                static_cast<std::uint32_t>(content.tempo)*1000U, {}, contentGains(content, identities)), controller(mapped.plan()) {}
+                static_cast<std::uint32_t>(content.tempo)*1000U, {}, contentGains(content, identities), contentAutomation(content, identities)),
+              controller(mapped.plan()) {}
     };
     using Content = std::shared_ptr<const SessionContent>;
     Content content_ = std::make_shared<const SessionContent>(defaultProject().content);
@@ -188,7 +232,7 @@ private:
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
     enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete, scene_copy, scene_order, track_pan, track_mute, track_solo,
-        track_create, track_duplicate, track_delete, audio_import };
+        track_create, track_duplicate, track_delete, audio_import, clip_range, audio_relink, assets_collect };
     struct HistoryEntry {
         Content content;
         Identities identities;
@@ -217,7 +261,12 @@ private:
     QString import_path_;
     std::optional<fl_live::WavImport> ready_import_;
     void pollImport();
-    QStringList resolveAssets(SessionContent& content) const;
+    bool import_relink_ = false;
+    struct AssetReport { QStringList missing, relocated; QList<std::pair<fl_live::ClipId, QString>> previous; };
+    AssetReport resolveAssets(SessionContent& content, const std::vector<RelativeAsset>& relative, const QString& projectDirectory) const;
+    // Keyed by decoded clip and bin count; the weak pointer rejects a stale
+    // entry if a freed clip's address is reused.
+    mutable std::map<std::pair<const fl_live::AudioClip*, int>, std::pair<std::weak_ptr<const fl_live::AudioClip>, QVariantList>> waveform_cache_;
     void pushHistory(EditKind kind, int index);
     enum class NameKind { track, clip, scene };
     bool rename(const QString& id, const QString& name, NameKind kind);
@@ -242,6 +291,13 @@ private:
     std::shared_ptr<ExportJob> export_job_;
     std::thread export_thread_;
     void finishExport();
+    QTimer autosave_timer_;
+    QString autosave_file_;
+    std::unique_ptr<QLockFile> autosave_lock_;
+    Content autosaved_content_;
+    Identities autosaved_identities_;
+    QVariantList recovery_candidates_;
+    void removeAutosave();
     QTimer timer_;
     fl_live::RenderStatus status_{};
     std::uint64_t serial_ = 0;

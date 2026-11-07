@@ -154,7 +154,151 @@ void generalRejection() {
     CHECK(file.open(QIODevice::ReadOnly));CHECK(file.readAll()==saved);
     rejects([&]{decodeAuthoredProject(QByteArray(4*1024*1024+1024*1024+1,' '));});
 }
+void clipRanges() {
+    auto project=general();
+    {   // Center the imported track so each channel is the raw source.
+        fl_live::SessionDocument document(project.identities);
+        document.setTrackMix(project.identities.tracks[2].id,fl_live::TrackMix{});project.identities=document.snapshot();
+    }
+    auto& wav=*std::find_if(project.content.clips.begin(),project.content.clips.end(),[](const auto& c){return c.audio==AudioSource::wav;});
+    const auto wavId=wav.clip;
+    CHECK(!QJsonDocument::fromJson(encodeAuthoredProject(project)).object()["required_features"].toArray().contains("clip-ranges-v1"));
+    // Ten stereo frames: left n/16, right -n/16.
+    fl_live::AudioClip source{{},true,2};
+    for(int n=0;n<10;++n){source.samples.push_back(static_cast<float>(n)/16);source.samples.push_back(-static_cast<float>(n)/16);}
+    wav.media=std::make_shared<const fl_live::AudioClip>(source);
+    wav.range_start=2;wav.range_length=5;wav.loop=false;
+    validateContent(project.content,project.identities);
+    const auto bytes=encodeAuthoredProject(project);
+    const auto root=QJsonDocument::fromJson(bytes).object();
+    CHECK((root["required_features"].toArray()==QJsonArray{"general-session-v1","clip-ranges-v1"}));
+    auto decoded=decodeAuthoredProject(bytes);
+    auto expected=project.content;
+    for(auto& c:expected.clips)c.media.reset();
+    CHECK(decoded.content==expected);
+    // Source-rate slice: one-shot plays frames 2..6 once from the launch frame.
+    const auto render=[&](const SessionContent& content,std::size_t block) {
+        const fl_live::DocumentRenderPlan plan(project.identities,contentSources(content,project.identities));
+        fl_live::Engine engine(plan.plan());
+        CHECK(engine.schedule(*plan.launch(wavId,13))==fl_live::ScheduleResult::accepted);
+        engine.start();std::vector<float> out(64);
+        for(std::size_t at=0;at<out.size();at+=2*block)CHECK(engine.process(std::span(out).subspan(at,std::min(2*block,out.size()-at)),2));
+        return out;
+    };
+    for(auto block:{1U,7U,257U}) {
+        const auto once=render(project.content,block);
+        for(std::size_t f=0;f<32;++f) {
+            const bool playing=f>=13 && f<18;
+            const float value=playing ? static_cast<float>(f-13+2)/16 : 0;
+            CHECK(once[2*f]==value && once[2*f+1]==-value);
+        }
+        auto looped=project.content;
+        std::find_if(looped.clips.begin(),looped.clips.end(),[&](const auto& c){return c.clip==wavId;})->loop=true;
+        const auto loop=render(looped,block);
+        for(std::size_t f=13;f<32;++f)CHECK(loop[2*f]==static_cast<float>((f-13)%5+2)/16);
+    }
+    // Length 0 means to the end of the source; ranges must stay inside it.
+    const auto fails=[&](std::uint64_t start,std::uint64_t length,bool keepWav) {
+        auto bad=project.content;auto& c=*std::find_if(bad.clips.begin(),bad.clips.end(),[&](const auto& x){return x.clip==wavId;});
+        c.range_start=start;c.range_length=length;
+        if(!keepWav){c.audio=AudioSource::empty;c.asset.clear();c.media.reset();}
+        rejects([&]{validateContent(bad,project.identities);});
+    };
+    fails(10,0,true);fails(9,2,true);fails(0,11,true);fails(1,0,false);
+    auto toEnd=project.content;std::find_if(toEnd.clips.begin(),toEnd.clips.end(),[&](const auto& x){return x.clip==wavId;})->range_length=0;
+    validateContent(toEnd,project.identities);
+    const fl_live::DocumentRenderPlan whole(project.identities,contentSources(toEnd,project.identities));
+    CHECK(std::get<fl_live::AudioClip>(whole.plan().tracks[2].clips[0]).samples.size()==16);
+    // An unresolved clip keeps its saved range and renders silence.
+    CHECK(std::get<fl_live::AudioClip>(fl_live::DocumentRenderPlan(decoded.identities,contentSources(decoded.content,decoded.identities))
+        .plan().tracks[2].clips[0]).samples==std::vector<float>{0.0F});
+    const auto bad=[&](auto edit){auto r=root;edit(r);rejects([&]{decodeAuthoredProject(QJsonDocument(r).toJson());});};
+    const auto range=[&](auto edit){bad([&](auto& r){auto a=r["clips"].toArray();auto c=a[2].toObject();auto g=c["range"].toObject();edit(g);c["range"]=g;a[2]=c;r["clips"]=a;});};
+    bad([](auto& r){r["required_features"]=QJsonArray{"general-session-v1"};});
+    bad([](auto& r){auto a=r["clips"].toArray();auto c=a[2].toObject();c.remove("range");a[2]=c;r["clips"]=a;});
+    bad([](auto& r){auto a=r["clips"].toArray();auto c=a[0].toObject();c["range"]=QJsonObject{};a[0]=c;r["clips"]=a;});
+    range([](auto& g){g["start"]=-1;});range([](auto& g){g["length"]=1.5;});range([](auto& g){g["loop"]=0;});range([](auto& g){g["end"]=3;});
+    range([](auto& g){g["start"]=16777217.0;});
+}
+void relativeAssets() {
+    auto project=general();
+    auto& wav=*std::find_if(project.content.clips.begin(),project.content.clips.end(),[](const auto& c){return c.audio==AudioSource::wav;});
+    const auto wavId=wav.clip;
+    wav.asset="/projects/song/audio/loop.wav";
+    CHECK(assetRelativePath(wav.asset,"/projects/song")=="audio/loop.wav");
+    CHECK(assetRelativePath(wav.asset,"/projects/other").isEmpty() && assetRelativePath(wav.asset,"").isEmpty());
+    const auto outside=QJsonDocument::fromJson(encodeAuthoredProject(project,"/elsewhere")).object();
+    CHECK(!outside["required_features"].toArray().contains("asset-relative-v1"));
+    const auto bytes=encodeAuthoredProject(project,"/projects/song");
+    const auto root=QJsonDocument::fromJson(bytes).object();
+    CHECK((root["required_features"].toArray()==QJsonArray{"general-session-v1","asset-relative-v1"}));
+    const auto decoded=decodeAuthoredProject(bytes);
+    CHECK(decoded.content==project.content && decoded.relative==(std::vector<RelativeAsset>{{wavId,"audio/loop.wav"}}));
+    const auto bad=[&](auto edit){auto r=root;edit(r);rejects([&]{decodeAuthoredProject(QJsonDocument(r).toJson());});};
+    const auto relative=[&](QJsonValue v){bad([&](auto& r){auto a=r["clips"].toArray();auto c=a[2].toObject();c["relative"]=v;a[2]=c;r["clips"]=a;});};
+    relative("../loop.wav");relative("/abs/loop.wav");relative("a/../../b.wav");relative("");relative(3);relative("./audio/loop.wav");
+    bad([](auto& r){r["required_features"]=QJsonArray{"general-session-v1"};});
+    bad([](auto& r){r["required_features"]=QJsonArray{"asset-relative-v1","general-session-v1"};});
+    bad([](auto& r){auto a=r["clips"].toArray();auto c=a[0].toObject();c["relative"]="x.wav";a[0]=c;r["clips"]=a;}); // pulse clip
+}
+void automationLanes() {
+    auto project=general();
+    const auto pulse=project.identities.tracks[0].id,bass=project.identities.tracks[3].id;
+    project.content.automation={{pulse,AutomatedParameter::level,{{0,0},{400,100}}},{bass,AutomatedParameter::pan,{{0,-100},{800,100}}}};
+    validateContent(project.content,project.identities);
+    const auto bytes=encodeAuthoredProject(project);
+    const auto root=QJsonDocument::fromJson(bytes).object();
+    CHECK(root["required_features"].toArray().contains("automation-v1") && root["automation"].toArray().size()==2);
+    auto decoded=decodeAuthoredProject(bytes);
+    CHECK(decoded.content.automation==project.content.automation);
+    // Positions map to frames with the shared upward rounding at 133 BPM.
+    const auto lanes=contentAutomation(project.content,project.identities);
+    CHECK(lanes.size()==2 && lanes[0].target==fl_live::AutomationTarget::gain && lanes[1].target==fl_live::AutomationTarget::pan);
+    CHECK((lanes[0].points==std::vector<fl_live::AutomationPoint>{{0,0.0F},{86617,1.0F}})); // ceil(48000*60*4/133)
+    CHECK(lanes[1].points[1].at==173234 && lanes[1].points[0].value==-1.0F); // ceil(173233.08)
+    // Rendering: the pulse track's gain ramps from 0 to 1 over the first bar.
+    auto unsolo=project; {fl_live::SessionDocument d(unsolo.identities);d.setTrackMix(unsolo.identities.tracks[2].id,{});unsolo.identities=d.snapshot();}
+    const fl_live::DocumentRenderPlan plan(unsolo.identities,contentSources(unsolo.content,unsolo.identities),48000,133000,{},
+        contentGains(unsolo.content,unsolo.identities),contentAutomation(unsolo.content,unsolo.identities));
+    CHECK(plan.plan().tracks[0].gain_automation.size()==2 && plan.plan().tracks[3].pan_automation.size()==2);
+    fl_live::Engine engine(plan.plan());
+    CHECK(engine.schedule(*plan.launch(project.identities.clips[0].id,0))==fl_live::ScheduleResult::accepted);
+    engine.start();std::vector<float> out(2*50000);CHECK(engine.process(out,2));
+    const auto source=pulseClip(133);
+    for(std::size_t f=1;f<50000;f+=997) {
+        const float gain=static_cast<float>(static_cast<double>(f)/86617.0);
+        CHECK(out[2*f]==gain*source.samples[f%source.samples.size()]);
+    }
+    // A muted track stays silent even when automated.
+    auto muted=unsolo;{fl_live::SessionDocument d(muted.identities);d.setTrackMix(pulse,{0,true,false});muted.identities=d.snapshot();}
+    const fl_live::DocumentRenderPlan silent(muted.identities,contentSources(muted.content,muted.identities),48000,133000,{},
+        contentGains(muted.content,muted.identities),contentAutomation(muted.content,muted.identities));
+    CHECK(silent.plan().tracks[0].gain==0 && silent.plan().tracks[0].gain_automation.empty());
+    // Validation.
+    const auto invalid=[&](auto edit){auto c=project.content;edit(c);rejects([&]{validateContent(c,project.identities);});};
+    invalid([](auto& c){c.automation[0].track=fl_live::TrackId{999};});
+    invalid([](auto& c){c.automation.push_back(c.automation[0]);});
+    invalid([](auto& c){c.automation[0].points.clear();});
+    invalid([](auto& c){c.automation[0].points={{10,5},{10,6}};});
+    invalid([](auto& c){c.automation[0].points={{0,101}};});
+    invalid([](auto& c){c.automation[1].points={{0,-101}};});
+    invalid([](auto& c){c.automation[0].points={{-1,5}};});
+    invalid([](auto& c){c.automation[0].points={{automation_position_limit+1,5}};});
+    invalid([](auto& c){c.automation[0].points={{0,std::nan("")}};});
+    rejects([&]{fl_live::DocumentRenderPlan p(project.identities,contentSources(project.content,project.identities),48000,133000,{},{},
+        std::vector<fl_live::DocumentAutomation>{{fl_live::TrackId{999},fl_live::AutomationTarget::gain,{{0,1}}}});});
+    const auto bad=[&](auto edit){auto r=root;edit(r);rejects([&]{decodeAuthoredProject(QJsonDocument(r).toJson());});};
+    bad([](auto& r){r.remove("automation");});
+    bad([](auto& r){r["required_features"]=QJsonArray{"general-session-v1"};}); // automation present without its feature
+    bad([](auto& r){auto a=r["automation"].toArray();auto l=a[0].toObject();l["parameter"]="volume";a[0]=l;r["automation"]=a;});
+    bad([](auto& r){auto a=r["automation"].toArray();auto l=a[0].toObject();l["extra"]=1;a[0]=l;r["automation"]=a;});
+    bad([](auto& r){auto a=r["automation"].toArray();auto l=a[0].toObject();auto pts=l["points"].toArray();auto pt=pts[0].toObject();pt["value"]="0";pts[0]=pt;l["points"]=pts;a[0]=l;r["automation"]=a;});
+    project.content.automation.clear();
+    CHECK(!QJsonDocument::fromJson(encodeAuthoredProject(project)).object().contains("automation"));
+}
 int main(){try{
-    legacyMigration();generalRoundTrip();generalRejection();
-    std::cout<<"PASS: v1-v3 migration with sample equivalence, v4 general content round trip, sources and rejection\n";return 0;
+    automationLanes();
+    relativeAssets();
+    legacyMigration();generalRoundTrip();generalRejection();clipRanges();
+    std::cout<<"PASS: v1-v3 migration with sample equivalence, v4 general content round trip, sources, clip ranges and rejection\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

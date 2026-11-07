@@ -152,6 +152,9 @@ ProjectSettings templateView(const SessionContent& content,const fl_live::Docume
     }
     return settings;
 }
+std::uint64_t mediaFrames(const ClipContent& clip) {
+    return clip.media && clip.media->channels ? clip.media->samples.size()/clip.media->channels : 0;
+}
 const ClipContent& clipContent(const SessionContent& content,fl_live::ClipId clip) {
     const auto found=std::find_if(content.clips.begin(),content.clips.end(),[clip](const auto& c){return c.clip==clip;});
     if(found==content.clips.end())throw std::invalid_argument("Missing clip content");
@@ -176,6 +179,24 @@ void validateContent(const SessionContent& content,const fl_live::DocumentSnapsh
         if(static_cast<std::size_t>(std::count_if(identities.clips.begin(),identities.clips.end(),[&](const auto& c){return c.track==track.id;}))!=desktop_clips_per_track)
             throw std::invalid_argument("Each desktop track holds exactly one clip");
     }
+    for(std::size_t i=0;i<content.automation.size();++i) {
+        const auto& lane=content.automation[i];
+        if(std::none_of(identities.tracks.begin(),identities.tracks.end(),[&](const auto& t){return t.id==lane.track;}))
+            throw std::invalid_argument("Automation lane for an unknown track");
+        if(lane.parameter!=AutomatedParameter::level && lane.parameter!=AutomatedParameter::pan)throw std::invalid_argument("Unknown automated parameter");
+        for(std::size_t j=0;j<i;++j)if(content.automation[j].track==lane.track && content.automation[j].parameter==lane.parameter)
+            throw std::invalid_argument("A parameter has at most one automation lane");
+        if(lane.points.empty() || lane.points.size()>fl_live::Engine::automation_points_capacity)
+            throw std::invalid_argument("An automation lane holds 1 to 4096 points");
+        const double low=lane.parameter==AutomatedParameter::level ? 0 : -100;
+        for(std::size_t k=0;k<lane.points.size();++k) {
+            const auto& point=lane.points[k];
+            if(point.at<0 || point.at>automation_position_limit || (k && point.at<=lane.points[k-1].at))
+                throw std::invalid_argument("Automation points must strictly increase within 256 bars");
+            if(!std::isfinite(point.value) || point.value<low || point.value>100)
+                throw std::invalid_argument("Automation value is outside the parameter's range");
+        }
+    }
     for(const auto& clip:identities.clips) {
         const auto& value=clipContent(content,clip.id);
         if(std::count_if(content.clips.begin(),content.clips.end(),[&](const auto& c){return c.clip==clip.id;})!=1)
@@ -186,6 +207,11 @@ void validateContent(const SessionContent& content,const fl_live::DocumentSnapsh
         if(wav!=!value.asset.isEmpty() || (!value.asset.isEmpty() && (!QDir::isAbsolutePath(value.asset) || value.asset.size()>asset_path_limit)))
             throw std::invalid_argument("Imported audio requires one absolute asset path");
         if(value.media && (!wav || value.media->samples.empty()))throw std::invalid_argument("Decoded media requires an imported WAV clip");
+        if(value.hasRange() && !wav)throw std::invalid_argument("Only imported audio clips have a source range");
+        if(value.range_start>fl_live::PreparationBudget::audio_frame_limit || value.range_length>fl_live::PreparationBudget::audio_frame_limit)
+            throw std::invalid_argument("Source range exceeds the import frame limit");
+        if(const auto frames=mediaFrames(value); frames && (value.range_start>=frames || value.range_length>frames-value.range_start))
+            throw std::invalid_argument("Source range must be a nonempty part of the imported audio");
     }
 }
 std::vector<fl_live::DocumentClipSource> contentSources(const SessionContent& content,const fl_live::DocumentSnapshot& identities) {
@@ -196,8 +222,31 @@ std::vector<fl_live::DocumentClipSource> contentSources(const SessionContent& co
         const auto kind=std::find_if(identities.tracks.begin(),identities.tracks.end(),[&](const auto& t){return t.id==clip.track;})->kind;
         if(kind==fl_live::TrackKind::midi)result.push_back({clip.id,patternClip(value.pattern,content.tempo)});
         else if(value.audio==AudioSource::pulse)result.push_back({clip.id,pulseClip(content.tempo)});
-        else if(value.media)result.push_back({clip.id,*value.media});
+        else if(value.media) {
+            // Copy only the selected source frames; the engine loops or stops
+            // at the end of this copy.
+            const auto channels=value.media->channels;
+            const auto frames=mediaFrames(value);
+            const auto length=value.range_length ? value.range_length : frames-value.range_start;
+            const auto first=value.media->samples.begin()+static_cast<std::ptrdiff_t>(value.range_start*channels);
+            result.push_back({clip.id,fl_live::AudioClip{{first,first+static_cast<std::ptrdiff_t>(length*channels)},value.loop,channels}});
+        }
         else result.push_back({clip.id,fl_live::AudioClip{{0.0F},true}}); // empty or missing: silence
+    }
+    return result;
+}
+std::vector<fl_live::DocumentAutomation> contentAutomation(const SessionContent& content,const fl_live::DocumentSnapshot& identities) {
+    validateContent(content,identities);
+    std::vector<fl_live::DocumentAutomation> result;
+    for(const auto& lane:content.automation) {
+        fl_live::DocumentAutomation prepared{lane.track,lane.parameter==AutomatedParameter::level ? fl_live::AutomationTarget::gain : fl_live::AutomationTarget::pan,{}};
+        for(const auto& point:lane.points) {
+            // Same upward rounding as every other musical boundary.
+            const auto numerator=48000ULL*60*static_cast<std::uint64_t>(point.at);
+            const auto denominator=static_cast<std::uint64_t>(content.tempo)*100;
+            prepared.points.push_back({(numerator+denominator-1)/denominator,static_cast<float>(point.value/100.0)});
+        }
+        result.push_back(std::move(prepared));
     }
     return result;
 }
@@ -207,23 +256,51 @@ std::vector<fl_live::DocumentTrackGain> contentGains(const SessionContent& conte
     for(const auto& track:identities.tracks)result.push_back({track.id,static_cast<float>(trackContent(content,track.id).level)/100});
     return result;
 }
-QByteArray encodeAuthoredProject(const AuthoredProject& project) {
+QString assetRelativePath(const QString& asset,const QString& baseDirectory) {
+    if(baseDirectory.isEmpty() || asset.isEmpty())return {};
+    const auto relative=QDir(baseDirectory).relativeFilePath(asset);
+    if(relative.isEmpty() || QDir::isAbsolutePath(relative) || relative==".." || relative.startsWith("../"))return {};
+    return relative;
+}
+QByteArray encodeAuthoredProject(const AuthoredProject& project,const QString& baseDirectory) {
     validateContent(project.content,project.identities);
     QJsonArray tracks,clips;
+    // Ranges are written only when used, behind their own required feature.
+    const bool ranges=std::any_of(project.content.clips.begin(),project.content.clips.end(),[](const auto& c){return c.hasRange();});
+    const bool relative=std::any_of(project.content.clips.begin(),project.content.clips.end(),[&](const auto& c){
+        return c.audio==AudioSource::wav && !assetRelativePath(c.asset,baseDirectory).isEmpty();});
     for(const auto& track:project.identities.tracks)
         tracks.append(QJsonObject{{"id",idText(track.id.value)},{"level",trackContent(project.content,track.id).level}});
     for(const auto& clip:project.identities.clips) {
         const auto& value=clipContent(project.content,clip.id);
         if(trackOf(project.identities,clip.id).kind==fl_live::TrackKind::midi)
             clips.append(QJsonObject{{"id",idText(clip.id.value)},{"pattern",encodePattern(value.pattern)}});
-        else if(value.audio==AudioSource::wav)
-            clips.append(QJsonObject{{"id",idText(clip.id.value)},{"audio","wav"},{"path",value.asset}});
+        else if(value.audio==AudioSource::wav) {
+            QJsonObject object{{"id",idText(clip.id.value)},{"audio","wav"},{"path",value.asset}};
+            if(ranges)object.insert("range",QJsonObject{{"start",static_cast<double>(value.range_start)},
+                {"length",static_cast<double>(value.range_length)},{"loop",value.loop}});
+            if(const auto inside=assetRelativePath(value.asset,baseDirectory);!inside.isEmpty())object.insert("relative",inside);
+            clips.append(object);
+        }
         else clips.append(QJsonObject{{"id",idText(clip.id.value)},{"audio",value.audio==AudioSource::pulse ? "pulse" : "empty"}});
     }
     const auto session=QJsonDocument::fromJson(fl_live::encodeDocumentMetadata(project.identities)).object();
-    const auto bytes=QJsonDocument(QJsonObject{{"format","fl-live-project"},{"version",4},
-        {"required_features",QJsonArray{"general-session-v1"}},{"tempo",project.content.tempo},
-        {"session",session},{"tracks",tracks},{"clips",clips}}).toJson();
+    const bool automated=!project.content.automation.empty();
+    QJsonObject root{{"format","fl-live-project"},{"version",4},
+        {"required_features",[&]{QJsonArray f{"general-session-v1"};if(ranges)f.append("clip-ranges-v1");if(relative)f.append("asset-relative-v1");
+            if(automated)f.append("automation-v1");return f;}()},
+        {"tempo",project.content.tempo},
+        {"session",session},{"tracks",tracks},{"clips",clips}};
+    if(automated) {
+        QJsonArray lanes;
+        for(const auto& lane:project.content.automation) {
+            QJsonArray points;
+            for(const auto& point:lane.points)points.append(QJsonObject{{"at",static_cast<double>(point.at)},{"value",point.value}});
+            lanes.append(QJsonObject{{"track",idText(lane.track.value)},{"parameter",lane.parameter==AutomatedParameter::level ? "level" : "pan"},{"points",points}});
+        }
+        root.insert("automation",lanes);
+    }
+    const auto bytes=QJsonDocument(root).toJson();
     if(bytes.size()>limit)throw std::invalid_argument("Authored project exceeds size limit");
     return bytes;
 }
@@ -234,8 +311,15 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
     const auto root=json.object();
     if(root["format"]!="fl-live-project")throw std::invalid_argument("Unsupported project format");
     if(!root["version"].isDouble() || root["version"].toDouble()!=4)return decodeTemplate(bytes,root);
-    const auto v4=exact(root,{"format","version","required_features","tempo","session","tracks","clips"});
-    if(v4["required_features"].toArray()!=QJsonArray{"general-session-v1"})throw std::invalid_argument("Unsupported required project feature");
+    const auto features=root["required_features"].toArray();
+    const bool ranges=features.contains("clip-ranges-v1"),relativePaths=features.contains("asset-relative-v1"),automated=features.contains("automation-v1");
+    const auto v4=automated ? exact(root,{"format","version","required_features","tempo","session","tracks","clips","automation"})
+                            : exact(root,{"format","version","required_features","tempo","session","tracks","clips"});
+    QJsonArray canonical{"general-session-v1"};
+    if(ranges)canonical.append("clip-ranges-v1");
+    if(relativePaths)canonical.append("asset-relative-v1");
+    if(automated)canonical.append("automation-v1");
+    if(features!=canonical)throw std::invalid_argument("Unsupported required project feature");
     if(!v4["session"].isObject())throw std::invalid_argument("Project requires a session object");
     AuthoredProject project;
     project.identities=fl_live::decodeDocumentMetadata(QJsonDocument(v4["session"].toObject()).toJson(QJsonDocument::Compact));
@@ -259,7 +343,13 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
             if(trackOf(project.identities,clip.clip).kind!=fl_live::TrackKind::midi)throw std::invalid_argument("Pattern on an audio clip");
         } else {
             const auto source=object["audio"].toString();
-            const auto fields=source=="wav" ? exact(value,{"id","audio","path"}) : exact(value,{"id","audio"});
+            const bool hasRelative=source=="wav" && relativePaths && object.contains("relative");
+            QJsonObject fields;
+            if(source!="wav")fields=exact(value,{"id","audio"});
+            else if(ranges && hasRelative)fields=exact(value,{"id","audio","path","range","relative"});
+            else if(ranges)fields=exact(value,{"id","audio","path","range"});
+            else if(hasRelative)fields=exact(value,{"id","audio","path","relative"});
+            else fields=exact(value,{"id","audio","path"});
             clip.clip=fl_live::ClipId{idValue(fields["id"])};
             if(trackOf(project.identities,clip.clip).kind!=fl_live::TrackKind::audio)throw std::invalid_argument("Audio source on a MIDI clip");
             if(source=="pulse")clip.audio=AudioSource::pulse;
@@ -267,9 +357,43 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
             else if(source=="wav") {
                 if(!fields["path"].isString())throw std::invalid_argument("Imported audio requires a path string");
                 clip.audio=AudioSource::wav;clip.asset=fields["path"].toString();
+                if(hasRelative) {
+                    const auto inside=fields["relative"].toString();
+                    if(!fields["relative"].isString() || inside.isEmpty() || inside.size()>asset_path_limit || QDir::isAbsolutePath(inside) ||
+                       QDir::cleanPath(inside)!=inside || inside==".." || inside.startsWith("../"))
+                        throw std::invalid_argument("Relative asset path must stay inside the project folder");
+                    project.relative.push_back({fl_live::ClipId{idValue(fields["id"])},inside});
+                }
+                if(ranges) {
+                    const auto range=exact(fields["range"],{"start","length","loop"});
+                    const int limit=static_cast<int>(fl_live::PreparationBudget::audio_frame_limit);
+                    clip.range_start=static_cast<std::uint64_t>(integer(range["start"],0,limit));
+                    clip.range_length=static_cast<std::uint64_t>(integer(range["length"],0,limit));
+                    if(!range["loop"].isBool())throw std::invalid_argument("Range loop must be true or false");
+                    clip.loop=range["loop"].toBool();
+                }
             } else throw std::invalid_argument("Unsupported audio source");
         }
         project.content.clips.push_back(std::move(clip));
+    }
+    if(automated) {
+        if(!v4["automation"].isArray() || v4["automation"].toArray().size()>2*static_cast<qsizetype>(fl_live::SessionDocument::track_limit))
+            throw std::invalid_argument("Invalid automation array");
+        for(const auto& value:v4["automation"].toArray()) {
+            const auto lane=exact(value,{"track","parameter","points"});
+            AutomationLane decoded{fl_live::TrackId{idValue(lane["track"])}};
+            if(lane["parameter"]=="level")decoded.parameter=AutomatedParameter::level;
+            else if(lane["parameter"]=="pan")decoded.parameter=AutomatedParameter::pan;
+            else throw std::invalid_argument("Unsupported automated parameter");
+            if(!lane["points"].isArray() || lane["points"].toArray().size()>static_cast<qsizetype>(fl_live::Engine::automation_points_capacity))
+                throw std::invalid_argument("Invalid automation points");
+            for(const auto& p:lane["points"].toArray()) {
+                const auto point=exact(p,{"at","value"});
+                if(!point["value"].isDouble())throw std::invalid_argument("Automation values must be numbers");
+                decoded.points.push_back({integer(point["at"],0,static_cast<int>(automation_position_limit)),point["value"].toDouble()});
+            }
+            project.content.automation.push_back(std::move(decoded));
+        }
     }
     validateContent(project.content,project.identities);
     return project;
@@ -282,7 +406,7 @@ AuthoredProject readAuthoredProject(const QString& path) {
     return decodeAuthoredProject(bytes);
 }
 void writeAuthoredProject(const QString& path,const AuthoredProject& project) {
-    const auto bytes=encodeAuthoredProject(project);QSaveFile file(path);file.setDirectWriteFallback(false);
+    const auto bytes=encodeAuthoredProject(project,QFileInfo(path).absolutePath());QSaveFile file(path);file.setDirectWriteFallback(false);
     if(!file.open(QIODevice::WriteOnly) || !fl_live::commitDurably(file,bytes))
         throw std::runtime_error("Cannot save authored project atomically; previous file was preserved");
 }

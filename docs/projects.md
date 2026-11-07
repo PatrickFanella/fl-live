@@ -61,6 +61,17 @@ On Linux, Qt writes to an unnamed `O_TMPFILE` and publishes it with `linkat` (ne
 
 `atomic-save-faults` checks this with a test-only `LD_PRELOAD` injector that fails `write` (after 512 bytes, `ENOSPC`), `fsync`/`fdatasync` (`EIO`) or publishing (`rename`/`renameat`/`renameat2`/`linkat`, `EIO`) for files in one directory. Real `Session::saveProject` calls, both overwrite and Save As, must fail and keep the destination bytes, an unrelated neighboring file, the directory listing, tempo/pitch edits, the project path, the unsaved state and Undo/Redo; Undo, Redo and a later save then work. A second stage kills a process with SIGKILL at 40 random points while it alternately saves two 129 KB projects; every time the destination equals one of the two complete saves, and the project reopens through `Session::loadProject`. Power loss, full-disk behavior of a real filesystem, network filesystems and concurrent writers are not covered.
 
+### Autosave and crash recovery
+
+While a session has unsaved edits it writes a recovery snapshot every 30 seconds to a recovery folder: `$FL_LIVE_RECOVERY_DIR` if set, otherwise `~/.local/share/fl-live/recovery/` (the generic per-user data location). It never writes the project file. A snapshot is the full version 4 project wrapped as `{"format": "fl-live-recovery", "version": 1, "project_path", "saved_at", "project"}` and is written through the same synced atomic path as Save. It is rewritten only when the document changed. Each running session owns one snapshot file and holds a lock beside it, so other running instances never offer it. A manual Save or a normal shutdown (including Discard and close) removes the session's snapshot; a crash leaves it.
+
+At startup, every snapshot whose session is no longer running appears as a banner above the transport:
+
+- **Valid:** it shows when it was saved, which project it belongs to and how many tracks it has, with **Restore** and **Discard**. Restore is refused while there are unsaved edits. It opens the recovered work unsaved, with its original project path, so the last manual save stays untouched until you Save. The restored snapshot is deleted only after the session's own snapshot is on disk.
+- **Invalid** (unreadable, incomplete JSON, unsupported or malformed project): it shows the reason and offers only **Discard**. Such files are never removed or restored automatically.
+
+`autosaveAndCrashRecovery` runs a helper that saves a project, edits it, autosaves and aborts. It checks that the project file still holds the manual save, that the crashed session's snapshot and two invalid ones are listed correctly, and that Restore brings back the crashed edits unsaved without touching the project file until Save. It also checks the refusal over unsaved edits, Discard of one file only, that a running session's snapshot is not offered, no autosave when clean, removal on normal shutdown, and Restore through the actual banner button.
+
 Save can run during playback because it serializes GUI-owned source settings and immutable identity metadata. Position, active clips, queued launches, Undo/Redo history and selected editor step are not persisted. Open starts stopped at bar 1, beat 1 and selects step 1; launch clips again before playing.
 
 ## Ownership and verification
@@ -69,11 +80,27 @@ Settings, JSON, sample generation and graph allocation stay on the GUI thread. A
 
 Tests cover v1 migration, v2 settings and rendered-sample round trips, rests/all-rest patterns, gate timing, velocity scaling, every pattern length at tempo extremes/fractional sample periods, retained hidden steps, selection, malformed files, stopped/pending restrictions and atomic-file preservation. Qt tests click the actual step grid/enable control, change pitch/velocity/gate with keyboard input, save/reopen, and inspect the reloaded controls. The private PipeWire fixture still checks stopped graph replacement. These checks do not qualify edited-session audio on physical devices or a general piano-roll workflow.
 
+## Export render policy
+
+The export row sets an explicit policy (`ExportOptions`):
+
+| Choice | Values | Meaning |
+|---|---|---|
+| From bar | 1–256 | First 4/4 bar written. Every clip starts at the song start (bar 1); earlier frames are rendered and discarded, so the range sounds as it does in playback from the top |
+| Bars | 1–64 | Length of the written range |
+| Tail ms | 0–10,000 | Time rendered after every track stops at the end of the range. The engine has no effects or release envelopes yet, so the tail is currently silence; the option is there so later devices ring out into it |
+| Channels | Stereo, Mono | Mono is the engine's `(left + right) / 2` downmix |
+| Format | 16-bit PCM, 24-bit PCM, 32-bit float | PCM clamps to ±1 and rounds with 32,767 or 8,388,607 scale; float writes the mix unclipped (`WAVE_FORMAT_IEEE_FLOAT`) |
+
+Export renders the current document, including unsaved edits. A range that would exceed the 4 GB WAV size limit is refused. Invalid choices are refused before any file is created.
+
+`exportRenderPolicy` decodes each export with an independent reader. It checks format code, bits, channels, rate, block align and byte rate, then compares every sample with independent per-track renders: bar 2 plus a 100 ms silent tail in stereo PCM16, mono PCM24 and stereo float32 (exact). It also covers the mono downmix of a hard-panned mix, eight refused option sets with no files left behind, the last start bar at 300 BPM, an unsaved tempo change, and options set through the actual QML controls.
+
 ## Export the current template mix
 
-Stop transport and wait for acknowledgement, enter a new WAV path, choose 1–16 bars, and select **Export all tracks**. Export uses the current settings, including unsaved edits. Every track's clip launches at frame zero in a separate offline engine prepared through the same document plan as playback, so track level, pan, mute and solo apply; transport position, active clips, project path, saved checkpoint and Undo/Redo are unchanged.
+Stop transport and wait for acknowledgement, enter a new WAV path, choose the [render policy](#export-render-policy) (by default bar 1, 4 bars, no tail, stereo 16-bit), and select **Export all tracks**. Export uses the current settings, including unsaved edits. Every track's clip launches at frame zero in a separate offline engine prepared through the same document plan as playback, so track level, pan, mute and solo apply; transport position, active clips, project path, saved checkpoint and Undo/Redo are unchanged.
 
-The result is stereo (interleaved left/right), 48 kHz, little-endian 16-bit PCM WAV. Duration is the selected number of 4/4 bars at the current tempo, rounded upward once to a sample boundary. Both clips loop under the existing engine policies. Output ends at that frame without tails or a fade. Samples are clamped to ±1 and rounded to signed PCM using a 32767 scale. This exports the template mix, not a recording of the launch performance or a selection of active clips.
+With the default policy the result is stereo (interleaved left/right), 48 kHz, little-endian 16-bit PCM WAV. Range boundaries are 4/4 bars at the current tempo, each rounded upward once to a sample boundary. Both clips loop under the existing engine policies. Output ends at that frame without tails or a fade. Samples are clamped to ±1 and rounded to signed PCM using a 32767 scale. This exports the template mix, not a recording of the launch performance or a selection of active clips.
 
 The destination must be new. Export runs on a worker thread from a copy of the document taken when it starts, so later edits, Undo/Redo, Save and transport do not change the file being written; a second export is refused until the first finishes. The header row shows a progress bar and **Cancel export** while it runs. Samples go to `NAME.part`, created exclusively next to the destination. When rendering finishes, the partial file is flushed and `fdatasync`ed, then published with `link()`, which fails instead of replacing anything if a file appeared at the destination meanwhile; the partial file is then removed and the directory synced. Cancellation, write errors and a refused publish all remove `NAME.part` and leave the destination absent (or untouched, if someone else created it). Only a crash or kill can leave `NAME.part` behind: fl-live never reads it, and a later export to the same path refuses to start and asks you to delete it or choose another path. Closing the session cancels a running export and waits for the worker. At the slowest allowed tempo, the 16-bar limit is 192 seconds of audio (36.9 MB of PCM data).
 

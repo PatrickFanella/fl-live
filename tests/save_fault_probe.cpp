@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <cstdlib>
+#include <QSaveFile>
 #include <iostream>
 #include <stdexcept>
 
@@ -92,6 +93,16 @@ int loop(const QString& dir) {
     std::cout << "{\"ready\":true}" << std::endl;
     for (std::uint64_t n = 1;; ++n) writeAuthoredProject(path, n % 2 ? b : a);
 }
+// Leaves an autosave snapshot behind by aborting like a crash would.
+int crash(const QString& dir) {
+    Session session;
+    require(session.saveProject(QDir(dir).filePath("crashed.json")), "initial save");
+    session.setTempo(141);
+    require(session.addTrack("midi"), "edit");
+    require(session.autosaveNow(), "autosave");
+    std::cout << session.autosaveFile().toStdString() << std::endl;
+    std::abort();
+}
 int verify(const QString& dir) {
     const auto path = QDir(dir).filePath("project.json");
     Session session;
@@ -111,6 +122,7 @@ int main(int argc, char** argv) {
         if (mode == "faults") return faults(dir);
         if (mode == "loop") return loop(dir);
         if (mode == "verify") return verify(dir);
+        if (mode == "crash") return crash(dir);
         return 2;
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << std::endl;

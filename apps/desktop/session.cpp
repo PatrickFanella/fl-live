@@ -3,7 +3,15 @@
 #include <algorithm>
 #include <QDir>
 #include <QFileInfo>
+#include <QDateTime>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSaveFile>
+#include <QStandardPaths>
+#include <QUuid>
+#include "fl_live/document_io.hpp"
 #include <stdexcept>
+#include <cmath>
 
 namespace {
 std::uint64_t parseIdentity(const QString& text) {
@@ -30,9 +38,26 @@ Session::Session(fl_live::PipeWireConfig config, QObject* parent)
     timer_.setInterval(10);
     connect(&timer_, &QTimer::timeout, this, &Session::tick);
     timer_.start();
+    // One snapshot file per running session, guarded by a lock so other
+    // instances never offer a live session's snapshot for recovery.
+    const auto folder = recoveryDirectory();
+    if (QDir().mkpath(folder)) {
+        const auto name = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        autosave_file_ = QDir(folder).filePath(name + ".fl-live-recovery.json");
+        autosave_lock_ = std::make_unique<QLockFile>(QDir(folder).filePath(name + ".lock"));
+        autosave_lock_->setStaleLockTime(0);
+        if (!autosave_lock_->tryLock(0)) { autosave_lock_.reset(); autosave_file_.clear(); }
+    }
+    autosave_timer_.setInterval(autosave_interval_ms);
+    connect(&autosave_timer_, &QTimer::timeout, this, [this] { (void)autosaveNow(); });
+    autosave_timer_.start();
+    refreshRecovery();
 }
 Session::~Session() {
     timer_.stop();
+    autosave_timer_.stop();
+    removeAutosave(); // a normal shutdown is not a crash
+    if (autosave_lock_) autosave_lock_->unlock();
     if (export_job_) export_job_->progress.cancel.store(true);
     if (export_thread_.joinable()) export_thread_.join();
     // Prepared's backend is destroyed before its controller and immutable plan.
@@ -387,6 +412,9 @@ QString Session::editName(const HistoryEntry& entry) {
     case EditKind::track_duplicate: return QString("track %1 duplicate").arg(entry.index+1);
     case EditKind::track_delete: return "track deletion";
     case EditKind::audio_import: return QString("track %1 audio import").arg(entry.index+1);
+    case EditKind::clip_range: return QString("track %1 clip range").arg(entry.index+1);
+    case EditKind::audio_relink: return QString("track %1 audio relink").arg(entry.index+1);
+    case EditKind::assets_collect: return "audio collection";
     default: return {};
     }
 }
@@ -502,6 +530,7 @@ bool Session::saveProject(const QString& path) {
         project_path_ = owned_path_ = target;
         saved_content_ = content_;
         saved_identities_ = identities_;
+        removeAutosave();
         message_ = "Project saved";
         emit projectPathChanged();
         emit changed();
@@ -517,7 +546,8 @@ bool Session::loadProject(const QString& path) {
         auto next = readAuthoredProject(target);
         // Imported WAVs decode here, on the control thread, before the plan is
         // prepared. A missing or refused asset opens as a silent clip.
-        const auto missing = resolveAssets(next.content);
+        const auto report = resolveAssets(next.content, next.relative, QFileInfo(target).absolutePath());
+        const auto& missing = report.missing;
         auto identities = std::make_shared<const fl_live::DocumentSnapshot>(next.identities);
         pattern_clip_ = {};
         if (!replace(std::make_shared<const SessionContent>(std::move(next.content)), identities)) return false;
@@ -525,13 +555,22 @@ bool Session::loadProject(const QString& path) {
         restoreSceneSelection(next.identities.scenes[0].id);
         project_path_ = owned_path_ = target;
         saved_content_ = content_;
+        if (!report.relocated.isEmpty()) {
+            // The file on disk still names the old locations: unsaved until Save.
+            auto saved = *content_;
+            for (const auto& [clip, old] : report.previous)
+                std::find_if(saved.clips.begin(), saved.clips.end(), [&](const auto& c) { return c.clip == clip; })->asset = old;
+            saved_content_ = std::make_shared<const SessionContent>(std::move(saved));
+        }
         saved_identities_ = identities_;
         selected_step_ = 0;
         history_[0] = {content_, identities_, EditKind::none, -1, selected_scene_};
         history_cursor_ = 0;
         history_size_ = 1;
-        message_ = missing.isEmpty() ? QStringLiteral("Project opened. Launch clips, then press Play.")
-            : "Project opened with missing audio, which plays as silence: " + missing.join("; ");
+        QStringList notes;
+        if (!report.relocated.isEmpty()) notes.append("Found moved audio inside the project folder: " + report.relocated.join("; ") + ". Save to keep the new locations.");
+        if (!missing.isEmpty()) notes.append("Missing audio plays as silence; relink or import it: " + missing.join("; "));
+        message_ = notes.isEmpty() ? QStringLiteral("Project opened. Launch clips, then press Play.") : "Project opened. " + notes.join(" ");
         emit projectPathChanged();
         emit changed();
         return true;
@@ -596,18 +635,28 @@ void Session::tick() {
 }
 
 bool Session::exportWav(const QString& path, int bars) {
+    if (bars < 1 || bars > 16) { message_ = "Export length must be 1 to 16 bars"; emit changed(); return false; }
+    return exportAudio(path, 1, bars, 0, 2, "pcm16");
+}
+bool Session::exportAudio(const QString& path, int startBar, int bars, int tailMs, int channels, const QString& format) {
     if (export_job_) { message_ = "An export is already running. Cancel it or wait for it to finish."; emit changed(); return false; }
     if (!editable()) return false;
     try {
-        if (bars < 1 || bars > 16) throw std::invalid_argument("Export length must be 1 to 16 bars");
+        ExportOptions options;
+        options.start_bar = startBar - 1; options.bars = bars; options.tail_ms = tailMs; options.channels = channels;
+        if (format == "pcm16") options.format = ExportFormat::pcm16;
+        else if (format == "pcm24") options.format = ExportFormat::pcm24;
+        else if (format == "float32") options.format = ExportFormat::float32;
+        else throw std::invalid_argument("Export format must be pcm16, pcm24 or float32");
+        validateExportOptions(options);
         if (path.trimmed().isEmpty()) throw std::invalid_argument("Enter a new WAV file path");
         auto job = std::make_shared<ExportJob>();
         job->path = path; job->bars = bars;
-        job->progress.total.store(exportFrames(content_->tempo, bars));
+        job->progress.total.store(exportFrames(content_->tempo, startBar - 1 + bars) + static_cast<std::uint64_t>(tailMs) * 48U);
         // Copies keep the job independent of later edits on the GUI thread.
-        export_thread_ = std::thread([job, content = content_, identities = identities_] {
+        export_thread_ = std::thread([job, options, content = content_, identities = identities_] {
             try {
-                const auto outcome = exportProjectWav(job->path, *content, *identities, job->bars, &job->progress);
+                const auto outcome = exportProjectWav(job->path, *content, *identities, options, &job->progress);
                 job->state.store(outcome == ExportOutcome::completed ? 1 : 2);
             } catch (const std::exception& error) {
                 job->error = QString::fromUtf8(error.what());
@@ -615,7 +664,7 @@ bool Session::exportWav(const QString& path, int bars) {
             }
         });
         export_job_ = std::move(job);
-        message_ = QString("Exporting %1 bars in the background").arg(bars);
+        message_ = QString("Exporting %1 bars from bar %2 in the background").arg(bars).arg(startBar);
         emit changed();
         return true;
     } catch (const std::exception& error) {
@@ -641,7 +690,7 @@ void Session::finishExport() {
     const auto job = std::move(export_job_);
     export_job_.reset();
     switch (job->state.load()) {
-    case 1: message_ = QString("Exported %1 bars: every track from the start through the mixer, stereo 48 kHz / 16-bit WAV").arg(job->bars); break;
+    case 1: message_ = QString("Exported %1 bars through the mixer to %2").arg(job->bars).arg(QFileInfo(job->path).fileName()); break;
     case 2: message_ = "Export cancelled; no file was written"; break;
     default: message_ = job->error; break;
     }
@@ -759,6 +808,8 @@ bool Session::duplicateTrack(const QString& id) {
         if(name.size()<=fl_live::SessionDocument::name_byte_limit)candidate.renameTrack(copy,name);
         auto next=*content_;
         next.tracks.push_back({copy,trackContent(*content_,source).level});
+        // The copy gets its own lanes for the same parameters.
+        for(const auto& lane:content_->automation)if(lane.track==source){auto own=lane;own.track=copy;next.automation.push_back(std::move(own));}
         // duplicateTrack appends the new clips in the source track's order.
         std::size_t n=before;
         for(const auto& clip:identities_->clips) if(clip.track==source) {
@@ -778,10 +829,21 @@ bool Session::deleteTrack(const QString& id) {
         candidate.deleteTrack(target);
         auto next=*content_;
         std::erase_if(next.tracks,[target](const auto& t){return t.track==target;});
+        std::erase_if(next.automation,[target](const auto& l){return l.track==target;});
         std::erase_if(next.clips,[&](const auto& c){return !std::any_of(candidate.snapshot().clips.begin(),candidate.snapshot().clips.end(),[&](const auto& d){return d.id==c.clip;});});
         if(!commitStructure(std::move(next),candidate.snapshot(),EditKind::track_delete,-1))return false;
         message_="Deleted track; Undo restores it with its IDs";emit changed();return true;
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+bool Session::relinkAudio(const QString& trackId,const QString& path) {
+    try {
+        const fl_live::TrackId id{parseIdentity(trackId)};
+        const auto clip=firstClip(*identities_,id);
+        if(!clip.value || clipContent(*content_,clip).audio!=AudioSource::wav)throw std::invalid_argument("Relink applies to an imported audio clip; use Import for other tracks");
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+    if(!importAudio(trackId,path))return false;
+    import_relink_=true;
+    return true;
 }
 bool Session::importAudio(const QString& trackId,const QString& path) {
     try {
@@ -795,7 +857,7 @@ bool Session::importAudio(const QString& trackId,const QString& path) {
             importer_=std::make_unique<fl_live::WavImportWorker>(fl_live::WavImportPolicy{48000, fl_live::PreparationBudget::audio_frame_limit/2});
         }
         import_path_=QDir::cleanPath(QFileInfo(path).absoluteFilePath());
-        import_track_=id;
+        import_track_=id;import_relink_=false;
         import_ticket_=importer_->submit(import_path_.toStdString());
         message_="Importing " + QFileInfo(import_path_).fileName() + " in the background";
         emit changed();return true;
@@ -824,20 +886,286 @@ void Session::pollImport() {
     if(track==identities_->tracks.end()) { message_="Import finished, but its track was deleted; nothing changed"; emit changed(); return; }
     auto next=*content_;
     auto& clip=*std::find_if(next.clips.begin(),next.clips.end(),[&](const auto& c){return c.clip==firstClip(*identities_,import_track_);});
+    const bool relink=import_relink_;import_relink_=false;
+    const auto frames=import.frames;
+    if(relink && (clip.audio!=AudioSource::wav || clip.range_start>=frames || clip.range_length>frames-clip.range_start)) {
+        message_="Relink refused: " + QFileInfo(import_path_).fileName() + " is shorter than the clip's range. Import it instead to replace the clip.";
+        emit changed();return;
+    }
     clip.audio=AudioSource::wav;clip.asset=import_path_;
+    if(!relink) { clip.range_start=0;clip.range_length=0;clip.loop=true; } // a new source plays whole
     clip.media=std::make_shared<const fl_live::AudioClip>(std::move(import.clip));
     const auto before=content_;
-    edit(next,EditKind::audio_import,static_cast<int>(track-identities_->tracks.begin()));
-    if(content_!=before)message_="Imported " + QFileInfo(import_path_).fileName() + ". Launch the clip, then press Play.";
+    edit(next,relink ? EditKind::audio_relink : EditKind::audio_import,static_cast<int>(track-identities_->tracks.begin()));
+    if(content_!=before)message_=(relink ? "Relinked " : "Imported ") + QFileInfo(import_path_).fileName() + ". Launch the clip, then press Play.";
     emit changed();
 }
-QStringList Session::resolveAssets(SessionContent& content) const {
-    QStringList missing;
+Session::AssetReport Session::resolveAssets(SessionContent& content,const std::vector<RelativeAsset>& relative,const QString& projectDirectory) const {
+    AssetReport report;
+    const fl_live::WavImportPolicy policy{48000,fl_live::PreparationBudget::audio_frame_limit/2};
     for(auto& clip:content.clips) {
         if(clip.audio!=AudioSource::wav)continue;
-        auto result=fl_live::importWav(clip.asset.toStdString(),fl_live::WavImportPolicy{48000,fl_live::PreparationBudget::audio_frame_limit/2});
-        if(result)clip.media=std::make_shared<const fl_live::AudioClip>(std::move(result.clip));
-        else missing.append(QFileInfo(clip.asset).fileName() + " (" + QString::fromStdString(result.message) + ")");
+        // The saved absolute path wins whenever it exists. Only when it is
+        // gone is the recorded project-relative location tried; nothing is
+        // searched for by name, so a different file is never substituted.
+        auto path=clip.asset;
+        const auto inside=std::find_if(relative.begin(),relative.end(),[&](const auto& r){return r.clip==clip.clip;});
+        if(!QFileInfo::exists(path) && inside!=relative.end()) {
+            const auto candidate=QDir::cleanPath(QDir(projectDirectory).filePath(inside->path));
+            if(QFileInfo(candidate).isFile())path=candidate;
+        }
+        auto result=fl_live::importWav(path.toStdString(),policy);
+        if(!result) { report.missing.append(QFileInfo(clip.asset).fileName() + " (" + QString::fromStdString(result.message) + ")"); continue; }
+        if(path!=clip.asset) {
+            report.relocated.append(QFileInfo(path).fileName() + " at " + path + " (was " + clip.asset + ")");
+            report.previous.append({clip.clip,clip.asset});
+            clip.asset=path;
+        }
+        clip.media=std::make_shared<const fl_live::AudioClip>(std::move(result.clip));
+        const auto frames=mediaFrames(clip);
+        if(clip.range_start>=frames || clip.range_length>frames-clip.range_start) {
+            // The file changed since saving; play it whole rather than refuse.
+            clip.range_start=0;clip.range_length=0;
+            report.missing.append(QFileInfo(clip.asset).fileName() + " (shorter than its saved range; range reset to the whole file)");
+        }
     }
-    return missing;
+    return report;
+}
+QVariantList Session::clipFrames() const {
+    QVariantList result;
+    for(const auto& track:identities_->tracks)result.append(static_cast<double>(mediaFrames(clipContent(*content_,firstClip(*identities_,track.id)))));
+    return result;
+}
+QVariantList Session::clipRanges() const {
+    QVariantList result;
+    for(const auto& track:identities_->tracks) {
+        const auto& clip=clipContent(*content_,firstClip(*identities_,track.id));
+        const auto frames=mediaFrames(clip);
+        const auto end=clip.range_length ? clip.range_start+clip.range_length : frames;
+        result.append(QVariant(QVariantList{static_cast<double>(clip.range_start),static_cast<double>(end),clip.loop}));
+    }
+    return result;
+}
+bool Session::setClipRange(const QString& trackId,double startFrame,double endFrame,bool loop) {
+    if(!editable())return false;
+    try {
+        const fl_live::TrackId id{parseIdentity(trackId)};
+        const auto index=prepared_->mapped.trackIndex(id);
+        if(!index)throw std::invalid_argument("Unknown track");
+        auto next=*content_;
+        auto& clip=*std::find_if(next.clips.begin(),next.clips.end(),[&](const auto& c){return c.clip==firstClip(*identities_,id);});
+        const auto frames=mediaFrames(clip);
+        if(clip.audio!=AudioSource::wav || !frames)throw std::invalid_argument("Import a WAV into this track before setting its range");
+        if(!std::isfinite(startFrame) || !std::isfinite(endFrame) || startFrame<0 || endFrame>static_cast<double>(frames) ||
+           startFrame!=std::floor(startFrame) || endFrame!=std::floor(endFrame) || endFrame<=startFrame)
+            throw std::invalid_argument("Range must start before it ends, inside the imported audio");
+        clip.range_start=static_cast<std::uint64_t>(startFrame);
+        const auto end=static_cast<std::uint64_t>(endFrame);
+        clip.range_length=end==frames ? 0 : end-clip.range_start; // 0 keeps "to the end"
+        clip.loop=loop;
+        if(next==*content_)return true;
+        edit(next,EditKind::clip_range,static_cast<int>(*index));
+        return *content_==next;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+QVariantList Session::waveform(int track,int bins) const {
+    if(track<0 || static_cast<std::size_t>(track)>=identities_->tracks.size() || bins<1 || bins>4096)return {};
+    const auto& clip=clipContent(*content_,firstClip(*identities_,identities_->tracks[static_cast<std::size_t>(track)].id));
+    if(!clip.media)return {};
+    const auto key=std::make_pair(clip.media.get(),bins);
+    if(const auto found=waveform_cache_.find(key);found!=waveform_cache_.end() && found->second.first.lock()==clip.media)return found->second.second;
+    if(waveform_cache_.size()>256)waveform_cache_.clear();
+    const auto& media=*clip.media;
+    const auto frames=mediaFrames(clip);
+    QVariantList result;
+    for(int bin=0;bin<bins;++bin) {
+        const auto first=frames*static_cast<std::uint64_t>(bin)/static_cast<std::uint64_t>(bins);
+        const auto last=std::max(first+1,frames*static_cast<std::uint64_t>(bin+1)/static_cast<std::uint64_t>(bins));
+        float low=0,high=0;bool any=false;
+        for(auto frame=first;frame<last && frame<frames;++frame)
+            for(std::uint32_t c=0;c<media.channels;++c) {
+                const float v=media.samples[frame*media.channels+c];
+                low=any ? std::min(low,v) : v;high=any ? std::max(high,v) : v;any=true;
+            }
+        result.append(QVariant(QVariantList{low,high}));
+    }
+    waveform_cache_[key]={clip.media,result};
+    return result;
+}
+bool Session::collectAssets() {
+    if(!editable())return false;
+    try {
+        if(owned_path_.isEmpty())throw std::invalid_argument("Save the project first; collected audio goes into a folder beside it");
+        const QFileInfo project(owned_path_);
+        const auto folder=project.absoluteDir().filePath(project.completeBaseName()+"-assets");
+        auto next=*content_;
+        int copied=0,reused=0;
+        for(auto& clip:next.clips) {
+            if(clip.audio!=AudioSource::wav || !clip.media || !assetRelativePath(clip.asset,project.absolutePath()).isEmpty())continue;
+            if(!QFileInfo(clip.asset).isFile())continue;
+            if(!QDir().mkpath(folder))throw std::runtime_error("Cannot create " + folder.toStdString());
+            QFile source(clip.asset);
+            if(!source.open(QIODevice::ReadOnly))throw std::runtime_error("Cannot read " + clip.asset.toStdString());
+            const auto bytes=source.readAll();source.close();
+            const QFileInfo name(clip.asset);
+            QString target;
+            for(int n=1;n<10000;++n) {
+                const auto candidate=QDir(folder).filePath(n==1 ? name.fileName() : QString("%1-%2.%3").arg(name.completeBaseName()).arg(n).arg(name.suffix()));
+                if(!QFileInfo::exists(candidate)) {
+                    // Exclusive create: never overwrite a file that appears meanwhile.
+                    QFile out(candidate);
+                    if(!out.open(QIODevice::WriteOnly|QIODevice::NewOnly))continue;
+                    if(out.write(bytes)!=bytes.size() || !out.flush()) { out.remove(); throw std::runtime_error("Cannot copy " + name.fileName().toStdString()); }
+                    target=candidate;++copied;break;
+                }
+                QFile existing(candidate);
+                if(existing.open(QIODevice::ReadOnly) && existing.readAll()==bytes) { target=candidate;++reused;break; } // same bytes already collected
+            }
+            if(target.isEmpty())throw std::runtime_error("No free name for " + name.fileName().toStdString());
+            clip.asset=QDir::cleanPath(target);
+        }
+        if(next==*content_) { message_="All imported audio is already inside the project folder"; emit changed(); return true; }
+        edit(next,EditKind::assets_collect,-1);
+        message_=QString("Collected audio into %1: %2 copied, %3 already there. Source files were not changed.")
+            .arg(QFileInfo(folder).fileName()).arg(copied).arg(reused);
+        emit changed();return true;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+
+// ---- Autosave and crash recovery -----------------------------------------
+QString Session::recoveryDirectory() {
+    const auto configured = qEnvironmentVariable("FL_LIVE_RECOVERY_DIR");
+    if (!configured.isEmpty()) return QDir::cleanPath(configured);
+    return QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)).filePath("fl-live/recovery");
+}
+void Session::removeAutosave() {
+    if (!autosave_file_.isEmpty()) QFile::remove(autosave_file_);
+    autosaved_content_.reset(); autosaved_identities_.reset();
+}
+bool Session::autosaveNow() {
+    if (autosave_file_.isEmpty() || !dirty()) return false;
+    if (autosaved_content_ == content_ && autosaved_identities_ == identities_) return true; // unchanged since last snapshot
+    try {
+        auto persisted = *identities_; persisted.next_id = next_identity_;
+        const auto project = QJsonDocument::fromJson(encodeAuthoredProject({*content_, persisted})).object();
+        const auto bytes = QJsonDocument(QJsonObject{{"format", "fl-live-recovery"}, {"version", 1},
+            {"project_path", owned_path_}, {"saved_at", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
+            {"project", project}}).toJson();
+        QSaveFile file(autosave_file_); file.setDirectWriteFallback(false);
+        if (!file.open(QIODevice::WriteOnly) || !fl_live::commitDurably(file, bytes)) return false;
+        autosaved_content_ = content_; autosaved_identities_ = identities_;
+        return true;
+    } catch (const std::exception&) { return false; } // never interrupts editing
+}
+namespace {
+struct Snapshot { AuthoredProject project; QString projectPath; QString time; };
+Snapshot readSnapshot(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("cannot be read");
+    constexpr qint64 limit = 8 * 1024 * 1024;
+    if (file.size() > limit) throw std::invalid_argument("is too large");
+    QJsonParseError error;
+    const auto json = QJsonDocument::fromJson(file.read(limit + 1), &error);
+    if (error.error != QJsonParseError::NoError || !json.isObject()) throw std::invalid_argument("is incomplete or not JSON");
+    const auto root = json.object();
+    if (root.size() != 5 || root["format"] != "fl-live-recovery" || root["version"] != 1 || !root["project"].isObject() ||
+        !root["project_path"].isString() || !root["saved_at"].isString())
+        throw std::invalid_argument("is not a supported recovery snapshot");
+    return {decodeAuthoredProject(QJsonDocument(root["project"].toObject()).toJson()), root["project_path"].toString(), root["saved_at"].toString()};
+}
+}
+void Session::refreshRecovery() {
+    QVariantList result;
+    const QDir folder(recoveryDirectory());
+    for (const auto& name : folder.entryList({"*.fl-live-recovery.json"}, QDir::Files, QDir::Time)) {
+        const auto path = folder.filePath(name);
+        if (path == autosave_file_) continue;
+        // A held lock means that session is still running; a stale lock (dead
+        // process) or no lock means it ended without cleaning up.
+        QLockFile lock(folder.filePath(name.chopped(QStringLiteral(".fl-live-recovery.json").size()) + ".lock"));
+        lock.setStaleLockTime(0);
+        if (!lock.tryLock(0)) continue;
+        lock.unlock();
+        QVariantMap entry{{"file", path}, {"valid", true}, {"reason", QString()}};
+        try {
+            const auto snapshot = readSnapshot(path);
+            entry["project"] = snapshot.projectPath;
+            entry["time"] = snapshot.time;
+            entry["tracks"] = static_cast<int>(snapshot.project.identities.tracks.size());
+        } catch (const std::exception& error) {
+            entry["valid"] = false; entry["project"] = QString(); entry["time"] = QFileInfo(path).lastModified().toUTC().toString(Qt::ISODate);
+            entry["reason"] = name + " " + QString::fromUtf8(error.what());
+        }
+        result.append(entry);
+    }
+    recovery_candidates_ = result;
+    emit recoveryChanged();
+}
+QVariantList Session::recoveryCandidates() const { return recovery_candidates_; }
+bool Session::restoreRecovery(const QString& file) {
+    if (dirty()) { message_ = "Save or discard your current edits before restoring recovered work."; emit changed(); return false; }
+    if (!editable()) return false;
+    try {
+        const auto known = std::any_of(recovery_candidates_.begin(), recovery_candidates_.end(),
+            [&](const auto& c) { return c.toMap()["file"].toString() == file && c.toMap()["valid"].toBool(); });
+        if (!known) throw std::invalid_argument("Choose a valid recovery snapshot from the list");
+        auto snapshot = readSnapshot(file);
+        const auto report = resolveAssets(snapshot.project.content, snapshot.project.relative,
+            snapshot.projectPath.isEmpty() ? QString() : QFileInfo(snapshot.projectPath).absolutePath());
+        auto identities = std::make_shared<const fl_live::DocumentSnapshot>(snapshot.project.identities);
+        pattern_clip_ = {};
+        if (!replace(std::make_shared<const SessionContent>(std::move(snapshot.project.content)), identities)) return false;
+        next_identity_ = snapshot.project.identities.next_id;
+        restoreSceneSelection(snapshot.project.identities.scenes[0].id);
+        // Recovered work stays unsaved; Save writes it to its original project.
+        saved_content_ = std::make_shared<const SessionContent>();
+        saved_identities_ = std::make_shared<const fl_live::DocumentSnapshot>();
+        owned_path_ = snapshot.projectPath;
+        if (!snapshot.projectPath.isEmpty()) project_path_ = snapshot.projectPath;
+        selected_step_ = 0;
+        history_[0] = {content_, identities_, EditKind::none, -1, selected_scene_};
+        history_cursor_ = 0; history_size_ = 1;
+        // Keep the old snapshot until this session's own copy is on disk.
+        if (autosaveNow()) QFile::remove(file);
+        message_ = "Restored unsaved work from " + snapshot.time + ". Save to keep it" +
+            (snapshot.projectPath.isEmpty() ? QStringLiteral(".") : " in " + QFileInfo(snapshot.projectPath).fileName() + ".");
+        if (!report.missing.isEmpty()) message_ += " Missing audio plays as silence: " + report.missing.join("; ");
+        refreshRecovery();
+        emit projectPathChanged();
+        emit changed();
+        return true;
+    } catch (const std::exception& error) { message_ = QString::fromUtf8(error.what()); emit changed(); return false; }
+}
+bool Session::discardRecovery(const QString& file) {
+    const auto known = std::any_of(recovery_candidates_.begin(), recovery_candidates_.end(),
+        [&](const auto& c) { return c.toMap()["file"].toString() == file; });
+    if (!known || !QFile::remove(file)) { message_ = "That recovery snapshot is not available"; emit changed(); return false; }
+    QFile::remove(file.chopped(QStringLiteral(".fl-live-recovery.json").size()) + ".lock");
+    message_ = "Discarded the recovery snapshot";
+    refreshRecovery();
+    emit changed();
+    return true;
+}
+bool Session::newProject() {
+    if (dirty()) { message_ = "Save your changes before starting a new project."; emit changed(); return false; }
+    if (!editable()) return false;
+    try {
+        const auto project = defaultProject();
+        auto identities = std::make_shared<const fl_live::DocumentSnapshot>(project.identities);
+        pattern_clip_ = {};
+        if (!replace(std::make_shared<const SessionContent>(project.content), identities)) return false;
+        next_identity_ = project.identities.next_id;
+        restoreSceneSelection(project.identities.scenes[0].id);
+        project_path_ = QDir::home().filePath("fl-live-project.json");
+        owned_path_.clear(); // a new project may not overwrite an existing file by accident
+        saved_content_ = content_;
+        saved_identities_ = identities_;
+        selected_step_ = 0;
+        history_[0] = {content_, identities_, EditKind::none, -1, selected_scene_};
+        history_cursor_ = 0; history_size_ = 1;
+        message_ = "New project. Launch clips, then press Play.";
+        emit projectPathChanged();
+        emit changed();
+        return true;
+    } catch (const std::exception& error) { message_ = QString::fromUtf8(error.what()); emit changed(); return false; }
 }

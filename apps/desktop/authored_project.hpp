@@ -17,22 +17,58 @@ struct ClipContent {
     // Decoded asset; not persisted. Null means missing or not yet loaded,
     // which renders silence. Shared and immutable, so history copies are cheap.
     std::shared_ptr<const fl_live::AudioClip> media;
+    // Imported clips only: play source frames [range_start, range_start +
+    // length), where length 0 means to the end of the source. Source-rate
+    // playback, no warping. loop false plays the range once and stops.
+    std::uint64_t range_start = 0;
+    std::uint64_t range_length = 0;
+    bool loop = true;
+    bool hasRange() const { return range_start != 0 || range_length != 0 || !loop; }
     bool operator==(const ClipContent&) const = default;
 };
+// Frames of a decoded clip (samples / channels), 0 when not resolved.
+std::uint64_t mediaFrames(const ClipContent& clip);
 struct TrackContent {
     fl_live::TrackId track;
     int level = 70; // percent
     bool operator==(const TrackContent&) const = default;
 };
+// Automatable parameters are identified by (track ID, parameter) and use the
+// same units as the static controls: level 0-100 percent, pan -100..100.
+// Points sit at hundredths of a beat from the song start (up to 256 bars)
+// and must strictly increase; values are linear between points in frames.
+enum class AutomatedParameter { level, pan };
+struct LanePoint {
+    std::int64_t at = 0;
+    double value = 0;
+    bool operator==(const LanePoint&) const = default;
+};
+struct AutomationLane {
+    fl_live::TrackId track;
+    AutomatedParameter parameter = AutomatedParameter::level;
+    std::vector<LanePoint> points;
+    bool operator==(const AutomationLane&) const = default;
+};
+inline constexpr std::int64_t automation_position_limit = 256LL * 4 * 100;
 struct SessionContent {
     int tempo = 120;
     std::vector<TrackContent> tracks;
     std::vector<ClipContent> clips;
+    std::vector<AutomationLane> automation;
     bool operator==(const SessionContent&) const = default;
+};
+// An imported file's location relative to the project file's folder, when
+// it lies inside that folder. Used only to find files after the project
+// folder moved; never to choose between different files.
+struct RelativeAsset {
+    fl_live::ClipId clip;
+    QString path;
+    bool operator==(const RelativeAsset&) const = default;
 };
 struct AuthoredProject {
     SessionContent content;
     fl_live::DocumentSnapshot identities;
+    std::vector<RelativeAsset> relative; // filled by decoding; not document state
 };
 inline constexpr std::size_t desktop_clips_per_track = 1;
 
@@ -54,10 +90,17 @@ const ClipContent& clipContent(const SessionContent& content, fl_live::ClipId cl
 const TrackContent& trackContent(const SessionContent& content, fl_live::TrackId track);
 std::vector<fl_live::DocumentClipSource> contentSources(const SessionContent&, const fl_live::DocumentSnapshot&);
 std::vector<fl_live::DocumentTrackGain> contentGains(const SessionContent&, const fl_live::DocumentSnapshot&);
+// Lanes in engine units at transport frames for the content's tempo.
+std::vector<fl_live::DocumentAutomation> contentAutomation(const SessionContent&, const fl_live::DocumentSnapshot&);
 
 // Version 4 is always written; versions 1-3 are read and migrated. Decoding
 // never opens assets: media stays null until the caller resolves paths.
-QByteArray encodeAuthoredProject(const AuthoredProject&);
+// With a base directory, imported files inside it also get a relative path
+// (required feature asset-relative-v1). writeAuthoredProject passes the
+// destination's folder.
+QByteArray encodeAuthoredProject(const AuthoredProject&, const QString& baseDirectory = {});
+// Relative path of an asset inside baseDirectory, or empty when outside it.
+QString assetRelativePath(const QString& asset, const QString& baseDirectory);
 AuthoredProject decodeAuthoredProject(const QByteArray&);
 AuthoredProject readAuthoredProject(const QString& path);
 void writeAuthoredProject(const QString& path, const AuthoredProject&);
@@ -71,7 +114,24 @@ struct ExportProgress {
     std::atomic<bool> cancel{false};
 };
 enum class ExportOutcome { completed, cancelled };
+// Explicit render policy. Clips start at the song start; the file holds bars
+// [start_bar, start_bar + bars) followed by tail_ms rendered after every
+// track stops at the range end. The engine has no effects or release
+// envelopes yet, so the tail is currently silent. Mono is the (L + R) / 2
+// downmix. PCM clamps to [-1, 1]; float32 keeps the mix unclipped.
+enum class ExportFormat { pcm16, pcm24, float32 };
+struct ExportOptions {
+    static constexpr int bar_limit = 64, start_limit = 255, tail_limit_ms = 10000;
+    int start_bar = 0;
+    int bars = 4;
+    int tail_ms = 0;
+    int channels = 2;
+    ExportFormat format = ExportFormat::pcm16;
+};
+void validateExportOptions(const ExportOptions& options);
 std::uint64_t exportFrames(int tempo, int bars);
 QString exportPartialPath(const QString& path);
 ExportOutcome exportProjectWav(const QString& path, const SessionContent& content, const fl_live::DocumentSnapshot& identities,
     int bars, ExportProgress* progress = nullptr);
+ExportOutcome exportProjectWav(const QString& path, const SessionContent& content, const fl_live::DocumentSnapshot& identities,
+    const ExportOptions& options, ExportProgress* progress = nullptr);
