@@ -22,8 +22,8 @@ ApplicationWindow {
     Shortcut { objectName: "openShortcut"; sequences: [StandardKey.Open]; enabled: !window.dialogOpen && session.canEdit; onActivated: session.loadProject(projectFile.text) }
     Shortcut { objectName: "transportShortcut"; sequence: "Space"; enabled: !window.dialogOpen && !window.focusUsesSpace && session.audioAvailable; onActivated: session.running ? session.stop() : session.play() }
     Shortcut { objectName: "panicShortcut"; sequence: "Ctrl+."; enabled: !window.dialogOpen; onActivated: session.panic() }
-    Shortcut { objectName: "addAudioShortcut"; sequence: "Ctrl+Shift+A"; enabled: !window.dialogOpen && session.canEdit; onActivated: session.addTrack("audio") }
-    Shortcut { objectName: "addMidiShortcut"; sequence: "Ctrl+Shift+M"; enabled: !window.dialogOpen && session.canEdit; onActivated: session.addTrack("midi") }
+    Shortcut { objectName: "addAudioShortcut"; sequence: "Ctrl+Shift+A"; enabled: !window.dialogOpen && session.canChange; onActivated: session.addTrack("audio") }
+    Shortcut { objectName: "addMidiShortcut"; sequence: "Ctrl+Shift+M"; enabled: !window.dialogOpen && session.canChange; onActivated: session.addTrack("midi") }
     Shortcut { objectName: "exportShortcut"; sequence: "Ctrl+E"; enabled: !window.dialogOpen && session.canEdit && !session.exporting; onActivated: exportButton.clicked() }
     // After a track is deleted, focus moves to the same control on the track
     // that took its place (or the previous one), never to nothing.
@@ -82,7 +82,7 @@ ApplicationWindow {
             Label { Layout.preferredWidth: 320; text: renameDialog.errorText; textFormat: Text.PlainText; visible: text.length > 0; wrapMode: Text.WordWrap; color: "#e4bc75" }
         }
         footer: RowLayout {
-            Button { objectName: "applyRename"; text: "Apply"; enabled: session.canEdit; onClicked: renameDialog.commit() }
+            Button { objectName: "applyRename"; text: "Apply"; enabled: session.canChange; onClicked: renameDialog.commit() }
             Button { objectName: "cancelRename"; text: "Cancel"; onClicked: renameDialog.close() }
         }
     }
@@ -176,17 +176,17 @@ ApplicationWindow {
                     contentItem: Text { text: modelData; textFormat: Text.PlainText; color: sceneSelector.palette.text; elide: Text.ElideRight }
                 }
             }
-            Button { objectName: "createScene"; text: "New scene"; enabled: session.canEdit && session.sceneIds.length < 256; onClicked: session.createScene() }
-            Button { objectName: "copyScene"; text: "Copy arrangement"; enabled: session.canEdit && session.sceneIds.length < 256; onClicked: session.copyScene(session.sceneId); ToolTip.visible: hovered; ToolTip.text: "Copies slot choices into a new scene. Clip sources remain shared." }
-            Button { objectName: "sceneUp"; text: "Move up"; enabled: session.canEdit && session.selectedSceneIndex > 0; onClicked: session.moveScene(session.sceneId, -1) }
-            Button { objectName: "sceneDown"; text: "Move down"; enabled: session.canEdit && session.selectedSceneIndex+1 < session.sceneIds.length; onClicked: session.moveScene(session.sceneId, 1) }
-            Button { objectName: "deleteScene"; text: "Delete scene"; enabled: session.canEdit && session.sceneIds.length > 1; onClicked: session.deleteScene(session.sceneId) }
+            Button { objectName: "createScene"; text: "New scene"; enabled: session.canChange && session.sceneIds.length < 256; onClicked: session.createScene() }
+            Button { objectName: "copyScene"; text: "Copy arrangement"; enabled: session.canChange && session.sceneIds.length < 256; onClicked: session.copyScene(session.sceneId); ToolTip.visible: hovered; ToolTip.text: "Copies slot choices into a new scene. Clip sources remain shared." }
+            Button { objectName: "sceneUp"; text: "Move up"; enabled: session.canChange && session.selectedSceneIndex > 0; onClicked: session.moveScene(session.sceneId, -1) }
+            Button { objectName: "sceneDown"; text: "Move down"; enabled: session.canChange && session.selectedSceneIndex+1 < session.sceneIds.length; onClicked: session.moveScene(session.sceneId, 1) }
+            Button { objectName: "deleteScene"; text: "Delete scene"; enabled: session.canChange && session.sceneIds.length > 1; onClicked: session.deleteScene(session.sceneId) }
         }
         RowLayout {
             Layout.fillWidth: true
             Label { text: "SCENE"; color: "#9daabd" }
             Label { objectName: "sceneName"; text: session.sceneName; textFormat: Text.PlainText; elide: Text.ElideRight; Layout.fillWidth: true; font.bold: true }
-            ToolButton { id: sceneRename; objectName: "renameScene"; text: "Rename"; enabled: session.canEdit; Accessible.name: "Rename scene"; onClicked: renameDialog.edit(false, session.sceneId, session.sceneName, sceneRename, true) }
+            ToolButton { id: sceneRename; objectName: "renameScene"; text: "Rename"; enabled: session.canChange; Accessible.name: "Rename scene"; onClicked: renameDialog.edit(false, session.sceneId, session.sceneName, sceneRename, true) }
             Label { text: "Timing" }
             ComboBox { id: sceneTiming; objectName: "sceneTiming"; model: ["Immediate", "One bar"]; currentIndex: 1; Accessible.name: "Scene launch and stop timing" }
             Button { objectName: "launchScene"; text: "Launch scene"; enabled: session.audioAvailable; onClicked: session.launchScene(session.sceneId, sceneTiming.currentIndex === 0 ? "immediate" : "one-bar") }
@@ -196,8 +196,8 @@ ApplicationWindow {
         RowLayout {
             Layout.fillWidth: true
             Label { text: "TRACKS"; color: "#9daabd" }
-            Button { id: addAudioButton; objectName: "addAudioTrack"; text: "Add audio track"; enabled: session.canEdit && session.trackCount < 64; onClicked: session.addTrack("audio") }
-            Button { objectName: "addMidiTrack"; text: "Add MIDI track"; enabled: session.canEdit && session.trackCount < 64; onClicked: session.addTrack("midi") }
+            Button { id: addAudioButton; objectName: "addAudioTrack"; text: "Add audio track"; enabled: session.canChange && session.trackCount < 64; onClicked: session.addTrack("audio") }
+            Button { objectName: "addMidiTrack"; text: "Add MIDI track"; enabled: session.canChange && session.trackCount < 64; onClicked: session.addTrack("midi") }
             Item { Layout.fillWidth: true }
             Label { text: session.trackCount + (session.trackCount === 1 ? " track" : " tracks") + " · one clip each"; color: "#9daabd" }
         }
@@ -233,7 +233,7 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     Label { objectName: "trackName" + index; text: session.trackNames[index]; textFormat: Text.PlainText; font.bold: true; font.pixelSize: 18; Layout.fillWidth: true; elide: Text.ElideRight }
                                     Label { objectName: "trackKind" + index; text: trackColumn.midi ? "MIDI" : "AUDIO"; color: trackColumn.midi ? "#e4bc75" : "#68d9a4"; font.pixelSize: 11 }
-                                    ToolButton { id: trackRename; objectName: "renameTrack" + index; text: "Rename"; enabled: session.canEdit; Accessible.name: "Rename track " + (index + 1); onClicked: renameDialog.edit(true, trackColumn.trackId, session.trackNames[index], trackRename) }
+                                    ToolButton { id: trackRename; objectName: "renameTrack" + index; text: "Rename"; enabled: session.canChange; Accessible.name: "Rename track " + (index + 1); onClicked: renameDialog.edit(true, trackColumn.trackId, session.trackNames[index], trackRename) }
                                 }
                                 RowLayout {
                                     Layout.fillWidth: true
@@ -248,12 +248,12 @@ ApplicationWindow {
                                         Accessible.name: "Launch " + session.clipNames[index] + " on track " + (index + 1)
                                         Accessible.description: session.clipStates[index]
                                     }
-                                    ToolButton { id: clipRename; objectName: "renameClip" + index; text: "Rename"; enabled: session.canEdit; Accessible.name: "Rename clip " + (index + 1); onClicked: renameDialog.edit(false, session.clipIds[index], session.clipNames[index], clipRename) }
+                                    ToolButton { id: clipRename; objectName: "renameClip" + index; text: "Rename"; enabled: session.canChange; Accessible.name: "Rename clip " + (index + 1); onClicked: renameDialog.edit(false, session.clipIds[index], session.clipNames[index], clipRename) }
                                 }
                                 RowLayout {
                                     Layout.fillWidth: true
                                     Label { objectName: "clipState" + index; text: session.clipStates[index]; Layout.fillWidth: true; color: session.activeClips[index] >= 0 ? "#68d9a4" : "#b7c5d8" }
-                                    CheckBox { objectName: "sceneIncluded" + index; text: "Include in scene"; checked: session.sceneIncluded[index]; enabled: session.canEdit; onClicked: session.setSceneIncluded(trackColumn.trackId, checked); Accessible.name: "Include track " + (index+1) + " in scene"; ToolTip.visible: hovered; ToolTip.text: "An excluded track stops when this scene launches." }
+                                    CheckBox { objectName: "sceneIncluded" + index; text: "Include in scene"; checked: session.sceneIncluded[index]; enabled: session.canChange; onClicked: session.setSceneIncluded(trackColumn.trackId, checked); Accessible.name: "Include track " + (index+1) + " in scene"; ToolTip.visible: hovered; ToolTip.text: "An excluded track stops when this scene launches." }
                                 }
                                 Button { objectName: "stopTrack" + index; text: "Stop track on next bar"; Accessible.name: "Stop track " + (index + 1) + " on next bar"; Layout.fillWidth: true; onClicked: session.stopTrackId(trackColumn.trackId) }
                                 Label { objectName: "trackSource" + index; text: session.trackSources[index]; textFormat: Text.PlainText; elide: Text.ElideMiddle; Layout.fillWidth: true; color: text.startsWith("Missing") ? "#e4bc75" : "#b7c5d8" }
@@ -310,7 +310,7 @@ ApplicationWindow {
                                     SpinBox {
                                         objectName: "rangeStart" + index; editable: true; Layout.preferredWidth: 88
                                         from: 0; to: Math.max(0, Math.ceil(waveform.range[1] / 48) - 1)
-                                        value: Math.round(waveform.range[0] / 48); enabled: session.canEdit
+                                        value: Math.round(waveform.range[0] / 48); enabled: session.canChange
                                         onValueModified: session.setClipRange(trackColumn.trackId, Math.min(value * 48, waveform.range[1] - 1), waveform.range[1], waveform.range[2])
                                         Accessible.name: "Track " + (index + 1) + " clip start in milliseconds"
                                     }
@@ -318,13 +318,13 @@ ApplicationWindow {
                                     SpinBox {
                                         objectName: "rangeEnd" + index; editable: true; Layout.preferredWidth: 88
                                         from: Math.floor(waveform.range[0] / 48) + 1; to: Math.ceil(waveform.frames / 48)
-                                        value: Math.ceil(waveform.range[1] / 48); enabled: session.canEdit
+                                        value: Math.ceil(waveform.range[1] / 48); enabled: session.canChange
                                         // The last millisecond step always reaches the true end of the source.
                                         onValueModified: session.setClipRange(trackColumn.trackId, waveform.range[0], Math.min(value * 48, waveform.frames), waveform.range[2])
                                         Accessible.name: "Track " + (index + 1) + " clip end in milliseconds"
                                     }
                                     CheckBox {
-                                        objectName: "rangeLoop" + index; text: "Loop"; checked: waveform.range[2]; enabled: session.canEdit
+                                        objectName: "rangeLoop" + index; text: "Loop"; checked: waveform.range[2]; enabled: session.canChange
                                         onClicked: session.setClipRange(trackColumn.trackId, waveform.range[0], waveform.range[1], checked)
                                         Accessible.name: "Loop track " + (index + 1) + " clip range"; ToolTip.visible: hovered; ToolTip.text: "Off plays the range once, then the track stops."
                                     }
@@ -332,14 +332,14 @@ ApplicationWindow {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     Label { text: "Level %"; color: "#9daabd" }
-                                    SpinBox { objectName: "level" + index; from: 0; to: 100; value: session.levels[index]; enabled: session.canEdit; onValueModified: session.setLevel(index, value); Accessible.name: "Track " + (index + 1) + " level percent" }
+                                    SpinBox { objectName: "level" + index; from: 0; to: 100; value: session.levels[index]; enabled: session.canChange; onValueModified: session.setLevel(index, value); Accessible.name: "Track " + (index + 1) + " level percent" }
                                 }
                                 RowLayout {
                                     Layout.fillWidth: true
                                     Label { text: "Pan"; color: "#9daabd" }
                                     SpinBox {
                                         objectName: "pan" + index; from: -100; to: 100; stepSize: 5; editable: true
-                                        value: session.pans[index]; enabled: session.canEdit
+                                        value: session.pans[index]; enabled: session.canChange
                                         textFromValue: function(value) { return value === 0 ? "C" : value < 0 ? "L" + (-value) : "R" + value }
                                         validator: RegularExpressionValidator { regularExpression: /^\s*([CcLlRr]\d{0,3}|-?\d{1,3})\s*$/ }
                                         valueFromText: function(text) {
@@ -352,13 +352,13 @@ ApplicationWindow {
                                         ToolTip.visible: hovered; ToolTip.text: "Balance pan: the far side is reduced, the near side stays at full level."
                                         Layout.preferredWidth: 96
                                     }
-                                    CheckBox { objectName: "mute" + index; text: "Mute"; checked: session.mutes[index]; enabled: session.canEdit; onClicked: session.setMute(trackColumn.trackId, checked); Accessible.name: "Mute track " + (index + 1) }
-                                    CheckBox { objectName: "solo" + index; text: "Solo"; checked: session.solos[index]; enabled: session.canEdit; onClicked: session.setSolo(trackColumn.trackId, checked); Accessible.name: "Solo track " + (index + 1); ToolTip.visible: hovered; ToolTip.text: "While any track is soloed, only soloed tracks play. Mute wins over solo." }
+                                    CheckBox { objectName: "mute" + index; text: "Mute"; checked: session.mutes[index]; enabled: session.canChange; onClicked: session.setMute(trackColumn.trackId, checked); Accessible.name: "Mute track " + (index + 1) }
+                                    CheckBox { objectName: "solo" + index; text: "Solo"; checked: session.solos[index]; enabled: session.canChange; onClicked: session.setSolo(trackColumn.trackId, checked); Accessible.name: "Solo track " + (index + 1); ToolTip.visible: hovered; ToolTip.text: "While any track is soloed, only soloed tracks play. Mute wins over solo." }
                                 }
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    Button { objectName: "duplicateTrack" + index; text: "Duplicate"; enabled: session.canEdit && session.trackCount < 64; onClicked: session.duplicateTrack(trackColumn.trackId); Accessible.name: "Duplicate track " + (index + 1) }
-                                    Button { id: deleteButton; objectName: "deleteTrack" + index; text: "Delete"; enabled: session.canEdit; onClicked: {
+                                    Button { objectName: "duplicateTrack" + index; text: "Duplicate"; enabled: session.canChange && session.trackCount < 64; onClicked: session.duplicateTrack(trackColumn.trackId); Accessible.name: "Duplicate track " + (index + 1) }
+                                    Button { id: deleteButton; objectName: "deleteTrack" + index; text: "Delete"; enabled: session.canChange; onClicked: {
                                             // The track list rebuilds on deletion; capture what the focus move needs first.
                                             const position = index, appWindow = ApplicationWindow.window
                                             if (session.deleteTrack(trackColumn.trackId)) appWindow.focusAfterDeletion(position)
@@ -377,7 +377,7 @@ ApplicationWindow {
                                         Layout.fillWidth: true
                                         ComboBox { id: automationParameter; objectName: "automationParameter" + index; model: ["Level", "Pan"]; Layout.preferredWidth: 96; Accessible.name: "Automated parameter of track " + (index + 1) }
                                         Label { text: automationEditor.points.length + (automationEditor.points.length === 1 ? " point" : " points"); color: "#9daabd"; Layout.fillWidth: true }
-                                        Button { objectName: "clearAutomation" + index; text: "Clear"; enabled: session.canEdit && automationEditor.points.length > 0; onClicked: session.clearAutomation(trackColumn.trackId, automationEditor.parameter); Accessible.name: "Clear automation of track " + (index + 1) }
+                                        Button { objectName: "clearAutomation" + index; text: "Clear"; enabled: session.canChange && automationEditor.points.length > 0; onClicked: session.clearAutomation(trackColumn.trackId, automationEditor.parameter); Accessible.name: "Clear automation of track " + (index + 1) }
                                     }
                                     Canvas {
                                         id: lane
@@ -405,7 +405,7 @@ ApplicationWindow {
                                         }
                                         MouseArea {
                                             objectName: "automationLaneInput" + index
-                                            anchors.fill: parent; enabled: session.canEdit
+                                            anchors.fill: parent; enabled: session.canChange
                                             onClicked: function(mouse) {
                                                 const editor = automationEditor
                                                 for (const p of editor.points)
@@ -429,7 +429,7 @@ ApplicationWindow {
                                             Accessible.name: "Automation point position in beats, track " + (index + 1) }
                                         Label { text: "Value"; color: "#9daabd" }
                                         SpinBox { id: automationValue; objectName: "automationValue" + index; from: automationEditor.low; to: 100; value: automationEditor.parameter === "level" ? 70 : 0; editable: true; Layout.preferredWidth: 84; Accessible.name: "Automation point value in percent, track " + (index + 1) }
-                                        Button { objectName: "automationAdd" + index; text: "Add point"; enabled: session.canEdit; onClicked: session.setAutomationPoint(trackColumn.trackId, automationEditor.parameter, automationAt.value * 25, automationValue.value); Accessible.name: "Add automation point to track " + (index + 1) }
+                                        Button { objectName: "automationAdd" + index; text: "Add point"; enabled: session.canChange; onClicked: session.setAutomationPoint(trackColumn.trackId, automationEditor.parameter, automationAt.value * 25, automationValue.value); Accessible.name: "Add automation point to track " + (index + 1) }
                                     }
                                 }
                             }
@@ -444,7 +444,7 @@ ApplicationWindow {
                     RowLayout {
                         Layout.fillWidth: true
                         Label { objectName: "patternTitle"; text: "PATTERN · " + (session.trackNames[session.patternTrackIndex] || ""); textFormat: Text.PlainText; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                        ComboBox { objectName: "synthWaveform"; model: ["Sine", "Triangle", "Square", "Saw"]; currentIndex: session.synth[0]; enabled: session.canEdit; Layout.preferredWidth: 100; onActivated: function(i) { session.setSynth("waveform", i) }; Accessible.name: "Synth waveform" }
+                        ComboBox { objectName: "synthWaveform"; model: ["Sine", "Triangle", "Square", "Saw"]; currentIndex: session.synth[0]; enabled: session.canChange; Layout.preferredWidth: 100; onActivated: function(i) { session.setSynth("waveform", i) }; Accessible.name: "Synth waveform" }
                         Repeater {
                             model: [["A", "attack", 1, 10000], ["D", "decay", 2, 10000], ["S %", "sustain", 3, 100], ["R", "release", 4, 10000]]
                             RowLayout {
@@ -454,14 +454,14 @@ ApplicationWindow {
                                 SpinBox {
                                     objectName: "synth" + modelData[1].charAt(0).toUpperCase() + modelData[1].slice(1)
                                     from: 0; to: modelData[3]; stepSize: modelData[1] === "sustain" ? 5 : 10; editable: true
-                                    value: session.synth[modelData[2]]; enabled: session.canEdit; Layout.preferredWidth: 78
+                                    value: session.synth[modelData[2]]; enabled: session.canChange; Layout.preferredWidth: 78
                                     onValueModified: session.setSynth(modelData[1], value)
                                     Accessible.name: "Synth " + modelData[1] + (modelData[1] === "sustain" ? " percent" : " in milliseconds")
                                 }
                             }
                         }
                         Label { text: "Quarter-note steps" }
-                        SpinBox { objectName: "stepCount"; from: 1; to: 16; value: session.stepCount; enabled: session.canEdit; onValueModified: session.setStepCount(value); Accessible.name: "Pattern length in quarter notes" }
+                        SpinBox { objectName: "stepCount"; from: 1; to: 16; value: session.stepCount; enabled: session.canChange; onValueModified: session.setStepCount(value); Accessible.name: "Pattern length in quarter notes" }
                     }
                     GridLayout {
                         columns: 8
@@ -485,13 +485,13 @@ ApplicationWindow {
                     RowLayout {
                         Layout.fillWidth: true
                         Label { text: "Step " + (session.selectedStep + 1) }
-                        CheckBox { objectName: "stepEnabled"; text: "Note enabled"; checked: session.stepEnabled[session.selectedStep]; enabled: session.canEdit; onClicked: session.setStepEnabled(session.selectedStep, checked) }
+                        CheckBox { objectName: "stepEnabled"; text: "Note enabled"; checked: session.stepEnabled[session.selectedStep]; enabled: session.canChange; onClicked: session.setStepEnabled(session.selectedStep, checked) }
                         Label { text: "Pitch (MIDI)" }
-                        SpinBox { objectName: "selectedPitch"; from: 0; to: 127; value: session.pitches[session.selectedStep]; enabled: session.canEdit; onValueModified: session.setPitch(session.selectedStep,value); Accessible.name: "Selected step MIDI pitch" }
+                        SpinBox { objectName: "selectedPitch"; from: 0; to: 127; value: session.pitches[session.selectedStep]; enabled: session.canChange; onValueModified: session.setPitch(session.selectedStep,value); Accessible.name: "Selected step MIDI pitch" }
                         Label { text: "Velocity %" }
-                        SpinBox { objectName: "selectedVelocity"; from: 0; to: 100; value: session.velocities[session.selectedStep]; enabled: session.canEdit; onValueModified: session.setVelocity(session.selectedStep,value); Accessible.name: "Selected step velocity percent" }
+                        SpinBox { objectName: "selectedVelocity"; from: 0; to: 100; value: session.velocities[session.selectedStep]; enabled: session.canChange; onValueModified: session.setVelocity(session.selectedStep,value); Accessible.name: "Selected step velocity percent" }
                         Label { text: "Gate %" }
-                        SpinBox { objectName: "selectedGate"; from: 1; to: 100; value: session.gates[session.selectedStep]; enabled: session.canEdit; onValueModified: session.setGate(session.selectedStep,value); Accessible.name: "Selected step gate percent" }
+                        SpinBox { objectName: "selectedGate"; from: 1; to: 100; value: session.gates[session.selectedStep]; enabled: session.canChange; onValueModified: session.setGate(session.selectedStep,value); Accessible.name: "Selected step gate percent" }
                         Item { Layout.fillWidth: true }
                     }
                 }

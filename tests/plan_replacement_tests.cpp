@@ -1,5 +1,5 @@
 // Immutable plan replacement with acknowledged retirement (#53): activation
-// boundary, command remapping, generation checks, refusals, MIDI voice
+// boundary, command remapping, control ordering, refusals, MIDI voice
 // continuity, and a threaded replace/retire/shutdown stress run. Retired
 // plans are poisoned with NaN before destruction, so a stale render-side
 // reference shows up in the output as well as under AddressSanitizer.
@@ -37,13 +37,9 @@ using namespace fl_live;
 void require(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
 AudioClip constant(float value, std::size_t frames = 4) { return AudioClip{std::vector<float>(frames, value), true}; }
 std::unique_ptr<PlanReplacement> replacement(SessionPlan plan, PlanMapping mapping, Frame at = 0) {
-    return std::make_unique<PlanReplacement>(PlanReplacement{std::move(plan), std::move(mapping), at});
+    return std::make_unique<PlanReplacement>(PlanReplacement{std::make_shared<const SessionPlan>(std::move(plan)), std::move(mapping), at});
 }
-Control schedule(Command command, std::uint64_t serial, std::uint64_t generation = 0) {
-    Control control{ControlKind::schedule, command, serial};
-    control.generation = generation;
-    return control;
-}
+Control schedule(Command command, std::uint64_t serial) { return {ControlKind::schedule, command, serial}; }
 
 // Old track 0 is deleted, old track 1 becomes new track 0 with new content.
 // The swap is due at frame 1000; a queued launch on the deleted track is
@@ -79,7 +75,7 @@ void activationBoundary() {
     }
 }
 
-void generationsAndRefusals() {
+void orderingAndRefusals() {
     const SessionPlan a{48000, 120000, {{1, {constant(0.25F)}}, {1, {constant(0.5F)}}}};
     RenderController controller(a);
     const PlanMapping identity{{0, 1}, {{0}, {0}}};
@@ -94,37 +90,52 @@ void generationsAndRefusals() {
     require(controller.offer(replacement(two(0.1F), {{0, 1}, {{1}, {0}}})) == OfferResult::invalid, "mapped clip out of range");
     auto loud = two(0.1F); loud.tracks[0].gain = 5;
     require(controller.offer(replacement(std::move(loud), identity)) == OfferResult::invalid, "plan the engine refuses");
-    require(controller.generation() == 0, "refusals change nothing");
+    require(!controller.submit({ControlKind::replace}), "the replacement marker is internal");
 
+    // A full control queue refuses the offer and leaves no marker behind.
+    std::uint64_t serial = 0;
+    while (controller.submit({ControlKind::rewind, {}, ++serial})) {}
+    require(controller.offer(replacement(two(0.1F), identity)) == OfferResult::busy, "full queue");
     std::array<float, 64> out{};
-    require(controller.submit({ControlKind::start, {}, 1}), "start");
-    controller.process(std::span<float>{});
-    require(controller.offer(replacement(two(0.1F), identity, 100)) == OfferResult::accepted && controller.generation() == 1, "offer");
-    require(controller.offer(replacement(two(0.2F), identity)) == OfferResult::busy, "one offer in flight");
-    require(controller.submit(schedule({CommandKind::launch, 50, 0, 0}, 2, 0)), "current-generation launch");
-    require(controller.submit(schedule({CommandKind::launch, 50, 1, 0}, 3, 1)), "next-generation launch");
     controller.process(out);
+    require(controller.status().generation == 0 && !controller.collect().acknowledged, "refusals change nothing");
+
+    require(controller.submit({ControlKind::start, {}, ++serial}), "start");
+    controller.process(std::span<float>{});
+    // Submitted before the offer: old indexes. After it: new indexes, and it
+    // waits behind the replacement, which is due at frame 100.
+    require(controller.submit(schedule({CommandKind::launch, 50, 0, 0}, ++serial)), "launch under the old plan");
+    require(controller.offer(replacement(two(0.1F), identity, 100)) == OfferResult::accepted, "offer");
+    require(controller.offer(replacement(two(0.2F), identity)) == OfferResult::busy, "one offer in flight");
+    const auto before = serial;
+    require(controller.submit(schedule({CommandKind::launch, 128, 1, 0}, ++serial)), "launch under the new plan");
+    controller.process(out); // frames 0..63
     auto status = controller.status();
-    require(status.generation == 0 && status.rejected == 1 && status.tracks[0].active_clip == 0 && status.tracks[1].active_clip < 0,
-        "a control for an unactivated plan is rejected; the current one applies");
+    require(status.generation == 0 && status.handled_serial == before && status.tracks[0].active_clip == 0 &&
+        status.tracks[1].pending == PendingAction::none, "the replacement holds later controls until its frame");
     require(!controller.collect().acknowledged && controller.offer(replacement(two(0.2F), identity)) == OfferResult::busy, "not yet active");
     controller.process(out); // frames 64..127: activates at 100
-    require(controller.status().generation == 1 && out[35] == 0.25F && out[36] == 0.1F, "activation at frame 100 with the new content");
-    require(controller.offer(replacement(two(0.2F), identity)) == OfferResult::busy, "retirement not yet collected");
-    require(controller.submit({ControlKind::stop, {}, 4, {}, LaunchPolicy::next_bar, 0}) &&
-        controller.submit({ControlKind::start, {}, 5, {}, LaunchPolicy::next_bar, 0}), "transport controls with an old generation");
-    require(controller.submit(schedule({CommandKind::launch, 128, 1, 0}, 6, 1)), "current-generation launch");
-    controller.process(out);
     status = controller.status();
-    require(status.running && status.rejected == 1 && status.tracks[1].active_clip == 0, "transport is generation-free; indexed controls use the active one");
+    require(status.generation == 1 && status.handled_serial == before && out[35] == 0.25F && out[36] == 0.1F,
+        "activation exactly at frame 100 with the new content");
+    require(controller.offer(replacement(two(0.2F), identity)) == OfferResult::busy, "retirement not yet collected");
+    controller.process(out); // frames 128..191: the waiting launch applies
+    status = controller.status();
+    require(status.handled_serial == serial && status.tracks[1].active_clip == 0 && out[0] == 0.2F && status.rejected == 0,
+        "the control behind the replacement uses the new plan");
     auto first = controller.collect();
     require(first.acknowledged && !first.retired, "first retirement is the constructor's plan");
-    require(controller.offer(replacement(two(0.3F), identity)) == OfferResult::accepted, "next offer after collection");
+    // While stopped a replacement activates at once, even with a future frame.
+    require(controller.submit({ControlKind::stop, {}, ++serial}), "stop");
+    require(controller.offer(replacement(two(0.3F), identity, std::numeric_limits<Frame>::max())) == OfferResult::accepted, "stopped offer");
+    require(controller.submit({ControlKind::start, {}, ++serial}), "restart");
+    require(controller.submit(schedule({CommandKind::launch, 192, 0, 0}, ++serial)), "relaunch");
     controller.process(out);
+    status = controller.status();
     auto second = controller.collect();
-    require(second.acknowledged && second.retired && second.retired->plan.tracks.size() == 2 &&
-        std::get<AudioClip>(second.retired->plan.tracks[0].clips[0]).samples[0] == 0.1F, "second retirement hands back the first replacement");
-    require(out[0] == 0.3F, "the playing track continues under the third plan");
+    require(status.generation == 2 && status.running && status.handled_serial == serial && out[0] == 0.3F, "stopped activation, then the queued controls under the new plan");
+    require(second.acknowledged && second.retired && second.retired->plan->tracks.size() == 2 &&
+        std::get<AudioClip>(second.retired->plan->tracks[0].clips[0]).samples[0] == 0.1F, "second retirement hands back the first replacement");
 }
 
 void midiContinuity() {
@@ -218,7 +229,10 @@ void stress() {
         Retirement ack;
         while (!(ack = controller->collect()).acknowledged) std::this_thread::yield();
         if (ack.retired) {
-            for (auto& track : ack.retired->plan.tracks)
+            // The test is the plan's only owner, so overwriting it is safe
+            // unless the render thread still reads it.
+            if (ack.retired->plan.use_count() != 1) bad.store(true);
+            for (auto& track : const_cast<SessionPlan&>(*ack.retired->plan).tracks)
                 for (auto& clip : track.clips)
                     for (auto& sample : std::get<AudioClip>(clip).samples) sample = std::numeric_limits<float>::quiet_NaN();
             ack.retired.reset();
@@ -227,11 +241,8 @@ void stress() {
         tracks = next;
         CommandBatch batch;
         for (std::size_t t = 0; t < tracks; ++t) batch.commands[batch.count++] = {CommandKind::launch, 0, t, 0};
-        Control launch{ControlKind::scene, {}, ++serial, batch, LaunchPolicy::immediate};
-        launch.generation = controller->generation();
+        const Control launch{ControlKind::scene, {}, ++serial, batch, LaunchPolicy::immediate};
         while (!controller->submit(launch)) std::this_thread::yield();
-        // A queued control for an older generation is rejected by design.
-        while (controller->status().handled_serial < serial) std::this_thread::yield();
     }
     // Shutdown with an offer that cannot activate before the thread stops.
     SessionPlan last{48000, 120000, {{1, {constant(0.5F)}}}};
@@ -253,10 +264,10 @@ void stress() {
 int main() {
     try {
         activationBoundary();
-        generationsAndRefusals();
+        orderingAndRefusals();
         midiContinuity();
         stress();
-        std::cout << "PASS: plan replacement at frame boundaries for blocks 1/64/257/512/3000, command remap/drop, generation checks, "
+        std::cout << "PASS: plan replacement at frame boundaries for blocks 1/64/257/512/3000, command remap/drop, control ordering, "
                      "refusals, MIDI voice continuity, 2000 threaded replacements with poisoned retirement and shutdown, "
                      "no render-thread allocation or release\n";
         return 0;

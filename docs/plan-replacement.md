@@ -4,19 +4,27 @@ This is the engine and controller contract for #53: a prepared plan replaces the
 
 ## Preparing a replacement
 
-A `PlanReplacement` owns a complete `SessionPlan`, a `PlanMapping` and an activation frame `at`. Build it on a worker or the control thread, never in the callback. The mapping indexes the plan it replaces: `track_from_old[t]` is the new index of old track `t` or `-1`, and `clip_from_old[t][c]` is the new index of that track's clip `c` within the new track, or `-1`. `planMapping(from, to)` builds one from two `DocumentRenderPlan`s by track and clip ID, so a renamed or reordered track keeps its state and a deleted one maps to `-1`.
+A `PlanReplacement` shares ownership of a complete `SessionPlan` and holds a `PlanMapping` and an activation frame `at`. An aliasing `shared_ptr` can point at the plan inside a prepared `DocumentRenderPlan` and keep that document alive; the render thread never releases a reference. Build it on a worker or the control thread, never in the callback. The mapping indexes the plan it replaces: `track_from_old[t]` is the new index of old track `t` or `-1`, and `clip_from_old[t][c]` is the new index of that track's clip `c` within the new track, or `-1`. `planMapping(from, to)` builds one from two `DocumentRenderPlan`s by track and clip ID, so a renamed or reordered track keeps its state and a deleted one maps to `-1`.
 
 `RenderController::offer` validates on the calling thread and returns:
 
 - `accepted`: the replacement is handed to the render owner.
-- `busy`: an earlier offer has not activated yet, or its retirement has not been collected. One replacement is in flight at a time.
+- `busy`: an earlier offer has not activated yet, its retirement has not been collected, or the control queue is full. One replacement is in flight at a time. The refused replacement is discarded.
 - `invalid`: the engine refuses the plan, the mapping does not cover every old track and clip, two old tracks map to one new track, an index is out of range, or the sample rate or tempo differs. Nothing changes.
 
 The mapping is checked against the latest accepted plan, so offers apply in the order they were accepted.
 
 ## When it activates
 
-While the transport runs, the replacement activates exactly before transport frame `at`: the controller splits the block at that frame, so output is the same for every block size. When `at` has already passed it activates at the start of the next block. While stopped, or on panic, it activates at the next block, since nothing is sounding.
+`offer` publishes the plan and then queues an internal marker behind the controls already submitted, so a replacement activates in control order. Controls submitted before the offer use the old plan's track and clip indexes; controls submitted after it use the new plan's. Indexes therefore never need a version tag.
+
+When the render owner reaches the marker:
+
+- While the transport runs, the replacement activates exactly before transport frame `at`. The controller splits the block at that frame, so output is the same for every block size. When `at` has already passed it activates immediately. Controls behind the marker wait until it has activated and apply from the following block. A far-future `at` therefore also delays later controls, including Stop; panic is not delayed.
+- While stopped, it activates at once.
+- Panic activates a held or queued replacement at once, since nothing is sounding, and discards the other queued controls as before.
+
+The desktop uses `at = 0`, so each playback edit activates at the next block boundary.
 
 ## What carries over
 
@@ -28,9 +36,9 @@ While the transport runs, the replacement activates exactly before transport fra
 - Queued commands keep their order; their track and clip indexes are remapped, and those referring to removed tracks or clips are dropped and counted in `RenderStatus::dropped_commands`.
 - Automation cursors restart against the new lanes.
 
-## Generations
+## Status
 
-Every accepted offer increments `RenderController::generation()`. A `Control` carries the generation its track and clip indexes refer to. Schedule, launch, stop-track and scene controls for any other generation are rejected and counted, because their indexes would name the wrong tracks. Transport start, stop and rewind apply under any generation. `RenderStatus::generation` reports how many replacements are active.
+`RenderStatus::generation` counts activated replacements and `RenderStatus::dropped_commands` counts queued commands they removed. `track_count` and the per-track status follow the active plan.
 
 ## Retirement
 
@@ -44,7 +52,8 @@ On activation the render owner stores the plan it stopped using in a retirement 
 
 - activation at frame 1000 with identical output for blocks 1, 64, 257, 512 and 3000, with one queued command dropped and one remapped;
 - refusals for each mapping fault, an invalid plan, and a changed rate or tempo;
-- generation rejection, MIDI voice continuity under a new waveform, cursor placement and a shortened release;
+- control ordering: a launch submitted before the offer uses the old plan, one submitted after waits behind it and uses the new plan; a full queue refuses the offer; a stopped transport activates at once;
+- MIDI voice continuity under a new waveform, cursor placement and a shortened release;
 - 2,000 threaded replacements with 400 refused offers. Each retired plan is overwritten with NaN before it is destroyed, so a stale render-side read would show in the output. The run ends with an unactivated offer left for the destructor.
 
 The render thread intercepts C++ allocation and deallocation and observes none. `document-render-preparation` checks `planMapping` across a track and clip deletion. The test runs under AddressSanitizer in CI; a local ThreadSanitizer run is recorded in the [receipt](../validation/plan-replacement.json).
