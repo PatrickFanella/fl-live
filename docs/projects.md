@@ -41,6 +41,12 @@ A complete four-step default project is:
 }
 ```
 
+## Required features and retained fixtures
+
+A version 4 file lists the optional parts it uses in `required_features`, in this canonical order: `general-session-v1`, `clip-ranges-v1`, `asset-relative-v1`, `automation-v1`, `synth-v1`, `piano-roll-v1`, `devices-v1`, `device-automation-v1`. A reader refuses any file that lists a feature it does not know, lists them in another order, or uses a part without listing it. Saving writes only the features in use, so an older build refuses a newer project instead of losing data.
+
+`tests/fixtures` keeps one file each of template versions 1, 2 and 3, written once by the encoders of their time and loaded from disk on every run (`authored-project-io`). With the three examples, which together use every feature except imported audio, they are the retained fixtures. Each must load; every example must re-encode to identical bytes with its identity references resolving; and an unknown feature, version 5 or an unexpected top-level field must be refused. Regenerating the fixtures is deliberate (`FL_LIVE_WRITE_FIXTURES=1`), never part of CI.
+
 ## Version 1 migration
 
 The reader still accepts version 1 with template `pulse-steps-v1` and its four-element `pitches` array. It maps those pitches to four enabled quarter-note steps, with velocity 70 percent and gate 75 percent. The remaining twelve steps start disabled. Tempo and levels are preserved. Desktop imports of v1/v2 receive deterministic initial track/clip/scene IDs and save as v4; earlier readers reject that new version. Use a new path to retain a legacy original.

@@ -1985,6 +1985,33 @@ private slots:
         QCOMPARE(ui.channels,1);QCOMPARE(ui.bits,24);
         QCOMPARE(ui.samples.size(),static_cast<std::size_t>(exportFrames(300,2)-exportFrames(300,1))+4800); // bar 2, 1 bar, 100 ms
     }
+    // examples/notes-and-devices.json is authored by this Session script and
+    // saved by the app: rebuilding it must give the shipped bytes.
+    void notesAndDevicesExampleIsAuthored() {
+        QTemporaryDir directory;Session s;
+        s.setTempo(112);
+        const auto pulse=s.trackIds()[0].toString(),lead=s.trackIds()[1].toString();
+        QVERIFY(s.renameTrack(pulse,"Pulse"));QVERIFY(s.renameTrack(lead,"Lead"));
+        QVERIFY(s.addDevice(pulse,"gain"));QVERIFY(s.setDeviceValue("1",-3));
+        QVERIFY(s.editPattern(lead));QVERIFY(s.setSynth("waveform",2));QVERIFY(s.setSynth("attack",5));QVERIFY(s.setSynth("release",120));
+        QVERIFY(s.usePianoRoll(true));QVERIFY(s.deleteNotes({"1","2","3","4"}));QVERIFY(s.setPianoLength(768));
+        const int melody[][4]={{0,2,69,90},{2,2,72,70},{4,4,74,85},{8,2,76,70},{10,2,74,65},{12,4,72,80},{16,4,69,90},{20,2,67,70},{22,2,69,75},{24,8,62,85}};
+        for(const auto& n:melody)QVERIFY(s.addNote(n[0]*24,n[1]*24,n[2],n[3]));
+        QVERIFY(s.addDevice(lead,"transpose"));QVERIFY(s.addDevice(lead,"gain"));QVERIFY(s.setDeviceValue("3",-4));
+        // The lead rises a fourth on every second pass of its two-bar clip.
+        for(const auto& p:{std::pair{0,0},{799,0},{800,5},{1599,5},{1600,0},{2399,0},{2400,5}})QVERIFY(s.setAutomationPoint(lead,"device:2",p.first,p.second));
+        QVERIFY(s.addTrack("midi"));const auto bass=s.trackIds()[2].toString();QVERIFY(s.renameTrack(bass,"Bass"));
+        QVERIFY(s.setSceneIncluded(bass,true));QVERIFY(s.editPattern(bass));QVERIFY(s.setSynth("waveform",3));QVERIFY(s.setSynth("release",60));
+        QVERIFY(s.usePianoRoll(true));QVERIFY(s.setPianoLength(768));
+        const int bassline[][4]={{0,6,57,85},{8,4,57,70},{16,6,55,85},{24,6,53,80}};
+        for(const auto& n:bassline)QVERIFY(s.addNote(n[0]*24,n[1]*24,n[2],n[3]));
+        QVERIFY(s.addDevice(bass,"transpose"));QVERIFY(s.setDeviceValue("4",-12));
+        const auto path=directory.filePath("notes-and-devices.json");QVERIFY(s.saveProject(path));
+        QFile built(path);QVERIFY(built.open(QIODevice::ReadOnly));const auto bytes=built.readAll();
+        const auto shipped=QDir(qEnvironmentVariable("FL_LIVE_EXAMPLES_DIR")).filePath("notes-and-devices.json");
+        if(qEnvironmentVariableIsSet("FL_LIVE_WRITE_EXAMPLE")){QFile out(shipped);QVERIFY(out.open(QIODevice::WriteOnly));out.write(bytes);}
+        QFile file(shipped);QVERIFY2(file.open(QIODevice::ReadOnly),qPrintable(shipped));QCOMPARE(file.readAll(),bytes);
+    }
     void bundledExamplesOpen() {
         // Every shipped example opens cleanly (no missing audio, no
         // relocation), launches each scene and exports audible stereo.

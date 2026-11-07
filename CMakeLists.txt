@@ -155,6 +155,8 @@ if(FL_LIVE_BUILD_DOCUMENT_IO OR FL_LIVE_BUILD_DESKTOP)
     if(BUILD_TESTING)
         add_executable(authored-project-tests tests/authored_project_tests.cpp)
         target_link_libraries(authored-project-tests PRIVATE fl_live_authored_project)
+        target_compile_definitions(authored-project-tests PRIVATE FL_LIVE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+            FL_LIVE_EXAMPLES="${CMAKE_CURRENT_SOURCE_DIR}/examples")
         add_test(NAME authored-project-io COMMAND authored-project-tests)
         add_executable(general-session-tests tests/general_session_tests.cpp)
         target_link_libraries(general-session-tests PRIVATE fl_live_authored_project)
