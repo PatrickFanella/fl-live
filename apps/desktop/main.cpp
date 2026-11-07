@@ -26,6 +26,10 @@ int main(int argc, char** argv) {
         config.autoconnect = !config.target.empty();
         config.input_target = parser.value("input").toStdString();
         config.midi_input_target = parser.value("midi-input").toStdString();
+        // One node group keeps output, audio input and MIDI input on the same
+        // driver, so their frame counters agree (take placement compares them)
+        // and an input with no driver of its own still runs.
+        config.node_group = "fl-live";
         Session session(config);
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty("session", &session);

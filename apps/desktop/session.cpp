@@ -28,6 +28,12 @@ QString identityText(std::uint64_t id){return QString::number(static_cast<qulong
 fl_live::PipeWireConfig stereo(fl_live::PipeWireConfig config){config.channels=2;return config;}
 }
 
+// Path fields accept "~" and "~/..." for the home folder, as a shell would.
+static QString expandHome(const QString& path) {
+    if (path == "~") return QDir::homePath();
+    if (path.startsWith("~/")) return QDir::homePath() + path.mid(1);
+    return path;
+}
 Session::Session(fl_live::PipeWireConfig config, QObject* parent)
     : QObject(parent), config_(stereo(std::move(config))), prepared_(std::make_unique<Prepared>(*content_, *identities_)),
       project_path_(QDir::home().filePath("fl-live-project.json")), preview_(config_.remote.empty()) {
@@ -641,7 +647,8 @@ void Session::setPitch(int note, int value) {
     if (note < 0 || note >= pattern().step_count) return;
     editPatternStep(EditKind::pitch, note, [&](StepPattern& p) { p.steps[static_cast<std::size_t>(note)].pitch = value; });
 }
-bool Session::saveProject(const QString& path) {
+bool Session::saveProject(const QString& typed) {
+    const auto path = expandHome(typed);
     try {
         if (path.trimmed().isEmpty()) throw std::invalid_argument("Enter a project file path");
         const auto target = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
@@ -663,7 +670,8 @@ bool Session::saveProject(const QString& path) {
         emit changed(); return false;
     }
 }
-bool Session::loadProject(const QString& path) {
+bool Session::loadProject(const QString& typed) {
+    const auto path = expandHome(typed);
     if (recording()) { message_ = "Stop recording before opening another project."; emit changed(); return false; }
     if (dirty()) { message_ = "Save your changes before opening another project."; emit changed(); return false; }
     if (!editable()) return false;
@@ -809,7 +817,8 @@ bool Session::exportWav(const QString& path, int bars) {
     if (bars < 1 || bars > 16) { message_ = "Export length must be 1 to 16 bars"; emit changed(); return false; }
     return exportAudio(path, 1, bars, 0, 2, "pcm16");
 }
-bool Session::exportAudio(const QString& path, int startBar, int bars, int tailMs, int channels, const QString& format) {
+bool Session::exportAudio(const QString& typed, int startBar, int bars, int tailMs, int channels, const QString& format) {
+    const auto path = expandHome(typed);
     if (export_job_) { message_ = "An export is already running. Cancel it or wait for it to finish."; emit changed(); return false; }
     if (!editable()) return false;
     try {
@@ -1497,7 +1506,8 @@ bool Session::relinkAudio(const QString& trackId,const QString& path) {
     import_relink_=true;
     return true;
 }
-bool Session::importAudio(const QString& trackId,const QString& path) {
+bool Session::importAudio(const QString& trackId,const QString& typed) {
+    const auto path=expandHome(typed);
     try {
         if(importing())throw std::invalid_argument("An import is already running. Cancel it or wait for it to finish.");
         const fl_live::TrackId id{parseIdentity(trackId)};
