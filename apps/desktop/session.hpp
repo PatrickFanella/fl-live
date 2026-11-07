@@ -66,6 +66,12 @@ class Session final : public QObject {
     Q_PROPERTY(int patternTrackIndex READ patternTrackIndex NOTIFY changed)
     Q_PROPERTY(QVariantList synth READ synth NOTIFY changed)
     Q_PROPERTY(bool pianoMode READ pianoMode NOTIFY changed)
+    // Clips of every track as [{id, name}] in order, and each track's
+    // selected clip (view state: not saved or undone). A track's controls
+    // (launch, sources, pattern, import, range, scene slot) act on its
+    // selected clip; see docs/general-session.md#clips.
+    Q_PROPERTY(QVariantList trackClips READ trackClips NOTIFY changed)
+    Q_PROPERTY(QVariantList selectedClips READ selectedClips NOTIFY changed)
     Q_PROPERTY(QVariantList devices READ allTrackDevices NOTIFY changed) // trackDevices for every track
     Q_PROPERTY(int pianoLength READ pianoLength NOTIFY changed)
     Q_PROPERTY(bool pianoLoop READ pianoLoop NOTIFY changed)
@@ -138,6 +144,16 @@ public:
     // value}. See docs/devices.md. Each edit is one Undo step and also works
     // while playing.
     Q_INVOKABLE QVariantList trackDevices(int track) const;
+    QVariantList trackClips() const;
+    QVariantList selectedClips() const;
+    Q_INVOKABLE bool selectClip(const QString& clipId);
+    // New clips go at the end of their track and are selected. A MIDI clip
+    // starts as rests, an audio clip empty. Duplicate copies the content
+    // (sharing imported audio). The last clip of a track cannot be deleted.
+    // Each is one Undo step.
+    Q_INVOKABLE bool addClip(const QString& trackId);
+    Q_INVOKABLE bool duplicateClip(const QString& clipId);
+    Q_INVOKABLE bool deleteClip(const QString& clipId);
     QVariantList allTrackDevices() const;
     // Transpose joins the end of the MIDI stage (before the instrument), gain
     // the end of the chain. Refused on the wrong track kind or past 8 devices.
@@ -321,7 +337,7 @@ private:
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
     enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete, scene_copy, scene_order, track_pan, track_mute, track_solo,
-        track_create, track_duplicate, track_delete, audio_import, clip_range, audio_relink, assets_collect, automation, synth, piano_mode, note_add, note_delete, note_move, note_resize, note_velocity, piano_length, piano_loop,
+        track_create, track_duplicate, track_delete, clip_create, clip_duplicate, clip_delete, audio_import, clip_range, audio_relink, assets_collect, automation, synth, piano_mode, note_add, note_delete, note_move, note_resize, note_velocity, piano_length, piano_loop,
         device_add, device_remove, device_value, device_move };
     struct HistoryEntry {
         Content content;
@@ -344,6 +360,9 @@ private:
     const StepPattern& pattern() const;
     void editPatternStep(EditKind kind, int index, const std::function<void(StepPattern&)>& change);
     fl_live::ClipId pattern_clip_{};
+    std::map<std::uint64_t, std::uint64_t> selected_clip_; // track ID -> clip ID
+    fl_live::ClipId trackClip(fl_live::TrackId track) const; // selected, else first
+    fl_live::ClipId import_clip_{};
     std::vector<std::uint64_t> selected_notes_;
     int history_index_hint_ = -1; // note count for the delete Undo label
     const PianoRoll* piano() const;

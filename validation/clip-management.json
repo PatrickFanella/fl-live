@@ -1,0 +1,37 @@
+{
+  "verified_at": "2026-11-07T12:22:37.374394+00:00",
+  "base": "main after PR #149",
+  "issues": [
+    27
+  ],
+  "scope": "Clip create, duplicate, delete and selection per track, with references, Undo, import, scenes and export",
+  "environment": "Kvant, pinned CI image, docker --network none, Qt offscreen platform",
+  "gates": {
+    "desktop": {
+      "passed": 24,
+      "total": 24
+    }
+  },
+  "verified_behaviors": [
+    "A new MIDI clip starts as rests and is selected; the step editor follows the selection on its track",
+    "Copy duplicates content under a new ID named 'Clip 2 copy'",
+    "Include in scene and the launch button use the selected clip; the scene launches it",
+    "Deleting the playing clip while playing stops the track, drops its scene slot and selects the previous clip; Undo restores the clip in place with its ID and slot",
+    "Refusals: deleting a track's last clip, a ninth clip (add or copy), unknown clip IDs",
+    "An audio clip's import lands on the clip selected when it started, although the selection changed before it finished",
+    "Export plays each track's selected clip: the imported clip renders 0.7 * 8000/32768 at frame 0; the pulse clip renders differently",
+    "Save/Open keeps every clip and ID; selection starts at the first clip",
+    "Two clips per track round trip; nine clips or none are refused when saving",
+    "QML: + Clip, the selector (keyboard), Copy, Delete clip, Undo and launching the selected clip through its button"
+  ],
+  "source_sha256": {
+    "apps/desktop/session.hpp": "cb0821e7f0c2e5398a4a7d0db03c8f6e39ed0f15dbdbb76c791fd8a2a374386d",
+    "apps/desktop/session.cpp": "7fc73602c398a19babf6bb3a794bfc655a339084c77f57a8c7ca9d42d5df2436",
+    "apps/desktop/Main.qml": "b7147a6ae3e95853075f45dd7571a177717ab3e419acba511e91ad22df1de31a",
+    "apps/desktop/authored_project.cpp": "62dbe5fef4d22f780ec35a114a538dcabccd9f5f5f60c5740b4a02f5027e229f",
+    "apps/desktop/export.cpp": "8acfedf1ae561ee7f0764fb43a598b584e714a5b19a4a76b9ff3f2d4578a12a6",
+    "tests/desktop_tests.cpp": "7555e86444c122b46b2d53b060794313d1c1393a4ded77bf5e6e6871f0096a66",
+    "tests/authored_project_tests.cpp": "97b3baeeaa3a53dc624c01016bcb3e4b8f73da780f7d2a2c0708d96e3b182fcd"
+  },
+  "limits": "Up to eight clips per track; one clip of a track plays at a time; no Arrangement view (#91)."
+}

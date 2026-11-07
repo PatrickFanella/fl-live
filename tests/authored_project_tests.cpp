@@ -141,11 +141,19 @@ void generalRejection() {
     clip(3,[](auto& c){auto p=c["pattern"].toObject();p["length"]=17;c["pattern"]=p;});
     clip(3,[](auto& c){auto p=c["pattern"].toObject();auto s=p["steps"].toArray();s.removeLast();p["steps"]=s;c["pattern"]=p;});
     clip(3,[](auto& c){c["id"]="99";});
-    // A desktop project keeps one clip per track and at least one scene.
+    // A desktop track holds 1 to 8 clips; a project keeps at least one scene.
     auto twoClips=project;fl_live::SessionDocument document(twoClips.identities);
     const auto extra=document.createClip(twoClips.identities.tracks[0].id,"Second");twoClips.identities=document.snapshot();
     twoClips.content.clips.push_back({extra});
-    rejects([&]{encodeAuthoredProject(twoClips);});
+    CHECK(decodeAuthoredProject(encodeAuthoredProject(twoClips)).content==twoClips.content);
+    auto nine=twoClips;fl_live::SessionDocument many(nine.identities);
+    for(int n=0;n<7;++n){const auto more=many.createClip(nine.identities.tracks[0].id,"More");nine.content.clips.push_back({more});}
+    nine.identities=many.snapshot();
+    rejects([&]{encodeAuthoredProject(nine);});
+    auto none=project;fl_live::SessionDocument empty(none.identities);
+    const auto lone=none.identities.clips[0].id;empty.deleteClip(lone);none.identities=empty.snapshot();
+    std::erase_if(none.content.clips,[&](const auto& c){return c.clip==lone;});
+    rejects([&]{encodeAuthoredProject(none);});
     auto noScenes=project;noScenes.identities.scenes.clear();
     rejects([&]{encodeAuthoredProject(noScenes);});
     auto badLevel=project;badLevel.content.tracks[0].level=-1;rejects([&]{encodeAuthoredProject(badLevel);});

@@ -282,8 +282,8 @@ void validateContent(const SessionContent& content,const fl_live::DocumentSnapsh
         if(value.level<0 || value.level>100)throw std::invalid_argument("Track level must be 0 to 100 percent");
         if(std::count_if(content.tracks.begin(),content.tracks.end(),[&](const auto& t){return t.track==track.id;})!=1)
             throw std::invalid_argument("Duplicate track content");
-        if(static_cast<std::size_t>(std::count_if(identities.clips.begin(),identities.clips.end(),[&](const auto& c){return c.track==track.id;}))!=desktop_clips_per_track)
-            throw std::invalid_argument("Each desktop track holds exactly one clip");
+        const auto clips=static_cast<std::size_t>(std::count_if(identities.clips.begin(),identities.clips.end(),[&](const auto& c){return c.track==track.id;}));
+        if(clips<1 || clips>desktop_clips_per_track)throw std::invalid_argument("Each desktop track holds 1 to 8 clips");
     }
     for(std::size_t i=0;i<content.automation.size();++i) {
         const auto& lane=content.automation[i];
