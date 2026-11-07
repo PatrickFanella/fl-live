@@ -1,6 +1,6 @@
 # Automatable parameters
 
-This is the parameter and interpolation contract for #51. Editing lanes in the UI is #52, automation during playback edits is #54, and the epic is #12.
+This is the parameter and interpolation contract for #51 and the lane editor for #52. Automation during playback edits is #54; the epic is #12.
 
 ## Identity, units and ranges
 
@@ -23,6 +23,17 @@ A lane holds 1–4,096 points. Each point sits at an integer position in hundred
 
 The engine evaluates this per sample against the transport position, so a lane runs with the song rather than restarting with each clip launch. It uses a per-track cursor: no allocation, no search per sample, and a reset when the transport is rewound. Points with out-of-range or non-finite values, non-increasing frames and lanes over 4,096 points are refused when a plan is prepared, never in the callback.
 
+## Editing lanes
+
+Tick **Automation** on a track to show its lane editor (a view choice; it is not saved). Choose **Level** or **Pan**. The lane shows four bars, or more once points go past them, with bar lines. The top pixel row is 100 percent and the bottom row the parameter's minimum.
+
+- Click empty space to add a point, snapped to a sixteenth note (25 hundredths of a beat) and a whole percent. A point at an existing position replaces it.
+- Click a point to remove it. Removing the last point removes the lane, so the static Level or Pan applies again.
+- For exact values from the keyboard, type a position in beats and a value, then press **Add point**.
+- **Clear** removes the lane.
+
+Every change is a stopped edit and one Undo step ("Undo track 1 automation"). Invalid positions or values and unknown parameters are refused without history changes. `Session::automationPoints`, `setAutomationPoint`, `removeAutomationPoint` and `clearAutomation` expose the same operations.
+
 ## Persistence
 
 Projects with lanes declare the required feature `automation-v1` and carry a top-level array:
@@ -39,4 +50,5 @@ Every object has exactly these fields. Unknown parameters, extra fields, non-num
 
 - `engine-contracts`: gain and pan lanes on one track are compared sample by sample with an independently written statement of the policy, at blocks of 1, 64, 128, 257 and 512 frames, with no intercepted allocations. Rewind restarts the curve. Order, range, NaN and capacity are refused.
 - `authored-project-io`: persistence and refusals; frame conversion at 133 BPM, including a rounded-up boundary (173,233.08 → 173,234); rendered ramp samples; and a muted track that stays silent.
+- `qmlAutomationEditing`: actual pointer clicks add points and remove one; typed position and value add another; Undo/Redo restore the curve; Pan is a separate lane; Clear; refusals; Save/Open; and a float export of the reopened project that follows the curve.
 - `automationIdentityStability`: rename, duplicate, delete, Undo and Save/Open keep lanes on the right track IDs. A float export follows a one-bar 0→100 level ramp exactly.
