@@ -206,6 +206,11 @@ if(FL_LIVE_BUILD_DESKTOP)
             add_test(NAME pipewire-desktop-recording COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_capture.py --desktop $<TARGET_FILE:desktop-backend-probe>)
             set_tests_properties(pipewire-desktop-recording PROPERTIES TIMEOUT 60)
+            foreach(loss server input)
+                add_test(NAME pipewire-recording-${loss}-loss COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_capture.py --desktop --loss ${loss} $<TARGET_FILE:desktop-backend-probe>)
+                set_tests_properties(pipewire-recording-${loss}-loss PROPERTIES TIMEOUT 60)
+            endforeach()
         endif()
         # Fault-injected and interrupted saves through the real Session.
         add_library(fault-inject SHARED tests/fault_inject.cpp)

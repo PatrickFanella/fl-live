@@ -15,6 +15,8 @@ Every failure the desktop can report names what it was working on, and says what
 | A take that fails to write, cannot be read back, lost its track or would exceed eight clips | "… the take is kept as PATH" or "Writing the recording failed: … kept in NAME.part" | The document, and the take's file in `recordings/` | Import or relink the kept file if you want it as a clip |
 | Recover takes: a `.part` file that is not a float WAV take, has an incomplete header or no complete frame | "Cannot recover NAME.part: reason" | The `.part` file, unchanged, still listed | Delete it, or keep it for other tools |
 | Recover takes: no journal, track gone, eight clips, or the recovered file cannot be decoded | "… the recovered take is kept as PATH" | The recovered file; the document is unchanged for that take | Import or relink the kept file |
+| Server or output lost while recording | "… Audio is stopped; your project and history are kept. … N take(s) will be added as clips after Retry audio." | The document and every finished take file | Restore the server, then **Retry audio** |
+| Recording input lost (node removed) | "The recording input was lost (PipeWire remote R). Recorded N take(s) as new clips. Arm a track again to reopen it." | The takes, as clips; playback continues | Arm a track again |
 | A full control queue | "Control queue full. Try again, or use Silence now." | Everything, including an edit made at that moment | Try again; **Silence now** always works |
 
 Plugins are not hosted yet, so there are no plugin failures to report; plugin failures belong to #72.

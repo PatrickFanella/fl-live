@@ -1,6 +1,6 @@
 # Recording
 
-Recording (epic #11) is being built from the inside out. This page covers what exists now: the capture pipeline that takes audio from the audio callback to a WAV file (#44), the PipeWire input stream that feeds it, audio recording in the desktop: arming, takes and recorded clips (parts of #43, #46 and #47), and recovery of takes interrupted by a crash (#48). Not built yet: MIDI recording, input monitoring, choosing an input inside the app, timestamps and latency compensation (#45) and finishing takes on device loss (#46).
+Recording (epic #11) is being built from the inside out. This page covers what exists now: the capture pipeline that takes audio from the audio callback to a WAV file (#44), the PipeWire input stream that feeds it, audio recording in the desktop: arming, takes and recorded clips (parts of #43, #46 and #47), finishing takes when the server or input is lost (#46), and recovery of takes interrupted by a crash (#48). Not built yet: MIDI recording, input monitoring, choosing an input inside the app, and timestamps and latency compensation (#45).
 
 ## Capture pipeline
 
@@ -27,6 +27,12 @@ Recording (epic #11) is being built from the inside out. This page covers what e
 - **Media retention.** Undo and clip deletion never delete a take's file. The project refers to it by path, like imported audio, so Redo and reopening the project find it.
 - **Journal.** Before audio starts, each take gets a journal, `TRACK take N.wav.json`, naming its track ID, the project file, the channel count and the rate. It is removed when the take finishes, and kept while a `.part` file remains to recover.
 - **Preview.** With no remote, the silent preview records silence at the render clock (480 frames per tick), which lets the tests check takes without audio hardware.
+
+## Loss while recording
+
+- **Server or output lost.** When the output stream reports an error, the desktop stops audio as before. It also detaches and finishes every take and closes the input stream. Edits are refused while audio is stopped, so the finished takes are held, and the message says how many will become clips after **Retry audio**. When Retry audio succeeds, they are added as selected clips in one Undo step, and the input reopens if a track is still armed. Opening or starting another project instead drops the held takes from memory and says so; their files stay in `recordings/`.
+- **Input lost.** When only the input stream reports an error, for example because its node was removed, playback continues. The takes are finished and added as clips right away, the input is closed and the tracks are disarmed, and the message asks to arm again.
+- **Disk full or write failure.** The take keeps its `.part` file and journal (see the capture pipeline above), so **Recover takes** can finish it when the project is next opened.
 
 ## Interrupted takes
 
@@ -61,3 +67,10 @@ The test also passes under ThreadSanitizer and under AddressSanitizer with Undef
 For interrupted takes, `capture-pipeline` forks a process that records 100 known blocks and kills itself with `SIGKILL` once they are written. The `.part` file it leaves declares 0 data bytes for the 205,600 bytes on disk. Recovery returns all 25,700 frames bit for bit, the `.part` file is byte-identical afterwards, and a second recovery to the same name is refused with the file unchanged. A copy cut 3 bytes into a frame recovers its 1,000 whole frames and reports 3 discarded bytes. An incomplete header, garbage, a header with no frame and a 16-bit WAV are refused with their reasons and left unchanged. The finished `.part` file a write failure leaves also recovers.
 
 `desktop-session` (`interruptedTakeRecovery`) runs `save-fault-probe record-crash`, which saves a project, records 50 preview ticks and aborts. Reopening the project reports one interrupted take with its journal and track. **Recover takes** adds a selected `Recovered take` clip in one Undo step and deletes the `.part` file and the journal. The recovered file, read by a chunk walker in the test, is float stereo at 48 kHz with exactly 24,000 silent frames. Undo keeps the file. A copy without a journal is recovered to `stray.wav` but not placed, and the message gives its path. A garbage `.part` file is refused, keeps its 512 bytes and stays listed. The QML **Recover takes** button runs the same path. The [recovery receipt](../validation/take-recovery.json) records the run.
+
+`pipewire-recording-server-loss` and `pipewire-recording-input-loss` run the private-graph fixture with `desktop-backend-probe --record-loss`. About 1 s into the take, the fixture either terminates the server or destroys only the `fl-live-input` node with `pw-cli`.
+
+- **Server loss.** The probe reports audio stopped, no new clip yet, one finished take file and the held-take message. The fixture restarts the server and sends Retry audio. The take is then the track's selected clip with an "Added 1 take" message, and `fl-live-input` exists again on the restarted server.
+- **Input loss.** Audio stays available, the take is the selected clip at once, and the track is disarmed.
+
+In both, the take matches the reference frame by frame up to the loss. Each passed ten local runs in a row. The [loss receipt](../validation/recording-loss.json) records them.

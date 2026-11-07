@@ -1,0 +1,54 @@
+{
+  "verified_at": "2026-11-07T13:30:02.480761+00:00",
+  "base": "feat/recover-takes (PR #155) head",
+  "issues": [
+    46
+  ],
+  "scope": "Finishing desktop takes when the PipeWire server/output or the recording input is lost mid-take, and placing held takes after Retry audio",
+  "environment": "Kvant, pinned CI image (Qt 6.12, PipeWire 1.6.9), docker --network none, owned private PipeWire server at quantum 256 restarted in place, no devices or session manager",
+  "gates": {
+    "ci/verify.sh": {
+      "desktop": "29/29",
+      "release": "11/11",
+      "engine-only": "8/8",
+      "pipewire-sanitize": "20/20",
+      "document-io-sanitize": "11/11"
+    },
+    "pipewire-recording-server-loss repeats": {
+      "passed": 10,
+      "total": 10
+    },
+    "pipewire-recording-input-loss repeats": {
+      "passed": 10,
+      "total": 10
+    }
+  },
+  "runs": {
+    "server loss": {
+      "captured_frames": 47872,
+      "matched_frames": 47872,
+      "jumps": 0,
+      "silent_frames": 0
+    },
+    "input loss": {
+      "captured_frames": 48128,
+      "matched_frames": 48128,
+      "jumps": 0,
+      "silent_frames": 0
+    }
+  },
+  "verified_behaviors": [
+    "Server terminated mid-take: audio stops, the take is finished and matches the reference frame by frame up to the loss, no clip is added while audio is stopped and the message says it is held",
+    "After the server restarts, Retry audio adds the held take as the track's selected clip in one Undo step and fl-live-input exists again",
+    "Input node destroyed mid-take: playback continues, the take is finished as the selected clip at once, the track is disarmed",
+    "Disk-full and crash cases keep the .part file and journal for Recover takes (PR #155 receipts)"
+  ],
+  "source_sha256": {
+    "apps/desktop/session.hpp": "e713665c7120b4acabcb68647e94a0a173a3d027470bb776c11a658715b075b3",
+    "apps/desktop/session.cpp": "18b39f08a739b3290385cd9cf3695c2b0ff0ede141d3900fb0ff178fc223be0c",
+    "tests/desktop_backend_probe.cpp": "8196b819aa925ebb68e51039022c57e783a0ea6a04affa55677ab56cb9df4c74",
+    "tests/pipewire_capture.py": "eccfebce94eaa7513286be1634be68850721601a1723902728b937122bd60ca8",
+    "CMakeLists.txt": "b61436dac670fd3aba80364b799efaeaa7ecce01da3d27f1db60490c64e881c5"
+  },
+  "limits": "Private software graph only: server termination and node destruction stand in for device loss; no physical device unplug, USB reset or long recordings. Held takes live in memory until Retry audio; a crash during the outage leaves them as finished files without clips."
+}

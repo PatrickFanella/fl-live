@@ -392,7 +392,10 @@ private:
     } fanout_;
     std::unique_ptr<fl_live::PipeWireCapture> input_;
     QString ack_report_; // shown instead of the generic acknowledgement once the stop renders
-    void finishRecording();
+    QString finishRecording(); // returns the take report
+    int placeTakes(std::vector<std::pair<fl_live::TrackId,QString>> files,EditKind kind,bool numbered,QStringList& notes);
+    QString takeReport(int placed,const QString& verb,QStringList notes) const;
+    std::vector<std::pair<fl_live::TrackId,QString>> unplaced_; // finished while audio was stopped
     void openInput(); // throws with actionable text
     void scanInterrupted();
     QVariantList interrupted_;
