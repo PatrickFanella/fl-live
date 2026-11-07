@@ -1,0 +1,36 @@
+{
+  "verified_at": "2026-11-07T08:34:50.910948+00:00",
+  "base": "PR #121 head",
+  "issues": [
+    62
+  ],
+  "scope": "Export range, tail, channel and format choices for general projects",
+  "environment": "Kvant, pinned CI image (Qt 6.12.0), docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 20,
+      "total": 20,
+      "desktop_tests": "38 Qt test functions passed"
+    },
+    "document-io-sanitize": {
+      "passed": 8,
+      "total": 8
+    }
+  },
+  "verified_behaviors": [
+    "Header fields (format code, bits, channels, rate, block align, byte rate, RIFF/data sizes) for stereo PCM16, mono PCM24 and stereo float32",
+    "Bar 2 plus a 100 ms tail matches independent per-track renders: within 1 LSB for PCM, exact for float; the tail is silence after every track stops",
+    "Mono equals (L+R)/2 of the stereo export for a hard-panned, partly muted mix",
+    "Unsaved tempo edit is exported; eight invalid option sets are refused with no destination or partial file",
+    "Start bar 256 at 300 BPM exports exactly one bar",
+    "Options set through the actual QML (keyboard on spin boxes, combo selections) produce a mono 24-bit file of the declared length"
+  ],
+  "source_sha256": {
+    "apps/desktop/export.cpp": "c9d800da7bfa1bf58e02d819bc19ab310abfa86ae64b3eb6f99b7e6cc20be8f4",
+    "apps/desktop/authored_project.hpp": "730fb83126e0039816575790123ae636558ad1d201ae3281b316f11fc8a6738b",
+    "apps/desktop/session.cpp": "e21fa6d538786f11784fcf31623afd6d9a76dce94dde7a613a40031271145785",
+    "apps/desktop/Main.qml": "a0da357ab427cad8333078b9d66479527e52d70d465647d32e91350ea4eafd06",
+    "tests/desktop_tests.cpp": "7761e3d89c27559ad54e14765db7267a87b3891cfde7758e5afcfe8e86f380ee"
+  },
+  "limits": "48 kHz only, WAV only; tails are silent until effects exist. Offscreen checks."
+}

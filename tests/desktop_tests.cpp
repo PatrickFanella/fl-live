@@ -5,6 +5,8 @@
 #include <QQuickWindow>
 #include <QQuickItem>
 #include <QtEndian>
+#include <cstring>
+#include <tuple>
 #include <QFileInfo>
 #include <cmath>
 #include <csignal>
@@ -49,6 +51,26 @@ static std::vector<float> renderClip(const fl_live::Clip& clip,int tempo,std::si
     if(engine.schedule({fl_live::CommandKind::launch,0,0,0})!=fl_live::ScheduleResult::accepted)throw std::runtime_error("schedule");
     engine.start();std::vector<float> stereo(frames*2);(void)engine.process(stereo,2);
     std::vector<float> left(frames);for(std::size_t i=0;i<frames;++i)left[i]=stereo[2*i];return left;
+}
+
+// Independent WAV reader for export checks: header fields and decoded values.
+struct DecodedWav { int format=0,channels=0,bits=0,rate=0,blockAlign=0,byteRate=0; std::vector<float> samples; qsizetype dataBytes=0; };
+static DecodedWav readWav(const QString& path) {
+    QFile file(path);if(!file.open(QIODevice::ReadOnly))throw std::runtime_error("export missing");
+    const auto b=file.readAll();DecodedWav w;
+    if(b.size()<44 || b.left(4)!="RIFF" || b.mid(8,8)!="WAVEfmt " || b.mid(36,4)!="data")throw std::runtime_error("not a canonical WAV");
+    w.format=qFromLittleEndian<quint16>(b.constData()+20);w.channels=qFromLittleEndian<quint16>(b.constData()+22);
+    w.rate=static_cast<int>(qFromLittleEndian<quint32>(b.constData()+24));w.byteRate=static_cast<int>(qFromLittleEndian<quint32>(b.constData()+28));
+    w.blockAlign=qFromLittleEndian<quint16>(b.constData()+32);w.bits=qFromLittleEndian<quint16>(b.constData()+34);
+    w.dataBytes=static_cast<qsizetype>(qFromLittleEndian<quint32>(b.constData()+40));
+    if(w.dataBytes!=b.size()-44 || qFromLittleEndian<quint32>(b.constData()+4)!=static_cast<quint32>(b.size()-8))throw std::runtime_error("size fields");
+    const auto* d=reinterpret_cast<const unsigned char*>(b.constData()+44);
+    for(qsizetype at=0;at<w.dataBytes;at+=w.bits/8) {
+        if(w.format==3 && w.bits==32){float v;std::memcpy(&v,d+at,4);w.samples.push_back(v);}
+        else if(w.bits==16)w.samples.push_back(static_cast<float>(static_cast<qint16>(d[at]|(d[at+1]<<8))));
+        else if(w.bits==24){qint32 v=d[at]|(d[at+1]<<8)|(d[at+2]<<16);if(v&0x800000)v-=0x1000000;w.samples.push_back(static_cast<float>(v));}
+    }
+    return w;
 }
 
 class DesktopTests : public QObject {
@@ -1089,6 +1111,74 @@ private slots:
         QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,restore->mapToScene(QPointF(restore->width()/2,restore->height()/2)).toPoint());
         QTRY_COMPARE(fresh.tempo(),141);QVERIFY(fresh.dirty());
         QCOMPARE(fresh.projectPath(),work.filePath("second/crashed.json"));
+    }
+    void exportRenderPolicy() {
+        QTemporaryDir directory;
+        Session session;session.setTempo(133); // unsaved edit: the export must use it
+        QVERIFY(session.dirty());
+        const auto bar=exportFrames(133,1),twoBars=exportFrames(133,2);
+        const auto pulse=renderClip(pulseClip(133),133,twoBars),steps=renderClip(patternClip(StepPattern{},133),133,twoBars);
+        // Independent expectation: centered template, levels 70 and 25.
+        const auto mix=[&](std::size_t frame){return 0.7F*pulse[frame]+0.25F*steps[frame];};
+        const auto run=[&](const QString& name,int start,int bars,int tail,int channels,const char* format){
+            QVERIFY(session.exportAudio(directory.filePath(name),start,bars,tail,channels,format));QTRY_VERIFY(!session.exporting());
+            QVERIFY2(QFile::exists(directory.filePath(name)),qPrintable(session.message()));
+        };
+        struct Case{const char* name;int channels;const char* format;int code,bits;float scale;};
+        for(const Case c:{Case{"s16.wav",2,"pcm16",1,16,32767.0F},Case{"m24.wav",1,"pcm24",1,24,8388607.0F},Case{"s32.wav",2,"float32",3,32,0.0F}}) {
+            run(c.name,2,1,100,c.channels,c.format);
+            const auto w=readWav(directory.filePath(c.name));
+            QCOMPARE(w.format,c.code);QCOMPARE(w.bits,c.bits);QCOMPARE(w.channels,c.channels);QCOMPARE(w.rate,48000);
+            QCOMPARE(w.blockAlign,c.channels*c.bits/8);QCOMPARE(w.byteRate,48000*c.channels*c.bits/8);
+            const auto frames=static_cast<std::size_t>(twoBars-bar)+4800; // bar 2 plus a 100 ms tail
+            QCOMPARE(w.samples.size(),frames*static_cast<std::size_t>(c.channels));
+            float worst=0;
+            for(std::size_t f=0;f<frames;++f)for(int ch=0;ch<c.channels;++ch) {
+                const float value=f<twoBars-bar ? mix(static_cast<std::size_t>(bar)+f) : 0.0F; // tail: every track stopped
+                const float expected=c.scale>0 ? static_cast<float>(std::lround(std::clamp(value,-1.0F,1.0F)*c.scale)) : value;
+                worst=std::max(worst,std::abs(w.samples[f*static_cast<std::size_t>(c.channels)+static_cast<std::size_t>(ch)]-expected));
+            }
+            QVERIFY2(worst<=(c.scale>0 ? 1.0F : 1e-7F),qPrintable(QString("%1 differs by %2").arg(c.name).arg(worst)));
+        }
+        // Mono is the (L + R) / 2 downmix: with hard pan the level halves.
+        QVERIFY(session.setPan(session.trackIds()[0].toString(),-100));QVERIFY(session.setMute(session.trackIds()[1].toString(),true));
+        run("pan-mono.wav",1,1,0,1,"float32");run("pan-stereo.wav",1,1,0,2,"float32");
+        const auto mono=readWav(directory.filePath("pan-mono.wav")),stereo=readWav(directory.filePath("pan-stereo.wav"));
+        for(std::size_t f=0;f<static_cast<std::size_t>(bar);f+=101) {
+            QCOMPARE(stereo.samples[2*f+1],0.0F);QCOMPARE(mono.samples[f],(stereo.samples[2*f]+stereo.samples[2*f+1])/2);
+        }
+        // Refused options leave no file and no partial file.
+        const auto refused=directory.filePath("refused.wav");
+        for(const auto& bad:std::vector<std::tuple<int,int,int,int,QString>>{{0,1,0,2,"pcm16"},{257,1,0,2,"pcm16"},{1,0,0,2,"pcm16"},{1,65,0,2,"pcm16"},
+                                                                          {1,1,-1,2,"pcm16"},{1,1,10001,2,"pcm16"},{1,1,0,3,"pcm16"},{1,1,0,2,"mp3"}}) {
+            QVERIFY(!session.exportAudio(refused,std::get<0>(bad),std::get<1>(bad),std::get<2>(bad),std::get<3>(bad),std::get<4>(bad)));
+            QVERIFY(!session.exporting());
+        }
+        QVERIFY(!QFile::exists(refused));QVERIFY(!QFile::exists(refused+".part"));
+        // The longest range stays within the WAV size limit and starts on its bar.
+        session.setTempo(300);QCOMPARE(session.tempo(),300);run("late.wav",256,1,0,1,"pcm16");
+        QCOMPARE(readWav(directory.filePath("late.wav")).samples.size(),static_cast<std::size_t>(exportFrames(300,256)-exportFrames(300,255)));
+        // Actual UI: options chosen with keyboard and the combo boxes.
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* r,const QString& name)->QQuickItem* {
+            if(r->objectName()==name && r->isVisible())return r;
+            for(auto* c:r->childItems())if(auto* m=findItem(c,name))return m;
+            return nullptr;
+        };
+        findItem(window->contentItem(),"exportFile")->setProperty("text",directory.filePath("ui.wav"));
+        findItem(window->contentItem(),"exportStart")->forceActiveFocus();QTest::keyClick(window,Qt::Key_Up);
+        findItem(window->contentItem(),"exportTail")->forceActiveFocus();QTest::keyClick(window,Qt::Key_Up);
+        findItem(window->contentItem(),"exportBars")->forceActiveFocus();for(int i=0;i<3;++i)QTest::keyClick(window,Qt::Key_Down);
+        findItem(window->contentItem(),"exportChannels")->setProperty("currentIndex",1);
+        findItem(window->contentItem(),"exportFormat")->setProperty("currentIndex",1);
+        auto* button=findItem(window->contentItem(),"exportWavButton");
+        QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,button->mapToScene(QPointF(button->width()/2,button->height()/2)).toPoint());
+        QTRY_VERIFY(!session.exporting());
+        const auto ui=readWav(directory.filePath("ui.wav"));
+        QCOMPARE(ui.channels,1);QCOMPARE(ui.bits,24);
+        QCOMPARE(ui.samples.size(),static_cast<std::size_t>(exportFrames(300,2)-exportFrames(300,1))+4800); // bar 2, 1 bar, 100 ms
     }
     void qmlMixerInput() {
         Session session;

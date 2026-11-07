@@ -635,18 +635,28 @@ void Session::tick() {
 }
 
 bool Session::exportWav(const QString& path, int bars) {
+    if (bars < 1 || bars > 16) { message_ = "Export length must be 1 to 16 bars"; emit changed(); return false; }
+    return exportAudio(path, 1, bars, 0, 2, "pcm16");
+}
+bool Session::exportAudio(const QString& path, int startBar, int bars, int tailMs, int channels, const QString& format) {
     if (export_job_) { message_ = "An export is already running. Cancel it or wait for it to finish."; emit changed(); return false; }
     if (!editable()) return false;
     try {
-        if (bars < 1 || bars > 16) throw std::invalid_argument("Export length must be 1 to 16 bars");
+        ExportOptions options;
+        options.start_bar = startBar - 1; options.bars = bars; options.tail_ms = tailMs; options.channels = channels;
+        if (format == "pcm16") options.format = ExportFormat::pcm16;
+        else if (format == "pcm24") options.format = ExportFormat::pcm24;
+        else if (format == "float32") options.format = ExportFormat::float32;
+        else throw std::invalid_argument("Export format must be pcm16, pcm24 or float32");
+        validateExportOptions(options);
         if (path.trimmed().isEmpty()) throw std::invalid_argument("Enter a new WAV file path");
         auto job = std::make_shared<ExportJob>();
         job->path = path; job->bars = bars;
-        job->progress.total.store(exportFrames(content_->tempo, bars));
+        job->progress.total.store(exportFrames(content_->tempo, startBar - 1 + bars) + static_cast<std::uint64_t>(tailMs) * 48U);
         // Copies keep the job independent of later edits on the GUI thread.
-        export_thread_ = std::thread([job, content = content_, identities = identities_] {
+        export_thread_ = std::thread([job, options, content = content_, identities = identities_] {
             try {
-                const auto outcome = exportProjectWav(job->path, *content, *identities, job->bars, &job->progress);
+                const auto outcome = exportProjectWav(job->path, *content, *identities, options, &job->progress);
                 job->state.store(outcome == ExportOutcome::completed ? 1 : 2);
             } catch (const std::exception& error) {
                 job->error = QString::fromUtf8(error.what());
@@ -654,7 +664,7 @@ bool Session::exportWav(const QString& path, int bars) {
             }
         });
         export_job_ = std::move(job);
-        message_ = QString("Exporting %1 bars in the background").arg(bars);
+        message_ = QString("Exporting %1 bars from bar %2 in the background").arg(bars).arg(startBar);
         emit changed();
         return true;
     } catch (const std::exception& error) {
@@ -680,7 +690,7 @@ void Session::finishExport() {
     const auto job = std::move(export_job_);
     export_job_.reset();
     switch (job->state.load()) {
-    case 1: message_ = QString("Exported %1 bars: every track from the start through the mixer, stereo 48 kHz / 16-bit WAV").arg(job->bars); break;
+    case 1: message_ = QString("Exported %1 bars through the mixer to %2").arg(job->bars).arg(QFileInfo(job->path).fileName()); break;
     case 2: message_ = "Export cancelled; no file was written"; break;
     default: message_ = job->error; break;
     }

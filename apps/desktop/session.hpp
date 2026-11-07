@@ -180,7 +180,10 @@ public:
     // Starts a background export of the current document while stopped. The
     // job renders an immutable copy, so later edits, playback and history do
     // not affect it. Completion, cancellation and failure are reported by tick().
-    Q_INVOKABLE bool exportWav(const QString& path, int bars);
+    Q_INVOKABLE bool exportWav(const QString& path, int bars); // bars 1..16 from bar 1, stereo PCM16
+    // startBar is 1-based; channels 1 (mono downmix) or 2; format pcm16,
+    // pcm24 or float32. See ExportOptions for the render policy.
+    Q_INVOKABLE bool exportAudio(const QString& path, int startBar, int bars, int tailMs, int channels, const QString& format);
     Q_INVOKABLE void cancelExport();
     bool exporting() const { return static_cast<bool>(export_job_); }
     double exportProgress() const;

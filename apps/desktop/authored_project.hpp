@@ -94,7 +94,24 @@ struct ExportProgress {
     std::atomic<bool> cancel{false};
 };
 enum class ExportOutcome { completed, cancelled };
+// Explicit render policy. Clips start at the song start; the file holds bars
+// [start_bar, start_bar + bars) followed by tail_ms rendered after every
+// track stops at the range end. The engine has no effects or release
+// envelopes yet, so the tail is currently silent. Mono is the (L + R) / 2
+// downmix. PCM clamps to [-1, 1]; float32 keeps the mix unclipped.
+enum class ExportFormat { pcm16, pcm24, float32 };
+struct ExportOptions {
+    static constexpr int bar_limit = 64, start_limit = 255, tail_limit_ms = 10000;
+    int start_bar = 0;
+    int bars = 4;
+    int tail_ms = 0;
+    int channels = 2;
+    ExportFormat format = ExportFormat::pcm16;
+};
+void validateExportOptions(const ExportOptions& options);
 std::uint64_t exportFrames(int tempo, int bars);
 QString exportPartialPath(const QString& path);
 ExportOutcome exportProjectWav(const QString& path, const SessionContent& content, const fl_live::DocumentSnapshot& identities,
     int bars, ExportProgress* progress = nullptr);
+ExportOutcome exportProjectWav(const QString& path, const SessionContent& content, const fl_live::DocumentSnapshot& identities,
+    const ExportOptions& options, ExportProgress* progress = nullptr);

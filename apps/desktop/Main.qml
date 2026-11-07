@@ -127,9 +127,15 @@ ApplicationWindow {
         RowLayout {
             Layout.fillWidth: true
             TextField { id: exportFile; objectName: "exportFile"; Layout.fillWidth: true; placeholderText: "New WAV file path"; Accessible.name: "New WAV export path" }
+            Label { text: "From bar" }
+            SpinBox { id: exportStart; objectName: "exportStart"; from: 1; to: 256; value: 1; editable: true; enabled: session.canEdit; Layout.preferredWidth: 84; Accessible.name: "Export start bar" }
             Label { text: "Bars" }
-            SpinBox { id: exportBars; objectName: "exportBars"; from: 1; to: 16; value: 4; enabled: session.canEdit; Accessible.name: "Export length in bars" }
-            Button { objectName: "exportWavButton"; text: "Export all tracks"; visible: !session.exporting; enabled: session.canEdit; onClicked: session.exportWav(exportFile.text, exportBars.value) }
+            SpinBox { id: exportBars; objectName: "exportBars"; from: 1; to: 64; value: 4; editable: true; enabled: session.canEdit; Layout.preferredWidth: 84; Accessible.name: "Export length in bars" }
+            Label { text: "Tail ms" }
+            SpinBox { id: exportTail; objectName: "exportTail"; from: 0; to: 10000; stepSize: 100; value: 0; editable: true; enabled: session.canEdit; Layout.preferredWidth: 96; Accessible.name: "Export tail in milliseconds"; ToolTip.visible: hovered; ToolTip.text: "Time rendered after every track stops at the end of the range. Silent until effects or release envelopes exist." }
+            ComboBox { id: exportChannels; objectName: "exportChannels"; model: ["Stereo", "Mono"]; Layout.preferredWidth: 92; Accessible.name: "Export channels" }
+            ComboBox { id: exportFormat; objectName: "exportFormat"; model: ["16-bit", "24-bit", "32-bit float"]; Layout.preferredWidth: 120; Accessible.name: "Export sample format" }
+            Button { objectName: "exportWavButton"; text: "Export all tracks"; visible: !session.exporting; enabled: session.canEdit; onClicked: session.exportAudio(exportFile.text, exportStart.value, exportBars.value, exportTail.value, exportChannels.currentIndex === 0 ? 2 : 1, ["pcm16", "pcm24", "float32"][exportFormat.currentIndex]) }
             ProgressBar { objectName: "exportProgress"; visible: session.exporting; from: 0; to: 1; value: session.exportProgress; Layout.preferredWidth: 120; Accessible.name: "Export progress" }
             Button { objectName: "cancelExportButton"; text: "Cancel export"; visible: session.exporting; onClicked: session.cancelExport(); Accessible.description: "Stops the export and removes the partial file" }
         }
