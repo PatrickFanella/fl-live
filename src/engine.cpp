@@ -31,6 +31,8 @@ void validatePlan(const SessionPlan& plan) {
             throw std::invalid_argument("track gain must be finite in [0,4]");
         if (!std::isfinite(track.pan) || track.pan < -1 || track.pan > 1)
             throw std::invalid_argument("track pan must be finite in [-1,1]");
+        if (!std::isfinite(track.device_gain) || track.device_gain < 0 || track.device_gain > 16)
+            throw std::invalid_argument("device gain must be finite in [0,16]");
         const auto lane = [](const std::vector<AutomationPoint>& points, float low, float high) {
             if (points.size() > Engine::automation_points_capacity) throw std::invalid_argument("at most 4096 automation points per lane");
             for (std::size_t i = 0; i < points.size(); ++i) {
@@ -253,7 +255,7 @@ Engine::StereoSample Engine::render_track(std::size_t index) noexcept {
     const auto& clip = track.clips[*state.clip];
     const auto age = position_ - state.launched;
     auto& cursor = automation_cursor_[index];
-    const float gain = track.gain_automation.empty() ? track.gain : automationValue(track.gain_automation, position_, cursor[0]);
+    const float gain = (track.gain_automation.empty() ? track.gain : automationValue(track.gain_automation, position_, cursor[0])) * track.device_gain;
     const float pan = track.pan_automation.empty() ? track.pan : automationValue(track.pan_automation, position_, cursor[1]);
     const float left_gain = gain * (pan > 0 ? 1 - pan : 1.0F);
     const float right_gain = gain * (pan < 0 ? 1 + pan : 1.0F);

@@ -165,6 +165,112 @@ const TrackContent& trackContent(const SessionContent& content,fl_live::TrackId 
     if(found==content.tracks.end())throw std::invalid_argument("Missing track content");
     return *found;
 }
+namespace {
+PortType portOf(DeviceKind kind){return kind==DeviceKind::gain ? PortType::audio : PortType::midi;}
+}
+DeviceChain deviceChain(const TrackDevices& entry,fl_live::TrackKind kind) {
+    // Validation guarantees one chain; walk it from the source.
+    DeviceChain chain;bool afterInstrument=kind==fl_live::TrackKind::audio;
+    DeviceEndpoint at{DeviceEndpoint::Kind::source};
+    for(std::size_t steps=0;steps<=entry.devices.size()+2;++steps) {
+        const auto next=std::find_if(entry.connections.begin(),entry.connections.end(),[&](const auto& c){return c.from==at;});
+        if(next==entry.connections.end())break;
+        at=next->to;
+        if(at.kind==DeviceEndpoint::Kind::instrument)afterInstrument=true;
+        if(at.kind==DeviceEndpoint::Kind::device) {
+            const auto& device=*std::find_if(entry.devices.begin(),entry.devices.end(),[&](const auto& d){return d.id==at.device;});
+            (afterInstrument ? chain.audio : chain.midi).push_back(device);
+        }
+    }
+    return chain;
+}
+std::vector<DeviceConnection> chainConnections(const std::vector<Device>& devices,fl_live::TrackKind kind) {
+    std::vector<DeviceEndpoint> nodes{{DeviceEndpoint::Kind::source}};
+    for(const auto& d:devices)if(d.kind==DeviceKind::transpose)nodes.push_back({DeviceEndpoint::Kind::device,d.id});
+    if(kind==fl_live::TrackKind::midi)nodes.push_back({DeviceEndpoint::Kind::instrument});
+    for(const auto& d:devices)if(d.kind==DeviceKind::gain)nodes.push_back({DeviceEndpoint::Kind::device,d.id});
+    nodes.push_back({DeviceEndpoint::Kind::output});
+    std::vector<DeviceConnection> result;
+    for(std::size_t i=0;i+1<nodes.size();++i)result.push_back({nodes[i],nodes[i+1]});
+    return result;
+}
+fl_live::MidiClip transposed(fl_live::MidiClip clip,const std::vector<Device>& midi) {
+    std::vector<fl_live::Note> kept;
+    for(auto note:clip.notes) {
+        int pitch=note.pitch;bool inside=true;
+        for(const auto& device:midi){pitch+=static_cast<int>(device.value);if(pitch<0 || pitch>127){inside=false;break;}}
+        if(!inside)continue;
+        note.pitch=static_cast<std::uint8_t>(pitch);kept.push_back(note);
+    }
+    clip.notes=std::move(kept);
+    return clip;
+}
+namespace {
+// Typed chain validation of one track's devices.
+void validateDevices(const TrackDevices& entry,fl_live::TrackKind kind,std::uint64_t next_id) {
+    if(entry.devices.empty() || entry.devices.size()>devices_per_track_limit)throw std::invalid_argument("A track holds 1 to 8 devices");
+    for(const auto& d:entry.devices) {
+        if(d.id<1 || d.id>=next_id)throw std::invalid_argument("Device IDs must come from the project's device counter");
+        if(std::count_if(entry.devices.begin(),entry.devices.end(),[&](const auto& o){return o.id==d.id;})!=1)throw std::invalid_argument("Duplicate device ID");
+        if(d.kind==DeviceKind::gain && (!std::isfinite(d.value) || d.value<-60 || d.value>12))throw std::invalid_argument("Gain must be -60 to +12 dB");
+        if(d.kind==DeviceKind::transpose && (!std::isfinite(d.value) || d.value<-48 || d.value>48 || std::floor(d.value)!=d.value))
+            throw std::invalid_argument("Transpose must be whole semitones from -48 to +48");
+        if(d.kind!=DeviceKind::gain && d.kind!=DeviceKind::transpose)throw std::invalid_argument("Unknown device kind");
+    }
+    using K=DeviceEndpoint::Kind;
+    const bool midi=kind==fl_live::TrackKind::midi;
+    // Port types: what an endpoint emits and what it accepts.
+    const auto out=[&](const DeviceEndpoint& e)->std::optional<PortType> {
+        if(e.kind==K::source)return midi ? PortType::midi : PortType::audio;
+        if(e.kind==K::instrument && midi)return PortType::audio;
+        if(e.kind==K::device)for(const auto& d:entry.devices)if(d.id==e.device)return portOf(d.kind);
+        return std::nullopt;
+    };
+    const auto in=[&](const DeviceEndpoint& e)->std::optional<PortType> {
+        if(e.kind==K::output)return PortType::audio;
+        if(e.kind==K::instrument && midi)return PortType::midi;
+        if(e.kind==K::device)for(const auto& d:entry.devices)if(d.id==e.device)return portOf(d.kind);
+        return std::nullopt;
+    };
+    for(const auto& c:entry.connections) {
+        const auto from=out(c.from),to=in(c.to);
+        if(!from || !to)throw std::invalid_argument("A device connection names an unknown or unusable endpoint");
+        if(*from!=*to)throw std::invalid_argument("A device connection joins a MIDI port to an audio port");
+    }
+    // One chain: every node has one way in and one way out, and walking from
+    // the source reaches the output through every node without repeating.
+    const std::size_t nodes=entry.devices.size()+(midi ? 3 : 2);
+    if(entry.connections.size()!=nodes-1)throw std::invalid_argument("Devices must form one chain from source to output (no branches, merges or loose devices)");
+    for(const auto& c:entry.connections)
+        if(std::count_if(entry.connections.begin(),entry.connections.end(),[&](const auto& o){return o.from==c.from;})!=1 ||
+           std::count_if(entry.connections.begin(),entry.connections.end(),[&](const auto& o){return o.to==c.to;})!=1)
+            throw std::invalid_argument("Devices must form one chain from source to output (no branches, merges or loose devices)");
+    std::vector<DeviceEndpoint> seen{{K::source}};DeviceEndpoint at{K::source};
+    while(at.kind!=K::output) {
+        const auto next=std::find_if(entry.connections.begin(),entry.connections.end(),[&](const auto& c){return c.from==at;});
+        if(next==entry.connections.end())throw std::invalid_argument("The device chain does not reach the output");
+        at=next->to;
+        if(std::find(seen.begin(),seen.end(),at)!=seen.end())throw std::invalid_argument("The device chain contains a cycle");
+        seen.push_back(at);
+    }
+    if(seen.size()!=nodes) {
+        // Unreached nodes either loop among themselves or hang loose.
+        for(const auto& c:entry.connections) {
+            if(std::find(seen.begin(),seen.end(),c.from)!=seen.end())continue;
+            DeviceEndpoint walk=c.from;
+            for(std::size_t step=0;step<nodes;++step) {
+                const auto next=std::find_if(entry.connections.begin(),entry.connections.end(),[&](const auto& o){return o.from==walk;});
+                if(next==entry.connections.end())break;
+                walk=next->to;
+                if(walk==c.from)throw std::invalid_argument("The device chain contains a cycle");
+            }
+        }
+        throw std::invalid_argument("Devices must form one chain from source to output (no branches, merges or loose devices)");
+    }
+    double db=0;for(const auto& d:entry.devices)if(d.kind==DeviceKind::gain)db+=d.value;
+    if(db>combined_device_gain_limit_db)throw std::invalid_argument("Combined device gain exceeds +24 dB");
+}
+}
 void validateContent(const SessionContent& content,const fl_live::DocumentSnapshot& identities) {
     fl_live::SessionDocument::validate(identities);
     if(content.tempo<20 || content.tempo>300)throw std::invalid_argument("Tempo must be 20 to 300 BPM");
@@ -197,6 +303,17 @@ void validateContent(const SessionContent& content,const fl_live::DocumentSnapsh
                 throw std::invalid_argument("Automation value is outside the parameter's range");
         }
     }
+    if(content.next_device_id<1)throw std::invalid_argument("Invalid device counter");
+    for(const auto& entry:content.devices) {
+        const auto track=std::find_if(identities.tracks.begin(),identities.tracks.end(),[&](const auto& t){return t.id==entry.track;});
+        if(track==identities.tracks.end())throw std::invalid_argument("Devices for an unknown track");
+        if(std::count_if(content.devices.begin(),content.devices.end(),[&](const auto& e){return e.track==entry.track;})!=1)
+            throw std::invalid_argument("A track has at most one device chain");
+        validateDevices(entry,track->kind,content.next_device_id);
+        for(const auto& d:entry.devices)
+            for(const auto& other:content.devices)if(&other!=&entry)
+                if(std::any_of(other.devices.begin(),other.devices.end(),[&](const auto& o){return o.id==d.id;}))throw std::invalid_argument("Duplicate device ID");
+    }
     for(const auto& clip:identities.clips) {
         const auto& value=clipContent(content,clip.id);
         if(std::count_if(content.clips.begin(),content.clips.end(),[&](const auto& c){return c.clip==clip.id;})!=1)
@@ -225,8 +342,12 @@ std::vector<fl_live::DocumentClipSource> contentSources(const SessionContent& co
     for(const auto& clip:identities.clips) {
         const auto& value=clipContent(content,clip.id);
         const auto kind=std::find_if(identities.tracks.begin(),identities.tracks.end(),[&](const auto& t){return t.id==clip.track;})->kind;
-        if(kind==fl_live::TrackKind::midi)result.push_back({clip.id,value.piano ? pianoClip(*value.piano,content.tempo,value.synth)
-                                                                                : patternClip(value.pattern,content.tempo,value.synth)});
+        if(kind==fl_live::TrackKind::midi) {
+            auto midi=value.piano ? pianoClip(*value.piano,content.tempo,value.synth) : patternClip(value.pattern,content.tempo,value.synth);
+            const auto entry=std::find_if(content.devices.begin(),content.devices.end(),[&](const auto& e){return e.track==clip.track;});
+            if(entry!=content.devices.end())midi=transposed(std::move(midi),deviceChain(*entry,kind).midi);
+            result.push_back({clip.id,std::move(midi)});
+        }
         else if(value.audio==AudioSource::pulse)result.push_back({clip.id,pulseClip(content.tempo)});
         else if(value.media) {
             // Copy only the selected source frames; the engine loops or stops
@@ -259,7 +380,13 @@ std::vector<fl_live::DocumentAutomation> contentAutomation(const SessionContent&
 std::vector<fl_live::DocumentTrackGain> contentGains(const SessionContent& content,const fl_live::DocumentSnapshot& identities) {
     validateContent(content,identities);
     std::vector<fl_live::DocumentTrackGain> result;
-    for(const auto& track:identities.tracks)result.push_back({track.id,static_cast<float>(trackContent(content,track.id).level)/100});
+    for(const auto& track:identities.tracks) {
+        float device=1;
+        const auto entry=std::find_if(content.devices.begin(),content.devices.end(),[&](const auto& e){return e.track==track.id;});
+        if(entry!=content.devices.end())
+            for(const auto& d:deviceChain(*entry,track.kind).audio)device*=static_cast<float>(std::pow(10.0,d.value/20));
+        result.push_back({track.id,static_cast<float>(trackContent(content,track.id).level)/100,device});
+    }
     return result;
 }
 QString assetRelativePath(const QString& asset,const QString& baseDirectory) {
@@ -309,9 +436,10 @@ QByteArray encodeAuthoredProject(const AuthoredProject& project,const QString& b
     const bool automated=!project.content.automation.empty();
     const bool synths=std::any_of(project.content.clips.begin(),project.content.clips.end(),[](const auto& c){return c.synth!=SynthSettings{};});
     const bool pianos=std::any_of(project.content.clips.begin(),project.content.clips.end(),[](const auto& c){return c.piano.has_value();});
+    const bool devices=!project.content.devices.empty();
     QJsonObject root{{"format","fl-live-project"},{"version",4},
         {"required_features",[&]{QJsonArray f{"general-session-v1"};if(ranges)f.append("clip-ranges-v1");if(relative)f.append("asset-relative-v1");
-            if(automated)f.append("automation-v1");if(synths)f.append("synth-v1");if(pianos)f.append("piano-roll-v1");return f;}()},
+            if(automated)f.append("automation-v1");if(synths)f.append("synth-v1");if(pianos)f.append("piano-roll-v1");if(devices)f.append("devices-v1");return f;}()},
         {"tempo",project.content.tempo},
         {"session",session},{"tracks",tracks},{"clips",clips}};
     if(automated) {
@@ -322,6 +450,19 @@ QByteArray encodeAuthoredProject(const AuthoredProject& project,const QString& b
             lanes.append(QJsonObject{{"track",idText(lane.track.value)},{"parameter",lane.parameter==AutomatedParameter::level ? "level" : "pan"},{"points",points}});
         }
         root.insert("automation",lanes);
+    }
+    if(devices) {
+        const auto endpoint=[](const DeviceEndpoint& e)->QJsonValue{
+            switch(e.kind){case DeviceEndpoint::Kind::source:return "source";case DeviceEndpoint::Kind::instrument:return "instrument";
+            case DeviceEndpoint::Kind::output:return "output";default:return idText(e.device);}};
+        QJsonArray entries;
+        for(const auto& entry:project.content.devices) {
+            QJsonArray list,connections;
+            for(const auto& d:entry.devices)list.append(QJsonObject{{"id",idText(d.id)},{"kind",d.kind==DeviceKind::gain ? "gain" : "transpose"},{"value",d.value}});
+            for(const auto& c:entry.connections)connections.append(QJsonArray{endpoint(c.from),endpoint(c.to)});
+            entries.append(QJsonObject{{"track",idText(entry.track.value)},{"devices",list},{"connections",connections}});
+        }
+        root.insert("devices",QJsonObject{{"next_id",idText(project.content.next_device_id)},{"tracks",entries}});
     }
     const auto bytes=QJsonDocument(root).toJson();
     if(bytes.size()>limit)throw std::invalid_argument("Authored project exceeds size limit");
@@ -336,15 +477,18 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
     if(!root["version"].isDouble() || root["version"].toDouble()!=4)return decodeTemplate(bytes,root);
     const auto features=root["required_features"].toArray();
     const bool ranges=features.contains("clip-ranges-v1"),relativePaths=features.contains("asset-relative-v1"),automated=features.contains("automation-v1");
-    const bool synths=features.contains("synth-v1"),pianos=features.contains("piano-roll-v1");
-    const auto v4=automated ? exact(root,{"format","version","required_features","tempo","session","tracks","clips","automation"})
-                            : exact(root,{"format","version","required_features","tempo","session","tracks","clips"});
+    const bool synths=features.contains("synth-v1"),pianos=features.contains("piano-roll-v1"),devices=features.contains("devices-v1");
+    const auto v4=automated && devices ? exact(root,{"format","version","required_features","tempo","session","tracks","clips","automation","devices"})
+                : automated ? exact(root,{"format","version","required_features","tempo","session","tracks","clips","automation"})
+                : devices ? exact(root,{"format","version","required_features","tempo","session","tracks","clips","devices"})
+                : exact(root,{"format","version","required_features","tempo","session","tracks","clips"});
     QJsonArray canonical{"general-session-v1"};
     if(ranges)canonical.append("clip-ranges-v1");
     if(relativePaths)canonical.append("asset-relative-v1");
     if(automated)canonical.append("automation-v1");
     if(synths)canonical.append("synth-v1");
     if(pianos)canonical.append("piano-roll-v1");
+    if(devices)canonical.append("devices-v1");
     if(features!=canonical)throw std::invalid_argument("Unsupported required project feature");
     if(!v4["session"].isObject())throw std::invalid_argument("Project requires a session object");
     AuthoredProject project;
@@ -443,6 +587,39 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
                 decoded.points.push_back({integer(point["at"],0,static_cast<int>(automation_position_limit)),point["value"].toDouble()});
             }
             project.content.automation.push_back(std::move(decoded));
+        }
+    }
+    if(devices) {
+        const auto section=exact(v4["devices"],{"next_id","tracks"});
+        project.content.next_device_id=idValue(section["next_id"]);
+        if(!section["tracks"].isArray() || section["tracks"].toArray().isEmpty() ||
+           section["tracks"].toArray().size()>static_cast<qsizetype>(fl_live::SessionDocument::track_limit))
+            throw std::invalid_argument("Invalid device tracks");
+        const auto endpoint=[](const QJsonValue& v)->DeviceEndpoint{
+            if(v=="source")return {DeviceEndpoint::Kind::source};
+            if(v=="instrument")return {DeviceEndpoint::Kind::instrument};
+            if(v=="output")return {DeviceEndpoint::Kind::output};
+            return {DeviceEndpoint::Kind::device,idValue(v)};};
+        for(const auto& value:section["tracks"].toArray()) {
+            const auto entry=exact(value,{"track","devices","connections"});
+            TrackDevices decoded{fl_live::TrackId{idValue(entry["track"])},{},{}};
+            if(!entry["devices"].isArray() || entry["devices"].toArray().size()>static_cast<qsizetype>(devices_per_track_limit) || !entry["connections"].isArray() ||
+               entry["connections"].toArray().size()>static_cast<qsizetype>(devices_per_track_limit+2))
+                throw std::invalid_argument("Invalid device chain");
+            for(const auto& d:entry["devices"].toArray()) {
+                const auto device=exact(d,{"id","kind","value"});
+                if(!device["value"].isDouble())throw std::invalid_argument("Device values must be numbers");
+                Device parsed{idValue(device["id"]),DeviceKind::gain,device["value"].toDouble()};
+                if(device["kind"]=="gain")parsed.kind=DeviceKind::gain;
+                else if(device["kind"]=="transpose")parsed.kind=DeviceKind::transpose;
+                else throw std::invalid_argument("Unsupported device kind");
+                decoded.devices.push_back(parsed);
+            }
+            for(const auto& c:entry["connections"].toArray()) {
+                if(!c.isArray() || c.toArray().size()!=2)throw std::invalid_argument("A device connection is a pair of endpoints");
+                decoded.connections.push_back({endpoint(c.toArray()[0]),endpoint(c.toArray()[1])});
+            }
+            project.content.devices.push_back(std::move(decoded));
         }
     }
     validateContent(project.content,project.identities);

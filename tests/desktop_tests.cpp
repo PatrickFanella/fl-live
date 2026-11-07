@@ -1566,6 +1566,43 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(session.activeClips()[1].toInt()<0,10000);QCOMPARE(session.activeVoices(),0);
         play();session.stop();QTRY_VERIFY(!session.running());QCOMPARE(session.activeVoices(),0); // stop
     }
+    // #73/#74 in the Session: device chains load, follow duplicate and
+    // delete, and malformed or unsupported chains leave the document alone.
+    void deviceChainsInSession() {
+        QTemporaryDir directory;const auto path=directory.filePath("devices.json");
+        auto project=defaultProject();const auto steps=project.identities.tracks[1].id;
+        const std::vector<Device> chain{{1,DeviceKind::transpose,12},{2,DeviceKind::gain,-6}};
+        project.content.devices={{steps,chain,chainConnections(chain,fl_live::TrackKind::midi)}};project.content.next_device_id=3;
+        writeAuthoredProject(path,project);
+        Session session;QVERIFY(session.loadProject(path));
+        QVERIFY(session.duplicateTrack(session.trackIds()[1].toString()));
+        const auto saved=directory.filePath("saved.json");QVERIFY(session.saveProject(saved));
+        auto reread=readAuthoredProject(saved);
+        QCOMPARE(reread.content.devices.size(),std::size_t(2));QCOMPARE(reread.content.next_device_id,std::uint64_t(5));
+        QCOMPARE(reread.content.devices[1].devices[0].id,std::uint64_t(3));QCOMPARE(reread.content.devices[1].devices[1].value,-6.0);
+        QCOMPARE(reread.content.devices[1].connections,chainConnections({{3,DeviceKind::transpose,12},{4,DeviceKind::gain,-6}},fl_live::TrackKind::midi));
+        QVERIFY(session.deleteTrack(session.trackIds()[1].toString()));QVERIFY(session.saveProject(saved));
+        reread=readAuthoredProject(saved);QCOMPARE(reread.content.devices.size(),std::size_t(1));QCOMPARE(reread.content.devices[0].devices[0].id,std::uint64_t(3));
+        session.undo();QCOMPARE(session.trackCount(),3);
+        // Refused files: the open document, history and path stay.
+        QFile file(path);QVERIFY(file.open(QIODevice::ReadOnly));const auto bytes=file.readAll();file.close();
+        const auto write=[&](const QString& name,const QByteArray& content){const auto p=directory.filePath(name);QFile f(p);
+            if(!f.open(QIODevice::WriteOnly))throw std::runtime_error("fixture");f.write(content);f.close();return p;};
+        auto cycle=QJsonDocument::fromJson(bytes).object();
+        {auto d=cycle["devices"].toObject();auto t=d["tracks"].toArray();auto e=t[0].toObject();
+         e["connections"]=QJsonArray{QJsonArray{"source","instrument"},QJsonArray{"instrument","output"},QJsonArray{"1","2"},QJsonArray{"2","1"}};
+         t[0]=e;d["tracks"]=t;cycle["devices"]=d;}
+        auto mismatch=QJsonDocument::fromJson(bytes).object();
+        {auto d=mismatch["devices"].toObject();auto t=d["tracks"].toArray();auto e=t[0].toObject();auto l=e["devices"].toArray();
+         auto o=l[0].toObject();o["kind"]="gain";o["value"]=0;l[0]=o;e["devices"]=l;t[0]=e;d["tracks"]=t;mismatch["devices"]=d;}
+        QVERIFY(session.saveProject(directory.filePath("current.json"))); // Open refuses unsaved edits; save so only the file decides
+        const auto current=session.projectPath();const auto tracks=session.trackIds();const auto history=session.undoText();
+        QVERIFY(!history.isEmpty());
+        for(const auto& bad:{write("cycle.json",QJsonDocument(cycle).toJson()),write("mismatch.json",QJsonDocument(mismatch).toJson())}) {
+            QVERIFY(!session.loadProject(bad));QVERIFY(session.message().contains("cycle") || session.message().contains("MIDI port"));
+            QCOMPARE(session.projectPath(),current);QCOMPARE(session.trackIds(),tracks);QCOMPARE(session.undoText(),history);
+        }
+    }
     void qmlRelinkMissingAudio() {
         QTemporaryDir root;const auto audio=root.filePath("a.wav"),project=root.filePath("p.json");
         std::vector<qint16> tone(4800);for(std::size_t i=0;i<tone.size();++i)tone[i]=static_cast<qint16>(i%300*50);

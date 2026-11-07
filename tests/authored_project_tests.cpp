@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 
@@ -423,7 +424,79 @@ void pianoLoopTiming() {
     auto clips=root["clips"].toArray();auto clip=clips[3].toObject();auto piano=clip["piano"].toObject();piano["loop"]=true;clip["piano"]=piano;clips[3]=clip;root["clips"]=clips;
     rejects([&]{decodeAuthoredProject(QJsonDocument(root).toJson());});
 }
+// Typed device chains (#73, #74): validation, compilation and persistence.
+void deviceGraph() {
+    auto project=general();
+    const auto midiTrack=project.identities.tracks[3].id,audioTrack=project.identities.tracks[0].id;
+    CHECK(project.identities.tracks[3].kind==fl_live::TrackKind::midi && project.identities.tracks[0].kind==fl_live::TrackKind::audio);
+    const std::vector<Device> chain{{1,DeviceKind::transpose,5},{2,DeviceKind::gain,-6},{3,DeviceKind::transpose,-12}};
+    project.content.devices={{midiTrack,chain,chainConnections(chain,fl_live::TrackKind::midi)}};
+    project.content.next_device_id=4;
+    validateContent(project.content,project.identities);
+    using K=DeviceEndpoint::Kind;
+    CHECK((project.content.devices[0].connections==std::vector<DeviceConnection>{{{K::source},{K::device,1}},{{K::device,1},{K::device,3}},
+        {{K::device,3},{K::instrument}},{{K::instrument},{K::device,2}},{{K::device,2},{K::output}}}));
+    // Compiled: the MIDI stage transposes notes (+5 then -12), the audio stage scales the track.
+    auto plain=project;plain.content.devices.clear();
+    const auto find=[](const auto& sources,fl_live::ClipId id){return std::get<fl_live::MidiClip>(std::find_if(sources.begin(),sources.end(),[&](const auto& x){return x.id==id;})->content);};
+    const auto clip=project.identities.clips[3].id;
+    const auto before=find(contentSources(plain.content,plain.identities),clip),after=find(contentSources(project.content,project.identities),clip);
+    CHECK(before.notes.size()==after.notes.size() && !after.notes.empty());
+    for(std::size_t i=0;i<after.notes.size();++i)CHECK(after.notes[i].pitch==before.notes[i].pitch-7 && after.notes[i].start==before.notes[i].start);
+    const auto gains=contentGains(project.content,project.identities);
+    CHECK(gains[3].device_gain==static_cast<float>(std::pow(10.0,-6.0/20)) && gains[0].device_gain==1.0F);
+    // A note pushed out of range by any device is dropped, not clamped.
+    fl_live::MidiClip edge{100,{{0,10,125,1},{10,10,3,1},{20,10,60,1}},true};
+    const auto moved=transposed(edge,{{1,DeviceKind::transpose,5},{2,DeviceKind::transpose,-5}});
+    CHECK(moved.notes.size()==2 && moved.notes[0].pitch==3 && moved.notes[1].pitch==60); // 125+5 left the range at the first device
+    // Persistence behind devices-v1, round trip and malformed files.
+    const auto bytes=encodeAuthoredProject(project);
+    const auto root=QJsonDocument::fromJson(bytes).object();
+    CHECK(root["required_features"].toArray().contains("devices-v1") && root["devices"].toObject()["next_id"]=="4");
+    const auto entry=root["devices"].toObject()["tracks"].toArray()[0].toObject();
+    CHECK(entry["connections"].toArray()[0]==QJsonValue(QJsonArray{"source","1"}) && entry["devices"].toArray()[1].toObject()["kind"]=="gain");
+    CHECK(decodeAuthoredProject(bytes).content==project.content);
+    const auto broken=[&](auto edit){auto r=root;edit(r);rejects([&]{decodeAuthoredProject(QJsonDocument(r).toJson());});};
+    const auto onEntry=[&](auto change){broken([&](QJsonObject& r){auto d=r["devices"].toObject();auto t=d["tracks"].toArray();auto e=t[0].toObject();change(e);t[0]=e;d["tracks"]=t;r["devices"]=d;});};
+    onEntry([](QJsonObject& e){auto l=e["devices"].toArray();auto o=l[0].toObject();o["kind"]="reverb";l[0]=o;e["devices"]=l;});
+    onEntry([](QJsonObject& e){auto l=e["devices"].toArray();auto o=l[0].toObject();o["extra"]=1;l[0]=o;e["devices"]=l;});
+    onEntry([](QJsonObject& e){auto c=e["connections"].toArray();c[0]=QJsonArray{"source","nowhere"};e["connections"]=c;});
+    onEntry([](QJsonObject& e){auto c=e["connections"].toArray();c[0]=QJsonArray{"source","1","2"};e["connections"]=c;});
+    broken([](QJsonObject& r){auto f=r["required_features"].toArray();f.removeLast();r["required_features"]=f;});
+    broken([](QJsonObject& r){auto d=r["devices"].toObject();d["next_id"]="3";r["devices"]=d;});
+    // Validation refuses each unsupported graph before any plan exists.
+    const auto refused=[&](auto edit){auto c=project.content;edit(c);rejects([&]{validateContent(c,project.identities);});};
+    const auto connect=[&](std::vector<DeviceConnection> connections,const char* reason){
+        auto c=project.content;c.devices[0].connections=std::move(connections);
+        std::string message;try{validateContent(c,project.identities);}catch(const std::exception& e){message=e.what();}
+        if(message.find(reason)==std::string::npos)throw std::runtime_error("expected '"+std::string(reason)+"', got '"+message+"'");};
+    const DeviceEndpoint source{K::source},instrument{K::instrument},output{K::output},one{K::device,1},two{K::device,2},three{K::device,3};
+    connect({{source,two},{two,one},{one,three},{three,instrument},{instrument,output}},"MIDI port to an audio port");
+    connect({{source,one},{one,three},{three,instrument},{instrument,two},{two,output},{source,instrument}},"no branches");
+    connect({{source,one},{one,three},{three,instrument},{instrument,two},{two,output},{{K::output},two}},"unknown or unusable endpoint"); // out of the output
+    connect({{source,instrument},{instrument,two},{two,output},{one,three},{three,one}},"cycle");
+    connect({{source,one},{one,three},{three,instrument},{instrument,output}},"loose devices");
+    connect({{source,one},{one,three},{three,instrument},{instrument,{K::device,9}},{{K::device,9},output}},"unknown or unusable endpoint");
+    connect({{source,one},{one,three},{three,output},{instrument,two},{two,instrument}},"MIDI port to an audio port");
+    refused([](SessionContent& c){c.devices[0].devices[0].value=0.5;});refused([](SessionContent& c){c.devices[0].devices[0].value=49;});
+    refused([](SessionContent& c){c.devices[0].devices[1].value=13;});refused([](SessionContent& c){c.devices[0].devices[1].value=std::nan("");});
+    refused([](SessionContent& c){c.next_device_id=3;});refused([](SessionContent& c){c.devices[0].track=fl_live::TrackId{999};});
+    refused([](SessionContent& c){c.devices.push_back(c.devices[0]);});refused([](SessionContent& c){c.devices[0].devices.clear();c.devices[0].connections.clear();});
+    refused([&](SessionContent& c){const std::vector<Device> t{{1,DeviceKind::transpose,2}};c.devices[0]={audioTrack,t,chainConnections(t,fl_live::TrackKind::audio)};}); // MIDI device on audio
+    refused([](SessionContent& c){std::vector<Device> g;for(std::uint64_t i=1;i<=3;++i)g.push_back({i,DeviceKind::gain,12});c.devices[0].devices=g;
+        c.devices[0].connections=chainConnections(g,fl_live::TrackKind::midi);}); // +36 dB combined
+    refused([](SessionContent& c){std::vector<Device> g;for(std::uint64_t i=1;i<=9;++i)g.push_back({i,DeviceKind::gain,0});c.next_device_id=10;c.devices[0].devices=g;
+        c.devices[0].connections=chainConnections(g,fl_live::TrackKind::midi);}); // nine devices
+    // The render plan bounds the compiled gain; the engine applies it with automation.
+    auto loud=contentGains(project.content,project.identities);loud[3].device_gain=17;
+    rejects([&]{fl_live::DocumentRenderPlan(project.identities,contentSources(project.content,project.identities),48000,120000,{},loud);});
+    fl_live::SessionPlan plan{48000,120000,{{1,{fl_live::AudioClip{{0.5F},true}},0,{{0,1.0F},{4,0.5F}},{},0.25F}}};
+    fl_live::Engine engine(plan);CHECK(engine.schedule({fl_live::CommandKind::launch,0,0,0})==fl_live::ScheduleResult::accepted);engine.start();
+    std::vector<float> out(5);CHECK(engine.process(out,1));
+    CHECK(out[0]==0.5F*0.25F && out[4]==0.5F*(0.5F*0.25F));
+}
 int main(){try{
+    deviceGraph();
     pianoLoopTiming();
     movedNoteVoices();
     pianoRoll();
@@ -431,5 +504,5 @@ int main(){try{
     automationLanes();
     relativeAssets();
     legacyMigration();generalRoundTrip();generalRejection();clipRanges();
-    std::cout<<"PASS: v1-v3 migration with sample equivalence, v4 general content round trip, sources, clip ranges, piano-roll notes and rejection\n";return 0;
+    std::cout<<"PASS: v1-v3 migration with sample equivalence, v4 general content round trip, sources, clip ranges, piano-roll notes, device chains and rejection\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

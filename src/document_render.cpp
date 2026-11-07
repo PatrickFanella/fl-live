@@ -14,10 +14,11 @@ SessionPlan prepare(const DocumentSnapshot& document, std::span<const DocumentCl
     if (sources.size() != document.clips.size()) throw std::invalid_argument("Every document clip requires exactly one source");
     if (budget.audio_frames > PreparationBudget::audio_frame_limit || budget.midi_notes > PreparationBudget::midi_note_limit)
         throw std::invalid_argument("Preparation budget exceeds supported limit");
-    std::unordered_map<std::uint64_t, float> levels;
+    std::unordered_map<std::uint64_t, DocumentTrackGain> levels;
     if (!gains.empty() && gains.size() != document.tracks.size()) throw std::invalid_argument("Every track requires one gain binding");
     for (const auto& gain : gains)
-        if (!std::isfinite(gain.gain) || gain.gain < 0 || gain.gain > 4 || !levels.emplace(gain.id.value, gain.gain).second)
+        if (!std::isfinite(gain.gain) || gain.gain < 0 || gain.gain > 4 || !std::isfinite(gain.device_gain) || gain.device_gain < 0 ||
+            gain.device_gain > 16 || !levels.emplace(gain.id.value, gain).second)
             throw std::invalid_argument("Invalid or duplicate track gain");
     std::unordered_map<std::uint64_t, const Clip*> content;
     std::size_t audio_frames = 0, midi_notes = 0;
@@ -58,7 +59,7 @@ SessionPlan prepare(const DocumentSnapshot& document, std::span<const DocumentCl
     plan.tracks.reserve(document.tracks.size());
     for (const auto& track : document.tracks) {
         Track prepared;
-        if (!gains.empty()) prepared.gain = levels.at(track.id.value);
+        if (!gains.empty()) { prepared.gain = levels.at(track.id.value).gain; prepared.device_gain = levels.at(track.id.value).device_gain; }
         // Mute/solo resolve to zero gain at preparation; pan maps percent to
         // the engine's balance law. Edits rebuild the plan.
         prepared.pan = static_cast<float>(track.mix.pan) / static_cast<float>(TrackMix::pan_limit);
