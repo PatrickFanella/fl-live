@@ -268,4 +268,7 @@ if(BUILD_TESTING AND FL_LIVE_BUILD_DESKTOP)
     add_test(NAME staged-install COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/staged_install.py
         ${CMAKE_BINARY_DIR} ${FL_LIVE_SOURCE_REVISION})
     set_tests_properties(staged-install PROPERTIES TIMEOUT 120)
+    add_test(NAME reproducible-archive COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/reproducible_archive.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/packaging/reproducible_archive.py ${CMAKE_BINARY_DIR})
+    set_tests_properties(reproducible-archive PROPERTIES TIMEOUT 120)
 endif()
