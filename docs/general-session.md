@@ -57,7 +57,17 @@ When any imported clip has a range other than "whole file, looped", the file als
 
 Every object has an exact field set. MIDI clips carry `pattern`; audio clips carry `audio` (`pulse`, `empty` or `wav`) and, for `wav` only, an absolute `path`. Unknown versions, features, fields, sources, relative paths, kind mismatches, missing or duplicate entries and out-of-range values fail before the current project is replaced. Versions 1–3 still open and migrate to the same content; their rendered samples are unchanged. Older releases refuse version 4.
 
-Opening a project decodes its imported WAVs on the control thread before preparing playback. If a file became shorter than its saved range, it opens playing the whole file and the status line says the range was reset. A missing or refused file does not block opening: the clip plays silence, the track shows "Missing: NAME" and the status line lists each missing file with the reason. Saving keeps the original path, so restoring the file and reopening repairs it. Relinking to a moved file is not offered yet (#60).
+### Asset locations, relinking and collecting
+
+Imported audio is referenced, never embedded, and fl-live never writes to a source file. When an imported file lies inside the project file's folder, Save also records its path relative to that folder (required feature `asset-relative-v1`, per-clip field `relative`, which must stay inside the folder). Opening resolves each file in a fixed order:
+
+1. The saved absolute path, whenever that file exists. A copied project therefore keeps using the original audio rather than silently switching to the copy's.
+2. Only if the absolute path is gone, the recorded relative location next to the project file. A file found there is reported ("Found moved audio inside the project folder …"), and the project opens marked unsaved until Save records the new path.
+3. Otherwise the clip is missing. Nothing is searched for by file name, so a different file with the same name is never picked up.
+
+**Relink** (shown on imported or missing audio tracks) points a clip at another file and keeps its range and loop setting. It decodes on the worker, is one Undo step, and is refused when the new file is shorter than the range ("Import it instead to replace the clip"). **Collect audio** copies imported files that live outside the project folder into `NAME-assets/` beside the saved project and repoints those clips as one Undo step. It never overwrites: a different file with the same name gets a `-2`, `-3` … suffix, and a byte-identical file already there is reused. Undo restores the old paths but leaves the copies in place. The project must have been saved first.
+
+Opening a project decodes its imported WAVs on the control thread before preparing playback. If a file became shorter than its saved range, it opens playing the whole file and the status line says the range was reset. A missing or refused file does not block opening: the clip plays silence, the track shows "Missing: NAME" and the status line lists each missing file with the reason. Saving keeps the original path, so restoring the file and reopening repairs it; so does **Relink**.
 
 ## Verification
 
@@ -68,6 +78,8 @@ Opening a project decodes its imported WAVs on the control thread before prepari
 - `generalTrackManagement`: add tracks, per-track patterns, worker import of a stereo WAV, refused imports, an import held until Stop, a four-track stereo export compared channel by channel with independent per-track renders, Save/Open with byte-identical re-export, a missing asset, Duplicate with new IDs and copied scene slot, Delete with editor fallback, Undo/Redo of both, and an empty project.
 - `clipRangeEditing`: waveform peaks of a known ramp, range edits and refusals, an exported one-shot range and a looped range compared sample by sample, Save/Open of ranges, a file that became shorter, and re-import resetting the range.
 - `qmlClipRange`: keyboard edits of Start and End, a pointer click on Loop, Undo, and a check that every row of an audio column stays inside its column.
+- `assetRelocationRelinkCollect`: a project folder moved with its audio (relative recovery, unsaved until Save), a copied folder that keeps the original absolute file, a missing file relinked with its range kept, a too-short relink refused, Undo/Redo, and Collect with a name collision, unchanged sources, reuse of identical bytes and refusal before the first Save.
+- `qmlRelinkMissingAudio`: typing a path and clicking Relink on a missing track restores playback.
 - `trackLimit`: 64 tracks, refused 65th add and duplicate without history change, Save/Open.
 - `qmlTrackManagement`: actual pointer input on Add audio/MIDI track, Import, Edit pattern, step editing, Duplicate, Delete, Undo, clip launch and Play.
 

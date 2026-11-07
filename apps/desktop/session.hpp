@@ -110,6 +110,13 @@ public:
     // once transport is stopped. One import at a time.
     Q_INVOKABLE bool importAudio(const QString& trackId, const QString& path);
     Q_INVOKABLE void cancelImport();
+    // Points an imported clip at another file, keeping its range; refused
+    // when the file is shorter than the range. Decodes on the worker.
+    Q_INVOKABLE bool relinkAudio(const QString& trackId, const QString& path);
+    // Copies imported files that live outside the project folder into
+    // NAME-assets/ beside the saved project, never overwriting a file, and
+    // repoints the clips as one Undo step. Source files are not modified.
+    Q_INVOKABLE bool collectAssets();
     // Imported clips: decoded frames per track (0 if none), and [start, end,
     // loop] in source frames. setClipRange takes an exclusive end frame and is
     // one Undo step. waveform returns bins x [min, max] of the whole source,
@@ -199,7 +206,7 @@ private:
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
     enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete, scene_copy, scene_order, track_pan, track_mute, track_solo,
-        track_create, track_duplicate, track_delete, audio_import, clip_range };
+        track_create, track_duplicate, track_delete, audio_import, clip_range, audio_relink, assets_collect };
     struct HistoryEntry {
         Content content;
         Identities identities;
@@ -228,7 +235,9 @@ private:
     QString import_path_;
     std::optional<fl_live::WavImport> ready_import_;
     void pollImport();
-    QStringList resolveAssets(SessionContent& content) const;
+    bool import_relink_ = false;
+    struct AssetReport { QStringList missing, relocated; QList<std::pair<fl_live::ClipId, QString>> previous; };
+    AssetReport resolveAssets(SessionContent& content, const std::vector<RelativeAsset>& relative, const QString& projectDirectory) const;
     // Keyed by decoded clip and bin count; the weak pointer rejects a stale
     // entry if a freed clip's address is reused.
     mutable std::map<std::pair<const fl_live::AudioClip*, int>, std::pair<std::weak_ptr<const fl_live::AudioClip>, QVariantList>> waveform_cache_;

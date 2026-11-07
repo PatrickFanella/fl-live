@@ -629,7 +629,7 @@ private slots:
         // A missing asset opens as silence with a visible message.
         QVERIFY(QFile::rename(loop,directory.filePath("moved.wav")));
         Session missing;QVERIFY(missing.loadProject(path));
-        QVERIFY(missing.message().contains("missing audio"));QCOMPARE(missing.trackSources()[2].toString(),QString("Missing: loop.wav"));
+        QVERIFY(missing.message().contains("Missing audio"));QCOMPARE(missing.trackSources()[2].toString(),QString("Missing: loop.wav"));
         QVERIFY(!missing.dirty());
         // Duplicate creates new IDs, copies the pattern and scene slot choice.
         QVERIFY(session.setSceneIncluded(ids[3].toString(),true));
@@ -929,6 +929,95 @@ private slots:
             worst=std::max({worst,std::abs(frames[i][0]-pcm(left)),std::abs(frames[i][1]-pcm(right))});
         }
         QVERIFY2(worst<=1,qPrintable(QString("export differs from independent renders by %1 LSB").arg(worst)));
+    }
+    void assetRelocationRelinkCollect() {
+        QTemporaryDir root;
+        std::vector<qint16> ramp(4800);for(std::size_t i=0;i<ramp.size();++i)ramp[i]=static_cast<qint16>((i%480)*64);
+        const auto bytesOf=[](const QString& path){QFile f(path);return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();};
+        // A project folder with its audio inside moves as a whole.
+        const auto song=root.filePath("song");QVERIFY(QDir().mkpath(song+"/audio"));
+        writeWav(song+"/audio/loop.wav",1,48000,ramp);
+        {
+            Session session;QVERIFY(session.addTrack("audio"));const auto track=session.trackIds()[2].toString();
+            QVERIFY(session.importAudio(track,song+"/audio/loop.wav"));QTRY_VERIFY(!session.importing());
+            QVERIFY(session.setClipRange(track,480,960,false));QVERIFY(session.saveProject(song+"/song.json"));
+            const auto saved=bytesOf(song+"/song.json");
+            QVERIFY(saved.contains("asset-relative-v1"));QVERIFY(saved.contains("\"relative\": \"audio/loop.wav\""));
+        }
+        QVERIFY(QDir().rename(song,root.filePath("moved")));
+        const auto moved=root.filePath("moved");
+        {
+            Session session;QVERIFY(session.loadProject(moved+"/song.json"));
+            QVERIFY2(session.message().contains("Found moved audio"),qPrintable(session.message()));QVERIFY(session.dirty());
+            QCOMPARE(session.trackSources()[2].toString(),QString("loop.wav · 0.10 s · mono"));
+            QCOMPARE(session.clipRanges()[2],QVariant(QVariantList{480.0,960.0,false}));
+            QVERIFY(session.saveProject(moved+"/song.json"));QVERIFY(!session.dirty());
+            QVERIFY(bytesOf(moved+"/song.json").contains(QFileInfo(moved+"/audio/loop.wav").absoluteFilePath().toUtf8()));
+        }
+        // The saved absolute path wins whenever it exists: copying a project
+        // folder does not silently switch it to the copy's audio.
+        const auto copy=root.filePath("copy");QVERIFY(QDir().mkpath(copy+"/audio"));
+        QVERIFY(QFile::copy(moved+"/song.json",copy+"/song.json"));
+        writeWav(copy+"/audio/loop.wav",1,48000,std::vector<qint16>(4800,500));
+        {
+            Session session;QVERIFY(session.loadProject(copy+"/song.json"));QVERIFY(!session.dirty());
+            QVERIFY(!session.message().contains("moved"));
+            QCOMPARE(session.waveform(2,1)[0].toList()[1].toFloat(),479.0F*64/32768); // the original ramp, not the copy's constant
+        }
+        // Missing audio: relink keeps the range, refuses a file too short for it.
+        QVERIFY(QFile::remove(moved+"/audio/loop.wav"));
+        Session session;QVERIFY(session.loadProject(moved+"/song.json"));
+        QVERIFY(session.message().contains("Missing audio"));QCOMPARE(session.trackSources()[2].toString(),QString("Missing: loop.wav"));
+        const auto track=session.trackIds()[2].toString();
+        const auto shortFile=root.filePath("short.wav");writeWav(shortFile,1,48000,std::vector<qint16>(900,1));
+        QVERIFY(session.relinkAudio(track,shortFile));QTRY_VERIFY(!session.importing());
+        QVERIFY(session.message().startsWith("Relink refused"));QCOMPARE(session.trackSources()[2].toString(),QString("Missing: loop.wav"));
+        QVERIFY(!session.relinkAudio(session.trackIds()[1].toString(),shortFile)); // MIDI track
+        QVERIFY(!session.relinkAudio(session.trackIds()[0].toString(),shortFile)); // built-in pulse
+        const auto replacement=root.filePath("found/loop-found.wav");QVERIFY(QDir().mkpath(root.filePath("found")));writeWav(replacement,1,48000,ramp);
+        QVERIFY(session.relinkAudio(track,replacement));QTRY_VERIFY(!session.importing());
+        QCOMPARE(session.trackSources()[2].toString(),QString("loop-found.wav · 0.10 s · mono"));
+        QCOMPARE(session.clipRanges()[2],QVariant(QVariantList{480.0,960.0,false}));QCOMPARE(session.undoText(),QString("Undo track 3 audio relink"));
+        session.undo();QCOMPARE(session.trackSources()[2].toString(),QString("Missing: loop.wav"));session.redo();
+        // Collect copies outside audio beside the project, never overwriting.
+        const auto existing=moved+"/song-assets/loop-found.wav";QVERIFY(QDir().mkpath(moved+"/song-assets"));
+        {QFile f(existing);QVERIFY(f.open(QIODevice::WriteOnly));f.write("someone else's file");}
+        const auto sourceBytes=bytesOf(replacement);
+        QVERIFY(session.collectAssets());QVERIFY2(session.message().contains("1 copied"),qPrintable(session.message()));
+        QCOMPARE(bytesOf(existing),QByteArray("someone else's file"));QCOMPARE(bytesOf(replacement),sourceBytes);
+        QCOMPARE(bytesOf(moved+"/song-assets/loop-found-2.wav"),sourceBytes);
+        QCOMPARE(session.undoText(),QString("Undo audio collection"));
+        QVERIFY(session.saveProject(moved+"/song.json"));
+        QVERIFY(bytesOf(moved+"/song.json").contains("\"relative\": \"song-assets/loop-found-2.wav\""));
+        QVERIFY(session.collectAssets());QVERIFY(session.message().contains("already inside"));
+        session.undo();QVERIFY(session.dirty()); // back to the outside path
+        QVERIFY(session.collectAssets());QVERIFY2(session.message().contains("0 copied, 1 already there"),qPrintable(session.message()));
+        Session unsaved;QVERIFY(!unsaved.collectAssets());QVERIFY(unsaved.message().contains("Save the project first"));
+    }
+    void qmlRelinkMissingAudio() {
+        QTemporaryDir root;const auto audio=root.filePath("a.wav"),project=root.filePath("p.json");
+        std::vector<qint16> tone(4800);for(std::size_t i=0;i<tone.size();++i)tone[i]=static_cast<qint16>(i%300*50);
+        writeWav(audio,1,48000,tone);
+        {Session s;QVERIFY(s.importAudio(s.trackIds()[0].toString(),audio));QTRY_VERIFY(!s.importing());QVERIFY(s.saveProject(project));}
+        QVERIFY(QFile::remove(audio));
+        Session session;QVERIFY(session.loadProject(project));QCOMPARE(session.trackSources()[0].toString(),QString("Missing: a.wav"));
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* r,const QString& name)->QQuickItem* {
+            if(r->objectName()==name && r->isVisible())return r;
+            for(auto* c:r->childItems())if(auto* m=findItem(c,name))return m;
+            return nullptr;
+        };
+        QCOMPARE(findItem(window->contentItem(),"trackSource0")->property("text").toString(),QString("Missing: a.wav"));
+        const auto moved=root.filePath("moved.wav");writeWav(moved,1,48000,tone);
+        auto* path=findItem(window->contentItem(),"audioPath0");QVERIFY(path);path->forceActiveFocus();
+        for(const QChar c:moved)QTest::keyClick(window,c.toLatin1());
+        auto* relink=findItem(window->contentItem(),"relinkAudio0");QVERIFY(relink);
+        QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,relink->mapToScene(QPointF(relink->width()/2,relink->height()/2)).toPoint());
+        QTRY_COMPARE(session.trackSources()[0].toString(),QString("moved.wav · 0.10 s · mono"));
+        QVERIFY(findItem(window->contentItem(),"waveform0"));QVERIFY(session.dirty());
+        QVERIFY(!findItem(window->contentItem(),"relinkAudio1")); // MIDI track: no relink
     }
     void qmlMixerInput() {
         Session session;

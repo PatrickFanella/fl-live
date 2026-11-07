@@ -98,6 +98,7 @@ ApplicationWindow {
             Layout.fillWidth: true
             TextField { id: projectFile; objectName: "projectFile"; Layout.fillWidth: true; text: session.projectPath; placeholderText: "Project file path"; Accessible.name: "Project file path" }
             Button { objectName: "saveProjectButton"; text: "Save"; onClicked: session.saveProject(projectFile.text) }
+            Button { objectName: "collectAssets"; text: "Collect audio"; enabled: session.canEdit; onClicked: session.collectAssets(); ToolTip.visible: hovered; ToolTip.text: "Copy imported WAVs from outside the project folder into a folder beside the saved project. Nothing is overwritten." }
             Button { objectName: "openProjectButton"; text: "Open"; enabled: session.canEdit; onClicked: session.loadProject(projectFile.text) }
             Label { text: session.dirty ? "Unsaved changes" : "No pending edits"; color: "#e4bc75" }
         }
@@ -215,6 +216,12 @@ ApplicationWindow {
                                 RowLayout {
                                     visible: !trackColumn.midi; Layout.fillWidth: true
                                     TextField { id: audioPath; objectName: "audioPath" + index; Layout.fillWidth: true; placeholderText: "WAV file path"; Accessible.name: "WAV file to import into track " + (index + 1) }
+                                    Button {
+                                        objectName: "relinkAudio" + index; text: "Relink"
+                                        visible: (session.clipFrames[index] || 0) > 0 || (session.trackSources[index] || "").startsWith("Missing")
+                                        enabled: !session.importing; onClicked: session.relinkAudio(trackColumn.trackId, audioPath.text)
+                                        ToolTip.visible: hovered; ToolTip.text: "Point this clip at another file and keep its range. Refused if the file is shorter than the range."
+                                    }
                                     Button { objectName: "importAudio" + index; text: "Import"; enabled: !session.importing; onClicked: session.importAudio(trackColumn.trackId, audioPath.text); ToolTip.visible: hovered; ToolTip.text: "Mono or stereo WAV at 48 kHz. Decoding runs in the background; the clip changes once transport is stopped." }
                                 }
                                 Canvas {

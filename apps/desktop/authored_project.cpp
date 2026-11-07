@@ -223,11 +223,19 @@ std::vector<fl_live::DocumentTrackGain> contentGains(const SessionContent& conte
     for(const auto& track:identities.tracks)result.push_back({track.id,static_cast<float>(trackContent(content,track.id).level)/100});
     return result;
 }
-QByteArray encodeAuthoredProject(const AuthoredProject& project) {
+QString assetRelativePath(const QString& asset,const QString& baseDirectory) {
+    if(baseDirectory.isEmpty() || asset.isEmpty())return {};
+    const auto relative=QDir(baseDirectory).relativeFilePath(asset);
+    if(relative.isEmpty() || QDir::isAbsolutePath(relative) || relative==".." || relative.startsWith("../"))return {};
+    return relative;
+}
+QByteArray encodeAuthoredProject(const AuthoredProject& project,const QString& baseDirectory) {
     validateContent(project.content,project.identities);
     QJsonArray tracks,clips;
     // Ranges are written only when used, behind their own required feature.
     const bool ranges=std::any_of(project.content.clips.begin(),project.content.clips.end(),[](const auto& c){return c.hasRange();});
+    const bool relative=std::any_of(project.content.clips.begin(),project.content.clips.end(),[&](const auto& c){
+        return c.audio==AudioSource::wav && !assetRelativePath(c.asset,baseDirectory).isEmpty();});
     for(const auto& track:project.identities.tracks)
         tracks.append(QJsonObject{{"id",idText(track.id.value)},{"level",trackContent(project.content,track.id).level}});
     for(const auto& clip:project.identities.clips) {
@@ -238,13 +246,14 @@ QByteArray encodeAuthoredProject(const AuthoredProject& project) {
             QJsonObject object{{"id",idText(clip.id.value)},{"audio","wav"},{"path",value.asset}};
             if(ranges)object.insert("range",QJsonObject{{"start",static_cast<double>(value.range_start)},
                 {"length",static_cast<double>(value.range_length)},{"loop",value.loop}});
+            if(const auto inside=assetRelativePath(value.asset,baseDirectory);!inside.isEmpty())object.insert("relative",inside);
             clips.append(object);
         }
         else clips.append(QJsonObject{{"id",idText(clip.id.value)},{"audio",value.audio==AudioSource::pulse ? "pulse" : "empty"}});
     }
     const auto session=QJsonDocument::fromJson(fl_live::encodeDocumentMetadata(project.identities)).object();
     const auto bytes=QJsonDocument(QJsonObject{{"format","fl-live-project"},{"version",4},
-        {"required_features",ranges ? QJsonArray{"general-session-v1","clip-ranges-v1"} : QJsonArray{"general-session-v1"}},
+        {"required_features",[&]{QJsonArray f{"general-session-v1"};if(ranges)f.append("clip-ranges-v1");if(relative)f.append("asset-relative-v1");return f;}()},
         {"tempo",project.content.tempo},
         {"session",session},{"tracks",tracks},{"clips",clips}}).toJson();
     if(bytes.size()>limit)throw std::invalid_argument("Authored project exceeds size limit");
@@ -258,8 +267,12 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
     if(root["format"]!="fl-live-project")throw std::invalid_argument("Unsupported project format");
     if(!root["version"].isDouble() || root["version"].toDouble()!=4)return decodeTemplate(bytes,root);
     const auto v4=exact(root,{"format","version","required_features","tempo","session","tracks","clips"});
-    const bool ranges=v4["required_features"].toArray()==QJsonArray{"general-session-v1","clip-ranges-v1"};
-    if(!ranges && v4["required_features"].toArray()!=QJsonArray{"general-session-v1"})throw std::invalid_argument("Unsupported required project feature");
+    const auto features=v4["required_features"].toArray();
+    const bool ranges=features.contains("clip-ranges-v1"),relativePaths=features.contains("asset-relative-v1");
+    QJsonArray canonical{"general-session-v1"};
+    if(ranges)canonical.append("clip-ranges-v1");
+    if(relativePaths)canonical.append("asset-relative-v1");
+    if(features!=canonical)throw std::invalid_argument("Unsupported required project feature");
     if(!v4["session"].isObject())throw std::invalid_argument("Project requires a session object");
     AuthoredProject project;
     project.identities=fl_live::decodeDocumentMetadata(QJsonDocument(v4["session"].toObject()).toJson(QJsonDocument::Compact));
@@ -283,7 +296,13 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
             if(trackOf(project.identities,clip.clip).kind!=fl_live::TrackKind::midi)throw std::invalid_argument("Pattern on an audio clip");
         } else {
             const auto source=object["audio"].toString();
-            const auto fields=source!="wav" ? exact(value,{"id","audio"}) : ranges ? exact(value,{"id","audio","path","range"}) : exact(value,{"id","audio","path"});
+            const bool hasRelative=source=="wav" && relativePaths && object.contains("relative");
+            QJsonObject fields;
+            if(source!="wav")fields=exact(value,{"id","audio"});
+            else if(ranges && hasRelative)fields=exact(value,{"id","audio","path","range","relative"});
+            else if(ranges)fields=exact(value,{"id","audio","path","range"});
+            else if(hasRelative)fields=exact(value,{"id","audio","path","relative"});
+            else fields=exact(value,{"id","audio","path"});
             clip.clip=fl_live::ClipId{idValue(fields["id"])};
             if(trackOf(project.identities,clip.clip).kind!=fl_live::TrackKind::audio)throw std::invalid_argument("Audio source on a MIDI clip");
             if(source=="pulse")clip.audio=AudioSource::pulse;
@@ -291,6 +310,13 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
             else if(source=="wav") {
                 if(!fields["path"].isString())throw std::invalid_argument("Imported audio requires a path string");
                 clip.audio=AudioSource::wav;clip.asset=fields["path"].toString();
+                if(hasRelative) {
+                    const auto inside=fields["relative"].toString();
+                    if(!fields["relative"].isString() || inside.isEmpty() || inside.size()>asset_path_limit || QDir::isAbsolutePath(inside) ||
+                       QDir::cleanPath(inside)!=inside || inside==".." || inside.startsWith("../"))
+                        throw std::invalid_argument("Relative asset path must stay inside the project folder");
+                    project.relative.push_back({fl_live::ClipId{idValue(fields["id"])},inside});
+                }
                 if(ranges) {
                     const auto range=exact(fields["range"],{"start","length","loop"});
                     const int limit=static_cast<int>(fl_live::PreparationBudget::audio_frame_limit);
@@ -314,7 +340,7 @@ AuthoredProject readAuthoredProject(const QString& path) {
     return decodeAuthoredProject(bytes);
 }
 void writeAuthoredProject(const QString& path,const AuthoredProject& project) {
-    const auto bytes=encodeAuthoredProject(project);QSaveFile file(path);file.setDirectWriteFallback(false);
+    const auto bytes=encodeAuthoredProject(project,QFileInfo(path).absolutePath());QSaveFile file(path);file.setDirectWriteFallback(false);
     if(!file.open(QIODevice::WriteOnly) || !fl_live::commitDurably(file,bytes))
         throw std::runtime_error("Cannot save authored project atomically; previous file was preserved");
 }

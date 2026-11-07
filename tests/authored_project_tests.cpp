@@ -220,7 +220,29 @@ void clipRanges() {
     range([](auto& g){g["start"]=-1;});range([](auto& g){g["length"]=1.5;});range([](auto& g){g["loop"]=0;});range([](auto& g){g["end"]=3;});
     range([](auto& g){g["start"]=16777217.0;});
 }
+void relativeAssets() {
+    auto project=general();
+    auto& wav=*std::find_if(project.content.clips.begin(),project.content.clips.end(),[](const auto& c){return c.audio==AudioSource::wav;});
+    const auto wavId=wav.clip;
+    wav.asset="/projects/song/audio/loop.wav";
+    CHECK(assetRelativePath(wav.asset,"/projects/song")=="audio/loop.wav");
+    CHECK(assetRelativePath(wav.asset,"/projects/other").isEmpty() && assetRelativePath(wav.asset,"").isEmpty());
+    const auto outside=QJsonDocument::fromJson(encodeAuthoredProject(project,"/elsewhere")).object();
+    CHECK(!outside["required_features"].toArray().contains("asset-relative-v1"));
+    const auto bytes=encodeAuthoredProject(project,"/projects/song");
+    const auto root=QJsonDocument::fromJson(bytes).object();
+    CHECK((root["required_features"].toArray()==QJsonArray{"general-session-v1","asset-relative-v1"}));
+    const auto decoded=decodeAuthoredProject(bytes);
+    CHECK(decoded.content==project.content && decoded.relative==(std::vector<RelativeAsset>{{wavId,"audio/loop.wav"}}));
+    const auto bad=[&](auto edit){auto r=root;edit(r);rejects([&]{decodeAuthoredProject(QJsonDocument(r).toJson());});};
+    const auto relative=[&](QJsonValue v){bad([&](auto& r){auto a=r["clips"].toArray();auto c=a[2].toObject();c["relative"]=v;a[2]=c;r["clips"]=a;});};
+    relative("../loop.wav");relative("/abs/loop.wav");relative("a/../../b.wav");relative("");relative(3);relative("./audio/loop.wav");
+    bad([](auto& r){r["required_features"]=QJsonArray{"general-session-v1"};});
+    bad([](auto& r){r["required_features"]=QJsonArray{"asset-relative-v1","general-session-v1"};});
+    bad([](auto& r){auto a=r["clips"].toArray();auto c=a[0].toObject();c["relative"]="x.wav";a[0]=c;r["clips"]=a;}); // pulse clip
+}
 int main(){try{
+    relativeAssets();
     legacyMigration();generalRoundTrip();generalRejection();clipRanges();
     std::cout<<"PASS: v1-v3 migration with sample equivalence, v4 general content round trip, sources, clip ranges and rejection\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

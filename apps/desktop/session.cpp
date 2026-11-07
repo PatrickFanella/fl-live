@@ -389,6 +389,8 @@ QString Session::editName(const HistoryEntry& entry) {
     case EditKind::track_delete: return "track deletion";
     case EditKind::audio_import: return QString("track %1 audio import").arg(entry.index+1);
     case EditKind::clip_range: return QString("track %1 clip range").arg(entry.index+1);
+    case EditKind::audio_relink: return QString("track %1 audio relink").arg(entry.index+1);
+    case EditKind::assets_collect: return "audio collection";
     default: return {};
     }
 }
@@ -519,7 +521,8 @@ bool Session::loadProject(const QString& path) {
         auto next = readAuthoredProject(target);
         // Imported WAVs decode here, on the control thread, before the plan is
         // prepared. A missing or refused asset opens as a silent clip.
-        const auto missing = resolveAssets(next.content);
+        const auto report = resolveAssets(next.content, next.relative, QFileInfo(target).absolutePath());
+        const auto& missing = report.missing;
         auto identities = std::make_shared<const fl_live::DocumentSnapshot>(next.identities);
         pattern_clip_ = {};
         if (!replace(std::make_shared<const SessionContent>(std::move(next.content)), identities)) return false;
@@ -527,13 +530,22 @@ bool Session::loadProject(const QString& path) {
         restoreSceneSelection(next.identities.scenes[0].id);
         project_path_ = owned_path_ = target;
         saved_content_ = content_;
+        if (!report.relocated.isEmpty()) {
+            // The file on disk still names the old locations: unsaved until Save.
+            auto saved = *content_;
+            for (const auto& [clip, old] : report.previous)
+                std::find_if(saved.clips.begin(), saved.clips.end(), [&](const auto& c) { return c.clip == clip; })->asset = old;
+            saved_content_ = std::make_shared<const SessionContent>(std::move(saved));
+        }
         saved_identities_ = identities_;
         selected_step_ = 0;
         history_[0] = {content_, identities_, EditKind::none, -1, selected_scene_};
         history_cursor_ = 0;
         history_size_ = 1;
-        message_ = missing.isEmpty() ? QStringLiteral("Project opened. Launch clips, then press Play.")
-            : "Project opened with missing audio, which plays as silence: " + missing.join("; ");
+        QStringList notes;
+        if (!report.relocated.isEmpty()) notes.append("Found moved audio inside the project folder: " + report.relocated.join("; ") + ". Save to keep the new locations.");
+        if (!missing.isEmpty()) notes.append("Missing audio plays as silence; relink or import it: " + missing.join("; "));
+        message_ = notes.isEmpty() ? QStringLiteral("Project opened. Launch clips, then press Play.") : "Project opened. " + notes.join(" ");
         emit projectPathChanged();
         emit changed();
         return true;
@@ -785,6 +797,16 @@ bool Session::deleteTrack(const QString& id) {
         message_="Deleted track; Undo restores it with its IDs";emit changed();return true;
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }
+bool Session::relinkAudio(const QString& trackId,const QString& path) {
+    try {
+        const fl_live::TrackId id{parseIdentity(trackId)};
+        const auto clip=firstClip(*identities_,id);
+        if(!clip.value || clipContent(*content_,clip).audio!=AudioSource::wav)throw std::invalid_argument("Relink applies to an imported audio clip; use Import for other tracks");
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+    if(!importAudio(trackId,path))return false;
+    import_relink_=true;
+    return true;
+}
 bool Session::importAudio(const QString& trackId,const QString& path) {
     try {
         if(importing())throw std::invalid_argument("An import is already running. Cancel it or wait for it to finish.");
@@ -797,7 +819,7 @@ bool Session::importAudio(const QString& trackId,const QString& path) {
             importer_=std::make_unique<fl_live::WavImportWorker>(fl_live::WavImportPolicy{48000, fl_live::PreparationBudget::audio_frame_limit/2});
         }
         import_path_=QDir::cleanPath(QFileInfo(path).absoluteFilePath());
-        import_track_=id;
+        import_track_=id;import_relink_=false;
         import_ticket_=importer_->submit(import_path_.toStdString());
         message_="Importing " + QFileInfo(import_path_).fileName() + " in the background";
         emit changed();return true;
@@ -826,31 +848,50 @@ void Session::pollImport() {
     if(track==identities_->tracks.end()) { message_="Import finished, but its track was deleted; nothing changed"; emit changed(); return; }
     auto next=*content_;
     auto& clip=*std::find_if(next.clips.begin(),next.clips.end(),[&](const auto& c){return c.clip==firstClip(*identities_,import_track_);});
+    const bool relink=import_relink_;import_relink_=false;
+    const auto frames=import.frames;
+    if(relink && (clip.audio!=AudioSource::wav || clip.range_start>=frames || clip.range_length>frames-clip.range_start)) {
+        message_="Relink refused: " + QFileInfo(import_path_).fileName() + " is shorter than the clip's range. Import it instead to replace the clip.";
+        emit changed();return;
+    }
     clip.audio=AudioSource::wav;clip.asset=import_path_;
-    clip.range_start=0;clip.range_length=0;clip.loop=true; // a new source plays whole
+    if(!relink) { clip.range_start=0;clip.range_length=0;clip.loop=true; } // a new source plays whole
     clip.media=std::make_shared<const fl_live::AudioClip>(std::move(import.clip));
     const auto before=content_;
-    edit(next,EditKind::audio_import,static_cast<int>(track-identities_->tracks.begin()));
-    if(content_!=before)message_="Imported " + QFileInfo(import_path_).fileName() + ". Launch the clip, then press Play.";
+    edit(next,relink ? EditKind::audio_relink : EditKind::audio_import,static_cast<int>(track-identities_->tracks.begin()));
+    if(content_!=before)message_=(relink ? "Relinked " : "Imported ") + QFileInfo(import_path_).fileName() + ". Launch the clip, then press Play.";
     emit changed();
 }
-QStringList Session::resolveAssets(SessionContent& content) const {
-    QStringList missing;
+Session::AssetReport Session::resolveAssets(SessionContent& content,const std::vector<RelativeAsset>& relative,const QString& projectDirectory) const {
+    AssetReport report;
+    const fl_live::WavImportPolicy policy{48000,fl_live::PreparationBudget::audio_frame_limit/2};
     for(auto& clip:content.clips) {
         if(clip.audio!=AudioSource::wav)continue;
-        auto result=fl_live::importWav(clip.asset.toStdString(),fl_live::WavImportPolicy{48000,fl_live::PreparationBudget::audio_frame_limit/2});
-        if(result) {
-            clip.media=std::make_shared<const fl_live::AudioClip>(std::move(result.clip));
-            const auto frames=mediaFrames(clip);
-            if(clip.range_start>=frames || clip.range_length>frames-clip.range_start) {
-                // The file changed since saving; play it whole rather than refuse.
-                clip.range_start=0;clip.range_length=0;
-                missing.append(QFileInfo(clip.asset).fileName() + " (shorter than its saved range; range reset to the whole file)");
-            }
+        // The saved absolute path wins whenever it exists. Only when it is
+        // gone is the recorded project-relative location tried; nothing is
+        // searched for by name, so a different file is never substituted.
+        auto path=clip.asset;
+        const auto inside=std::find_if(relative.begin(),relative.end(),[&](const auto& r){return r.clip==clip.clip;});
+        if(!QFileInfo::exists(path) && inside!=relative.end()) {
+            const auto candidate=QDir::cleanPath(QDir(projectDirectory).filePath(inside->path));
+            if(QFileInfo(candidate).isFile())path=candidate;
         }
-        else missing.append(QFileInfo(clip.asset).fileName() + " (" + QString::fromStdString(result.message) + ")");
+        auto result=fl_live::importWav(path.toStdString(),policy);
+        if(!result) { report.missing.append(QFileInfo(clip.asset).fileName() + " (" + QString::fromStdString(result.message) + ")"); continue; }
+        if(path!=clip.asset) {
+            report.relocated.append(QFileInfo(path).fileName() + " at " + path + " (was " + clip.asset + ")");
+            report.previous.append({clip.clip,clip.asset});
+            clip.asset=path;
+        }
+        clip.media=std::make_shared<const fl_live::AudioClip>(std::move(result.clip));
+        const auto frames=mediaFrames(clip);
+        if(clip.range_start>=frames || clip.range_length>frames-clip.range_start) {
+            // The file changed since saving; play it whole rather than refuse.
+            clip.range_start=0;clip.range_length=0;
+            report.missing.append(QFileInfo(clip.asset).fileName() + " (shorter than its saved range; range reset to the whole file)");
+        }
     }
-    return missing;
+    return report;
 }
 QVariantList Session::clipFrames() const {
     QVariantList result;
@@ -912,4 +953,43 @@ QVariantList Session::waveform(int track,int bins) const {
     }
     waveform_cache_[key]={clip.media,result};
     return result;
+}
+bool Session::collectAssets() {
+    if(!editable())return false;
+    try {
+        if(owned_path_.isEmpty())throw std::invalid_argument("Save the project first; collected audio goes into a folder beside it");
+        const QFileInfo project(owned_path_);
+        const auto folder=project.absoluteDir().filePath(project.completeBaseName()+"-assets");
+        auto next=*content_;
+        int copied=0,reused=0;
+        for(auto& clip:next.clips) {
+            if(clip.audio!=AudioSource::wav || !clip.media || !assetRelativePath(clip.asset,project.absolutePath()).isEmpty())continue;
+            if(!QFileInfo(clip.asset).isFile())continue;
+            if(!QDir().mkpath(folder))throw std::runtime_error("Cannot create " + folder.toStdString());
+            QFile source(clip.asset);
+            if(!source.open(QIODevice::ReadOnly))throw std::runtime_error("Cannot read " + clip.asset.toStdString());
+            const auto bytes=source.readAll();source.close();
+            const QFileInfo name(clip.asset);
+            QString target;
+            for(int n=1;n<10000;++n) {
+                const auto candidate=QDir(folder).filePath(n==1 ? name.fileName() : QString("%1-%2.%3").arg(name.completeBaseName()).arg(n).arg(name.suffix()));
+                if(!QFileInfo::exists(candidate)) {
+                    // Exclusive create: never overwrite a file that appears meanwhile.
+                    QFile out(candidate);
+                    if(!out.open(QIODevice::WriteOnly|QIODevice::NewOnly))continue;
+                    if(out.write(bytes)!=bytes.size() || !out.flush()) { out.remove(); throw std::runtime_error("Cannot copy " + name.fileName().toStdString()); }
+                    target=candidate;++copied;break;
+                }
+                QFile existing(candidate);
+                if(existing.open(QIODevice::ReadOnly) && existing.readAll()==bytes) { target=candidate;++reused;break; } // same bytes already collected
+            }
+            if(target.isEmpty())throw std::runtime_error("No free name for " + name.fileName().toStdString());
+            clip.asset=QDir::cleanPath(target);
+        }
+        if(next==*content_) { message_="All imported audio is already inside the project folder"; emit changed(); return true; }
+        edit(next,EditKind::assets_collect,-1);
+        message_=QString("Collected audio into %1: %2 copied, %3 already there. Source files were not changed.")
+            .arg(QFileInfo(folder).fileName()).arg(copied).arg(reused);
+        emit changed();return true;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }

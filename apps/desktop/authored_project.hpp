@@ -39,9 +39,18 @@ struct SessionContent {
     std::vector<ClipContent> clips;
     bool operator==(const SessionContent&) const = default;
 };
+// An imported file's location relative to the project file's folder, when
+// it lies inside that folder. Used only to find files after the project
+// folder moved; never to choose between different files.
+struct RelativeAsset {
+    fl_live::ClipId clip;
+    QString path;
+    bool operator==(const RelativeAsset&) const = default;
+};
 struct AuthoredProject {
     SessionContent content;
     fl_live::DocumentSnapshot identities;
+    std::vector<RelativeAsset> relative; // filled by decoding; not document state
 };
 inline constexpr std::size_t desktop_clips_per_track = 1;
 
@@ -66,7 +75,12 @@ std::vector<fl_live::DocumentTrackGain> contentGains(const SessionContent&, cons
 
 // Version 4 is always written; versions 1-3 are read and migrated. Decoding
 // never opens assets: media stays null until the caller resolves paths.
-QByteArray encodeAuthoredProject(const AuthoredProject&);
+// With a base directory, imported files inside it also get a relative path
+// (required feature asset-relative-v1). writeAuthoredProject passes the
+// destination's folder.
+QByteArray encodeAuthoredProject(const AuthoredProject&, const QString& baseDirectory = {});
+// Relative path of an asset inside baseDirectory, or empty when outside it.
+QString assetRelativePath(const QString& asset, const QString& baseDirectory);
 AuthoredProject decodeAuthoredProject(const QByteArray&);
 AuthoredProject readAuthoredProject(const QString& path);
 void writeAuthoredProject(const QString& path, const AuthoredProject&);
