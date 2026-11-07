@@ -1,0 +1,32 @@
+{
+  "verified_at": "2026-11-07T11:23:15.905673+00:00",
+  "base": "feat/device-graph (PR #143) head",
+  "issues": [
+    75,
+    76
+  ],
+  "scope": "Device editing in the desktop; gain and transpose output oracles, persistence and live edits",
+  "environment": "Kvant, pinned CI image, docker --network none, Qt offscreen platform",
+  "gates": {
+    "desktop": {
+      "passed": 24,
+      "total": 24
+    }
+  },
+  "verified_behaviors": [
+    "Chain order lists the MIDI stage first; moves stay within a stage; refusals for a move across the instrument, transpose on an audio track, out-of-range values, unknown IDs and kinds, a ninth device and more than +24 dB",
+    "Removing all devices restores the default chain; Undo brings back the same IDs; a later device gets a new ID",
+    "Gain: -6 dB and +3 dB devices scale the pulse export exactly as (0.7 * 10^(-6/20) * 10^(3/20)) * source; with a level ramp lane, (ramp * device) * source; Save/reopen keeps the binding and the samples",
+    "Transpose: +12 doubles zero crossings of a square A3 (165 -> 330 over 18000 frames) with the same onset, end and amplitude; +48 then +48 drops the note (silent export); Undo restores; Save/reopen exports identical audio",
+    "A transpose change while the note sounds is applied live; the voice finishes, the next loop sounds, and Stop leaves no voice",
+    "QML: + Gain, + Transpose (MIDI only), value boxes, move and remove buttons, Undo, and edits while playing"
+  ],
+  "source_sha256": {
+    "apps/desktop/session.hpp": "2a592838bfc2da6d5e19a4d50b8769ae232a2a71656b8191011245144b4ecaf2",
+    "apps/desktop/session.cpp": "e73a0eaacd0f564245dde6afceb5de46517fb6e23a870d3c9b3d4e904d7f8661",
+    "apps/desktop/Main.qml": "da8627f272438063b2ed426ea3cd5b070b762163e5b856209ea363ab521fadea",
+    "tests/desktop_tests.cpp": "b12b902058a345ad96de3729b97b61f4f4e0057a13b5f0f71719df4ed37944b9",
+    "apps/desktop/authored_project.cpp": "8f4181137b3b4462f3fdb96ea3b8bf60859a3f835a2d155a1ef8067bd2556fbe"
+  },
+  "limits": "Static device parameters per prepared plan; no device automation yet (#77); offscreen platform."
+}

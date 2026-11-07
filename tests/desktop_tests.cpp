@@ -1603,6 +1603,102 @@ private slots:
             QCOMPARE(session.projectPath(),current);QCOMPARE(session.trackIds(),tracks);QCOMPARE(session.undoText(),history);
         }
     }
+    // Device editing through the Session: chain order, stages, refusals and Undo.
+    void deviceEditing() {
+        Session session;const auto pulse=session.trackIds()[0].toString(),steps=session.trackIds()[1].toString();
+        QVERIFY(session.addDevice(steps,"gain"));QVERIFY(session.addDevice(steps,"transpose"));QVERIFY(session.addDevice(steps,"transpose"));
+        QCOMPARE(session.undoText(),QString("Undo track 2 new device"));
+        const auto kinds=[&](int t){QStringList r;for(const auto& d:session.trackDevices(t))r.append(d.toMap()["kind"].toString()+d.toMap()["id"].toString());return r;};
+        QCOMPARE(kinds(1),(QStringList{"transpose2","transpose3","gain1"})); // MIDI stage first, in insertion order
+        QVERIFY(session.moveDevice("3",-1));QCOMPARE(kinds(1),(QStringList{"transpose3","transpose2","gain1"}));
+        QVERIFY(!session.moveDevice("2",1));QVERIFY(session.message().contains("within its stage")); // would cross the instrument
+        QVERIFY(!session.moveDevice("3",-1));QVERIFY(!session.moveDevice("3",2));
+        QVERIFY(!session.addDevice(pulse,"transpose"));QVERIFY(session.message().contains("MIDI port"));QVERIFY(session.trackDevices(0).isEmpty());
+        QVERIFY(!session.setDeviceValue("2",0.5));QVERIFY(!session.setDeviceValue("1",13));QVERIFY(!session.setDeviceValue("99",0));QVERIFY(!session.addDevice(pulse,"reverb"));
+        for(int n=0;n<5;++n)QVERIFY(session.addDevice(pulse,"gain"));
+        QVERIFY(session.setDeviceValue("4",12));QVERIFY(session.setDeviceValue("5",12));
+        QVERIFY(!session.setDeviceValue("6",1));QVERIFY(session.message().contains("+24 dB"));
+        for(int n=0;n<3;++n)QVERIFY(session.addDevice(pulse,"gain"));
+        QVERIFY(!session.addDevice(pulse,"gain"));QVERIFY(session.message().contains("8 devices"));
+        QVERIFY(session.removeDevice("6"));QCOMPARE(session.trackDevices(0).size(),7);
+        // Removing every device returns the track to the default chain; Undo brings the same IDs back.
+        const auto before=session.trackDevices(1);
+        for(const auto& d:before)QVERIFY(session.removeDevice(d.toMap()["id"].toString()));
+        QVERIFY(session.trackDevices(1).isEmpty());
+        for(int n=0;n<3;++n)session.undo();
+        QCOMPARE(session.trackDevices(1),before);
+        QVERIFY(session.addDevice(steps,"gain"));QCOMPARE(session.trackDevices(1).last().toMap()["id"].toString(),QString("12")); // IDs are not reissued
+    }
+    // #75: a gain device scales the track by 10^(dB/20), together with the
+    // level and a level lane, sample for sample, and survives Save/reopen.
+    void gainDeviceOutput() {
+        QTemporaryDir directory;
+        const auto exported=[&](Session& s,const QString& name){const auto path=directory.filePath(name);
+            if(!s.exportAudio(path,1,1,0,2,"float32"))throw std::runtime_error("export refused");
+            for(int i=0;i<1000 && s.exporting();++i)QTest::qWait(10);return readWav(path).samples;};
+        Session session;const auto pulse=session.trackIds()[0].toString();QVERIFY(session.setMute(session.trackIds()[1].toString(),true));
+        QVERIFY(session.addDevice(pulse,"gain"));QVERIFY(session.setDeviceValue("1",-6));
+        QVERIFY(session.addDevice(pulse,"gain"));QVERIFY(session.setDeviceValue("2",3));
+        const float device=static_cast<float>(std::pow(10.0,-6.0/20))*static_cast<float>(std::pow(10.0,3.0/20));
+        const auto source=pulseClip(120);
+        const auto out=exported(session,"gain.wav");
+        for(std::size_t f=0;f<96000;f+=97)QCOMPARE(out[2*f],(0.7F*device)*source.samples[f%source.samples.size()]);
+        // A level lane replaces the level, not the device gain.
+        QVERIFY(session.setAutomationPoint(pulse,"level",0,0));QVERIFY(session.setAutomationPoint(pulse,"level",400,100));
+        const auto ramp=exported(session,"ramp.wav");
+        for(std::size_t f=1;f<96000;f+=4999)QCOMPARE(ramp[2*f],(static_cast<float>(static_cast<double>(f)/96000.0)*device)*source.samples[f%source.samples.size()]);
+        // The binding and the output survive Save/reopen.
+        const auto path=directory.filePath("gain.json");QVERIFY(session.saveProject(path));
+        Session reopened;QVERIFY(reopened.loadProject(path));QCOMPARE(reopened.trackDevices(0),session.trackDevices(0));
+        QVERIFY(exported(reopened,"reopened.wav")==ramp);
+    }
+    // #76: a transpose device moves every note by whole semitones with the
+    // same note-on and note-off frames; a note leaving 0-127 is dropped; a
+    // live change leaves no voice sounding.
+    void transposeDeviceOutput() {
+        QTemporaryDir directory;
+        const auto exported=[&](Session& s,const QString& name){const auto path=directory.filePath(name);
+            if(!s.exportAudio(path,1,1,0,2,"float32"))throw std::runtime_error("export refused");
+            for(int i=0;i<1000 && s.exporting();++i)QTest::qWait(10);return readWav(path).samples;};
+        const auto changes=[](const std::vector<float>& s,std::size_t from,std::size_t to){int n=0;for(std::size_t f=from+1;f<to;++f)if((s[2*f]>0)!=(s[2*(f-1)]>0))++n;return n;};
+        Session session;const auto steps=session.trackIds()[1].toString();QVERIFY(session.setMute(session.trackIds()[0].toString(),true));
+        QVERIFY(session.setSynth("waveform",2));QVERIFY(session.usePianoRoll(true));QVERIFY(session.deleteNotes({"2","3","4"}));
+        QVERIFY(session.moveNotes({"1"},0,-3)); // A3, 220 Hz, frames 0..17999
+        const auto plain=exported(session,"plain.wav");
+        QVERIFY(session.addDevice(steps,"transpose"));QVERIFY(session.setDeviceValue("1",12));
+        const auto octave=exported(session,"octave.wav");
+        QVERIFY(std::abs(changes(plain,0,18000)-165)<=2);QVERIFY(std::abs(changes(octave,0,18000)-330)<=2); // 220 Hz -> 440 Hz
+        for(const auto* s:{&plain,&octave}){QVERIFY((*s)[0]!=0);QVERIFY((*s)[2*17999]!=0);QCOMPARE((*s)[2*18000],0.0F);} // same on and off
+        QCOMPARE(std::abs(octave[0]),std::abs(plain[0])); // same velocity
+        // Out of range: A3 + 48 + 48 = 153 is dropped at the second device, leaving silence, not a clamped note.
+        QVERIFY(session.setDeviceValue("1",48));QVERIFY(session.addDevice(steps,"transpose"));QVERIFY(session.setDeviceValue("2",48));
+        const auto dropped=exported(session,"dropped.wav");QVERIFY(std::all_of(dropped.begin(),dropped.end(),[](float v){return v==0;}));
+        session.undo();QVERIFY(exported(session,"undone.wav")!=dropped);
+        // Save/reopen keeps the binding and the sound.
+        QVERIFY(session.setDeviceValue("1",12));QVERIFY(session.removeDevice("2"));
+        const auto path=directory.filePath("transpose.json");QVERIFY(session.saveProject(path));
+        Session reopened;QVERIFY(reopened.loadProject(path));QCOMPARE(reopened.trackDevices(1),session.trackDevices(1));
+        QVERIFY(exported(reopened,"reopened.wav")==octave);
+        // A live transpose change while the note sounds: the voice finishes, nothing sticks.
+        QVERIFY(reopened.launchScene(reopened.sceneId(),"immediate"));reopened.play();QTRY_VERIFY_WITH_TIMEOUT(reopened.activeVoices()>0,5000);
+        QVERIFY(reopened.setDeviceValue("1",-12));QVERIFY(reopened.message().contains("while playing"));
+        QTRY_VERIFY_WITH_TIMEOUT(reopened.activeVoices()==0,5000);QTRY_VERIFY_WITH_TIMEOUT(reopened.activeVoices()>0,5000); // next loop at the new pitch
+        reopened.stop();QTRY_VERIFY(!reopened.running());QCOMPARE(reopened.activeVoices(),0);
+    }
+    void qmlDeviceEditing() {
+        Session session;QmlUi ui(session);QVERIFY(ui.window && QTest::qWaitForWindowExposed(ui.window));
+        QCOMPARE(ui.item("deviceCount0")->property("text").toString(),QString("No devices"));
+        QVERIFY(!ui.find(ui.window->contentItem(),"addTranspose0"));QVERIFY(ui.item("addTranspose1"));
+        ui.click("addGain0");QTRY_COMPARE(session.trackDevices(0).size(),1);QCOMPARE(ui.item("deviceCount0")->property("text").toString(),QString("1 device"));
+        ui.type("deviceValue0_0","-6",true);QTRY_COMPARE(session.trackDevices(0)[0].toMap()["value"].toDouble(),-6.0);
+        ui.click("addGain0");ui.click("addTranspose1");QTRY_COMPARE(session.trackDevices(1).size(),1);
+        ui.click("deviceUp0_1");QTRY_COMPARE(session.trackDevices(0)[0].toMap()["id"].toString(),QString("2"));
+        ui.click("removeDevice0_0");QTRY_COMPARE(session.trackDevices(0).size(),1);
+        ui.click("undoButton");QTRY_COMPARE(session.trackDevices(0).size(),2);
+        ui.click("playButton");QTRY_VERIFY(session.running());QVERIFY(ui.item("addGain0")->property("enabled").toBool()); // device edits while playing
+        ui.type("deviceValue1_0","7",true);QTRY_COMPARE(session.trackDevices(1)[0].toMap()["value"].toDouble(),7.0);QVERIFY(session.running());
+        QVERIFY(ui.window->grabWindow().save("desktop-devices.png"));
+    }
     void qmlRelinkMissingAudio() {
         QTemporaryDir root;const auto audio=root.filePath("a.wav"),project=root.filePath("p.json");
         std::vector<qint16> tone(4800);for(std::size_t i=0;i<tone.size();++i)tone[i]=static_cast<qint16>(i%300*50);

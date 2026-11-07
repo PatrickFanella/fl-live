@@ -366,6 +366,36 @@ ApplicationWindow {
                                         } Accessible.name: "Delete track " + (index + 1); ToolTip.visible: hovered; ToolTip.text: "Removes the track, its clip and its scene slots. Undo restores them." }
                                     CheckBox { id: automationToggle; objectName: "automationToggle" + index; text: "Automation"; Accessible.name: "Show automation for track " + (index + 1) }
                                 }
+                                RowLayout {
+                                    readonly property var devices: session.devices[trackColumn.index] || []
+                                    id: deviceHeader
+                                    Layout.fillWidth: true
+                                    Label { objectName: "deviceCount" + index; text: deviceHeader.devices.length === 0 ? "No devices" : deviceHeader.devices.length + (deviceHeader.devices.length === 1 ? " device" : " devices"); color: "#9daabd" }
+                                    Item { Layout.fillWidth: true }
+                                    Button { objectName: "addGain" + index; text: "+ Gain"; enabled: session.canChange && deviceHeader.devices.length < 8; onClicked: { if (session.addDevice(trackColumn.trackId, "gain")) devicesToggle.checked = true } Accessible.name: "Add a gain device to track " + (index + 1) }
+                                    Button { objectName: "addTranspose" + index; text: "+ Transpose"; visible: trackColumn.midi; enabled: session.canChange && deviceHeader.devices.length < 8; onClicked: { if (session.addDevice(trackColumn.trackId, "transpose")) devicesToggle.checked = true } Accessible.name: "Add a transpose device to track " + (index + 1) }
+                                    CheckBox { id: devicesToggle; objectName: "devicesToggle" + index; text: "Show"; enabled: deviceHeader.devices.length > 0; Accessible.name: "Show devices of track " + (index + 1) }
+                                }
+                                Repeater {
+                                    model: devicesToggle.checked ? deviceHeader.devices : []
+                                    RowLayout {
+                                        required property var modelData
+                                        required property int index
+                                        readonly property bool gain: modelData.kind === "gain"
+                                        Layout.fillWidth: true
+                                        Label { text: (index + 1) + ". " + (parent.gain ? "Gain dB" : "Transpose"); Layout.preferredWidth: 96 }
+                                        SpinBox {
+                                            objectName: "deviceValue" + trackColumn.index + "_" + index
+                                            from: parent.gain ? -60 : -48; to: parent.gain ? 12 : 48; editable: true; Layout.preferredWidth: 90
+                                            value: modelData.value; enabled: session.canChange
+                                            onValueModified: session.setDeviceValue(modelData.id, value)
+                                            Accessible.name: (parent.gain ? "Gain in decibels" : "Transpose in semitones") + " of device " + (index + 1) + " on track " + (trackColumn.index + 1)
+                                        }
+                                        ToolButton { objectName: "deviceUp" + trackColumn.index + "_" + index; text: "↑"; enabled: session.canChange; onClicked: session.moveDevice(modelData.id, -1); Accessible.name: "Move device " + (index + 1) + " of track " + (trackColumn.index + 1) + " earlier" }
+                                        ToolButton { objectName: "deviceDown" + trackColumn.index + "_" + index; text: "↓"; enabled: session.canChange; onClicked: session.moveDevice(modelData.id, 1); Accessible.name: "Move device " + (index + 1) + " of track " + (trackColumn.index + 1) + " later" }
+                                        ToolButton { objectName: "removeDevice" + trackColumn.index + "_" + index; text: "Remove"; enabled: session.canChange; onClicked: session.removeDevice(modelData.id); Accessible.name: "Remove device " + (index + 1) + " of track " + (trackColumn.index + 1) }
+                                    }
+                                }
                                 ColumnLayout {
                                     id: automationEditor
                                     visible: automationToggle.checked; Layout.fillWidth: true; spacing: 4

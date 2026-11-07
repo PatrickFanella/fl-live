@@ -66,6 +66,7 @@ class Session final : public QObject {
     Q_PROPERTY(int patternTrackIndex READ patternTrackIndex NOTIFY changed)
     Q_PROPERTY(QVariantList synth READ synth NOTIFY changed)
     Q_PROPERTY(bool pianoMode READ pianoMode NOTIFY changed)
+    Q_PROPERTY(QVariantList devices READ allTrackDevices NOTIFY changed) // trackDevices for every track
     Q_PROPERTY(int pianoLength READ pianoLength NOTIFY changed)
     Q_PROPERTY(bool pianoLoop READ pianoLoop NOTIFY changed)
     // Notified only when notes or the edited clip change: building the list
@@ -133,6 +134,18 @@ public:
     // what happens to notes past a shortened end. One Undo step each.
     Q_INVOKABLE bool setPianoLength(int ticks);
     Q_INVOKABLE bool setPianoLoop(bool loop);
+    // Devices of a track in chain order: {id, kind ("gain"/"transpose"),
+    // value}. See docs/devices.md. Each edit is one Undo step and also works
+    // while playing.
+    Q_INVOKABLE QVariantList trackDevices(int track) const;
+    QVariantList allTrackDevices() const;
+    // Transpose joins the end of the MIDI stage (before the instrument), gain
+    // the end of the chain. Refused on the wrong track kind or past 8 devices.
+    Q_INVOKABLE bool addDevice(const QString& trackId, const QString& kind);
+    Q_INVOKABLE bool removeDevice(const QString& id);
+    Q_INVOKABLE bool setDeviceValue(const QString& id, double value);
+    // Moves a device one place earlier (-1) or later (+1) within its stage.
+    Q_INVOKABLE bool moveDevice(const QString& id, int direction);
     QVariantList pianoNotes() const;
     int pianoNoteCount() const { return piano() ? static_cast<int>(piano()->notes.size()) : 0; }
     int selectedVelocity() const; // of the first selected note, or 80 when none
@@ -304,7 +317,8 @@ private:
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
     enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete, scene_copy, scene_order, track_pan, track_mute, track_solo,
-        track_create, track_duplicate, track_delete, audio_import, clip_range, audio_relink, assets_collect, automation, synth, piano_mode, note_add, note_delete, note_move, note_resize, note_velocity, piano_length, piano_loop };
+        track_create, track_duplicate, track_delete, audio_import, clip_range, audio_relink, assets_collect, automation, synth, piano_mode, note_add, note_delete, note_move, note_resize, note_velocity, piano_length, piano_loop,
+        device_add, device_remove, device_value, device_move };
     struct HistoryEntry {
         Content content;
         Identities identities;
@@ -331,6 +345,9 @@ private:
     const PianoRoll* piano() const;
     bool editPiano(EditKind kind, const std::function<void(PianoRoll&)>& change);
     bool editNotes(EditKind kind, const QVariantList& ids, const std::function<void(PianoNote&)>& change);
+    // Applies a change to one track's device list and rebuilds its chain.
+    bool editDevices(EditKind kind, fl_live::TrackId track, const std::function<void(std::vector<Device>&, SessionContent&)>& change);
+    std::optional<fl_live::TrackId> deviceTrack(std::uint64_t id) const;
     void restorePatternTarget();
     std::unique_ptr<fl_live::WavImportWorker> importer_;
     std::uint64_t import_ticket_ = 0;
