@@ -1,0 +1,43 @@
+{
+  "verified_at": "2026-11-07T10:45:21.042113+00:00",
+  "base": "main after PR #138",
+  "issues": [
+    38
+  ],
+  "scope": "Piano-roll clip length and loop with a non-destructive truncation policy",
+  "environment": "Kvant, pinned CI image, docker --network none, Qt offscreen platform",
+  "gates": {
+    "desktop": {
+      "passed": 24,
+      "total": 24
+    },
+    "release": {
+      "passed": 10,
+      "total": 10
+    },
+    "document-io-sanitize": {
+      "passed": 11,
+      "total": 11
+    }
+  },
+  "verified_behaviors": [
+    "A 312-tick clip at 137 BPM loops every 68322 frames; in each of five loops the square note starts at k*68322+8103 and stops at k*68322+13358, identical at blocks 1/64/127/257/1000",
+    "Loop off matches the first loop, then is silent with the track stopped",
+    "Shortening to two beats keeps notes 3 and 4 (marked not sounding) and exports exactly like a two-beat clip with them deleted; lengthening restores the original export",
+    "Adds and moves outside the active length, and lengths 0 or above 16 bars, are refused with notes unchanged",
+    "Validation and rendering: notes up to 16 bars are valid; notes past the length are omitted and a crossing note is cut at the clip end",
+    "Save/Open keeps the length, the loop flag and the silent notes; the one-shot flag is written only when false and 'loop': true is refused",
+    "QML: the length box and Loop box edit the clip and Undo reverts each"
+  ],
+  "source_sha256": {
+    "apps/desktop/project.hpp": "100eec0309939f1928a52227811ea2b490bf876e9c72e8b421a9a5209a3e357e",
+    "apps/desktop/project.cpp": "3fdbbe0266a89065c156e1a118413a8b999dd7085ad8773dcaff7512381ae850",
+    "apps/desktop/authored_project.cpp": "ef9dd907578aa8d402c13aa82680b44f6d4a9da797ccf874e45671302b4da4f0",
+    "apps/desktop/session.hpp": "b533eab6e8a6676bf2fa5c965dad838a5d27f873264eb8a5b8e6da2a15ecef8f",
+    "apps/desktop/session.cpp": "6096f411afce42d47620fcfd63fd31565058bfec50ca8c1c505f9252510ace04",
+    "apps/desktop/Main.qml": "856c8059acef90ad41f0a14399ebff10da4488266a76907daa69bcd7a12db4e1",
+    "tests/authored_project_tests.cpp": "e21a981d88c375ca5af75ddfc864c69405bf74a77e2b0ccc0f6981d21947ca03",
+    "tests/desktop_tests.cpp": "305c18133165b4a51de680e008b5f1acf82e54410475a3dc82a416aab067b95d"
+  },
+  "limits": "The loop always starts at the clip start; offscreen platform; no physical audio."
+}

@@ -67,6 +67,7 @@ class Session final : public QObject {
     Q_PROPERTY(QVariantList synth READ synth NOTIFY changed)
     Q_PROPERTY(bool pianoMode READ pianoMode NOTIFY changed)
     Q_PROPERTY(int pianoLength READ pianoLength NOTIFY changed)
+    Q_PROPERTY(bool pianoLoop READ pianoLoop NOTIFY changed)
     Q_PROPERTY(QVariantList pianoNotes READ pianoNotes NOTIFY changed)
     Q_PROPERTY(QVariantList selectedNotes READ selectedNotes NOTIFY changed)
     Q_PROPERTY(bool importing READ importing NOTIFY changed)
@@ -119,9 +120,15 @@ public:
     QVariantList synth() const;
     // Piano roll of the MIDI clip in the step editor (docs/piano-roll.md).
     // Positions are ticks of 1/96 beat. pianoNotes lists
-    // {id, start, length, pitch, velocity} in start order; IDs are strings.
+    // {id, start, length, pitch, velocity, sounding} in start order; IDs are
+    // strings and sounding is false for notes at or past the clip length.
     bool pianoMode() const;
     int pianoLength() const;
+    bool pianoLoop() const;
+    // Clip length in ticks (1 to 16 bars) and loop on/off; see PianoRoll for
+    // what happens to notes past a shortened end. One Undo step each.
+    Q_INVOKABLE bool setPianoLength(int ticks);
+    Q_INVOKABLE bool setPianoLoop(bool loop);
     QVariantList pianoNotes() const;
     // Switches the clip between its step pattern and piano-roll notes. Turning
     // it on converts the pattern's sounding steps once; turning it off keeps
@@ -288,7 +295,7 @@ private:
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
     enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete, scene_copy, scene_order, track_pan, track_mute, track_solo,
-        track_create, track_duplicate, track_delete, audio_import, clip_range, audio_relink, assets_collect, automation, synth, piano_mode, note_add, note_delete, note_move, note_resize, note_velocity };
+        track_create, track_duplicate, track_delete, audio_import, clip_range, audio_relink, assets_collect, automation, synth, piano_mode, note_add, note_delete, note_move, note_resize, note_velocity, piano_length, piano_loop };
     struct HistoryEntry {
         Content content;
         Identities identities;

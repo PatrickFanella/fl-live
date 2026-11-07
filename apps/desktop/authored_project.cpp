@@ -290,7 +290,9 @@ QByteArray encodeAuthoredProject(const AuthoredProject& project,const QString& b
                 QJsonArray notes;
                 for(const auto& note:value.piano->notes)
                     notes.append(QJsonObject{{"id",idText(note.id)},{"start",note.start},{"length",note.length},{"pitch",note.pitch},{"velocity",note.velocity}});
-                object.insert("piano",QJsonObject{{"length",value.piano->length},{"next_id",idText(value.piano->next_id)},{"notes",notes}});
+                QJsonObject piano{{"length",value.piano->length},{"next_id",idText(value.piano->next_id)},{"notes",notes}};
+                if(!value.piano->loop)piano.insert("loop",false); // written only for one-shot clips
+                object.insert("piano",piano);
             }
             clips.append(object);
         }
@@ -374,8 +376,10 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
                     integer(synth["decay_ms"],0,10000),integer(synth["sustain"],0,100),integer(synth["release_ms"],0,10000)};
             }
             if(hasPiano) {
-                const auto piano=exact(fields["piano"],{"length","next_id","notes"});
-                PianoRoll roll{integer(piano["length"],1,piano_length_limit),idValue(piano["next_id"]),{}};
+                const bool oneShot=fields["piano"].toObject().contains("loop");
+                const auto piano=oneShot ? exact(fields["piano"],{"length","next_id","notes","loop"}) : exact(fields["piano"],{"length","next_id","notes"});
+                if(oneShot && piano["loop"]!=QJsonValue(false))throw std::invalid_argument("A saved piano-roll loop flag must be false");
+                PianoRoll roll{integer(piano["length"],1,piano_length_limit),!oneShot,idValue(piano["next_id"]),{}};
                 if(!piano["notes"].isArray() || piano["notes"].toArray().size()>static_cast<qsizetype>(fl_live::Engine::notes_per_clip_capacity))
                     throw std::invalid_argument("Invalid piano-roll notes");
                 for(const auto& n:piano["notes"].toArray()) {

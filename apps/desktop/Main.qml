@@ -471,6 +471,15 @@ ApplicationWindow {
                             Button { objectName: "pianoOctaveDown"; text: "Octave down"; enabled: pianoView.base > 0; onClicked: pianoView.base = Math.max(0, pianoView.base - 12) }
                             Button { objectName: "pianoOctaveUp"; text: "Octave up"; enabled: pianoView.base + pianoView.rows < 128; onClicked: pianoView.base = Math.min(128 - pianoView.rows, pianoView.base + 12) }
                             Label { objectName: "pianoRange"; text: "Pitches " + pianoView.base + "–" + (pianoView.base + pianoView.rows - 1) + " · " + (session.pianoLength / 96) + " beats"; color: "#b7c5d8" }
+                            Label { text: "Length (16ths)" }
+                            SpinBox {
+                                objectName: "pianoLengthSpin"; from: 1; to: 256; editable: true; Layout.preferredWidth: 90
+                                value: Math.ceil(session.pianoLength / 24); enabled: session.canChange
+                                onValueModified: session.setPianoLength(value * 24)
+                                Accessible.name: "Clip length in sixteenth notes"
+                                ToolTip.visible: hovered; ToolTip.text: "Notes past a shortened end are kept but silent; lengthening plays them again."
+                            }
+                            CheckBox { objectName: "pianoLoop"; text: "Loop"; checked: session.pianoLoop; enabled: session.canChange; onClicked: session.setPianoLoop(checked); Accessible.name: "Loop the clip" }
                             Label { text: "Snap" }
                             ComboBox { id: snapBox; objectName: "pianoSnap"; model: ["1/16", "1/8", "1/4", "Off"]; Layout.preferredWidth: 80; Accessible.name: "Piano-roll snap" }
                             Label { text: "Velocity %" }
@@ -496,6 +505,7 @@ ApplicationWindow {
                             Layout.fillWidth: true; Layout.fillHeight: true
                             Layout.minimumHeight: 120; Layout.maximumHeight: 288
                             color: "#0f141c"; border.color: activeFocus ? "#e4bc75" : "#2e3a4a"
+                            clip: true // notes past the clip length are silent and not drawn
                             activeFocusOnTab: true
                             Accessible.role: Accessible.Grouping
                             Accessible.name: "Piano roll, " + session.pianoNotes.length + " notes, " + session.selectedNotes.length + " selected. Click to add or select, drag to move or resize; arrows move the selection, Shift with Left or Right resizes, Delete removes."

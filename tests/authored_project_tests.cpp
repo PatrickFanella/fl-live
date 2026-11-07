@@ -317,20 +317,24 @@ void synthSettings() {
 // malformed files (#35).
 void pianoRoll() {
     // Validation refuses each malformed case without needing a project.
-    const PianoRoll good{384,4,{{3,0,24,64,50},{1,0,72,60,70},{2,96,72,64,70}}};
+    const PianoRoll good{384,true,4,{{3,0,24,64,50},{1,0,72,60,70},{2,96,72,64,70}}};
     rejects([&]{validatePiano(good);}); // the order is (start, ID): ID 3 may not precede ID 1 at the same start
     auto ok=good;sortPiano(ok);validatePiano(ok);
     CHECK(ok.notes[0].id==1 && ok.notes[1].id==3 && ok.notes[2].id==2);
     const auto bad=[&](auto edit){auto r=ok;edit(r);rejects([&]{validatePiano(r);});};
     bad([](auto& r){r.length=0;});bad([](auto& r){r.length=piano_length_limit+1;});
     bad([](auto& r){r.notes[0].pitch=128;});bad([](auto& r){r.notes[0].velocity=0;});bad([](auto& r){r.notes[0].velocity=101;});
-    bad([](auto& r){r.notes[0].length=0;});bad([](auto& r){r.notes[2].length=289;}); // ends past the clip
-    bad([](auto& r){r.notes[2].start=384;});bad([](auto& r){r.notes[1].id=1;});bad([](auto& r){r.notes[2].id=4;}); // duplicate, unissued
+    bad([](auto& r){r.notes[0].length=0;});bad([](auto& r){r.notes[2].start=piano_length_limit;});bad([](auto& r){r.notes[2].length=piano_length_limit;});
+    bad([](auto& r){r.notes[1].id=1;});bad([](auto& r){r.notes[2].id=4;}); // duplicate, unissued
+    // Past the clip length is allowed (silent or cut at the end when rendered), up to 16 bars.
+    auto past=ok;past.notes[2].length=289;validatePiano(past);
+    const auto cut=pianoClip(past,120,{});CHECK(cut.notes.size()==3 && cut.notes[2].start+cut.notes[2].duration==cut.length);
+    past.notes[2].start=384;past.notes[2].length=24;sortPiano(past);validatePiano(past);CHECK(pianoClip(past,120,{}).notes.size()==2);
     bad([](auto& r){r.next_id=1;});
     auto crowded=ok;for(int n=0;n<14;++n)crowded.notes.push_back({crowded.next_id++,0,24,40+n,80});
     sortPiano(crowded);validatePiano(crowded); // 16 sounding at tick 0
     crowded.notes.push_back({crowded.next_id++,10,24,90,80});sortPiano(crowded);rejects([&]{validatePiano(crowded);});
-    PianoRoll many{piano_length_limit,1,{}};
+    PianoRoll many{piano_length_limit,true,1,{}};
     for(int n=0;n<1025;++n)many.notes.push_back({many.next_id++,n*6,6,60,80});
     rejects([&]{validatePiano(many);});many.notes.pop_back();validatePiano(many);
     // Rendering at 137 BPM: frame = ceil(ticks * 30000 / 137), rounded independently.
@@ -364,7 +368,7 @@ void pianoRoll() {
 // A note moved while it sounds: its voice finishes the original duration and
 // the moved note starts at its new position; nothing is left sounding (#36).
 void movedNoteVoices() {
-    const PianoRoll before{384,2,{{1,0,48,60,80}}};
+    const PianoRoll before{384,true,2,{{1,0,48,60,80}}};
     PianoRoll after=before;after.notes[0].start=192;
     const fl_live::SessionPlan a{48000,120000,{{1,{pianoClip(before,120,{})}}}},b{48000,120000,{{1,{pianoClip(after,120,{})}}}};
     fl_live::Engine engine(a);
@@ -382,7 +386,45 @@ void movedNoteVoices() {
     out.resize(2*11998);step(6,1);
     out.resize(2*1);step(7,0);             // and ends after frame 59999
 }
+// Loop timing of a 3-beat-and-a-sixteenth clip at 137 BPM: every repetition
+// is the rounded clip length, at any block size; a one-shot stops (#38).
+void pianoLoopTiming() {
+    const auto frame=[](std::uint64_t t){return (t*30000+136)/137;};
+    const fl_live::Frame length=frame(312),onset=frame(37),release=frame(61);
+    CHECK(length==68322 && onset==8103 && release==13358);
+    const auto render=[&](bool loop,std::size_t block){
+        const PianoRoll roll{312,loop,2,{{1,37,24,69,100}}};
+        const fl_live::SessionPlan plan{48000,137000,{{1,{pianoClip(roll,137,{2,0,0,100,0})}}}};
+        fl_live::Engine engine(plan);
+        CHECK(engine.schedule({fl_live::CommandKind::launch,0,0,0})==fl_live::ScheduleResult::accepted);
+        engine.start();
+        std::vector<float> out(2*5*length);
+        for(std::size_t at=0;at<5*length;at+=block){const auto n=std::min<std::size_t>(block,5*length-at);CHECK(engine.process(std::span(out).subspan(2*at,2*n),2));}
+        return std::pair{out,engine.track_statuses()[0].active_clip};
+    };
+    const auto [looped,active]=render(true,64);
+    CHECK(active==0);
+    for(fl_live::Frame k=0;k<5;++k) {
+        const auto base=k*length;
+        CHECK(looped[2*(base+onset-1)]==0 && looped[2*(base+onset)]!=0 && looped[2*(base+release-1)]!=0 && looped[2*(base+release)]==0);
+    }
+    for(const std::size_t block:{1U,127U,257U,1000U})CHECK(render(true,block).first==looped);
+    const auto [once,stopped]=render(false,257);
+    CHECK(stopped<0 && std::equal(once.begin(),once.begin()+2*length,looped.begin()));
+    CHECK(std::all_of(once.begin()+2*length,once.end(),[](float v){return v==0;}));
+    // The one-shot flag is saved only when false; a true flag in a file is refused.
+    auto project=general();
+    auto& riff=*std::find_if(project.content.clips.begin(),project.content.clips.end(),[&](const auto& c){return c.clip==project.identities.clips[3].id;});
+    riff.piano=PianoRoll{312,false,2,{{1,37,24,69,100}}};
+    const auto bytes=encodeAuthoredProject(project);
+    auto root=QJsonDocument::fromJson(bytes).object();
+    CHECK(root["clips"].toArray()[3].toObject()["piano"].toObject()["loop"]==QJsonValue(false));
+    CHECK(decodeAuthoredProject(bytes).content==project.content);
+    auto clips=root["clips"].toArray();auto clip=clips[3].toObject();auto piano=clip["piano"].toObject();piano["loop"]=true;clip["piano"]=piano;clips[3]=clip;root["clips"]=clips;
+    rejects([&]{decodeAuthoredProject(QJsonDocument(root).toJson());});
+}
 int main(){try{
+    pianoLoopTiming();
     movedNoteVoices();
     pianoRoll();
     synthSettings();

@@ -1343,6 +1343,48 @@ private slots:
         ui.type("selectedNotesVelocity","40",true);QTRY_COMPARE(note("1")["velocity"].toInt(),40);
         ui.click("undoButton");QTRY_COMPARE(note("1")["velocity"].toInt(),70);
     }
+    // #38: shortening keeps notes but silences them, lengthening restores
+    // them, Loop off plays once; refusals and persistence.
+    void pianoRollLengthLoop() {
+        QTemporaryDir directory;
+        const auto exported=[&](Session& s,const QString& name,int bars){
+            const auto path=directory.filePath(name);if(!s.exportAudio(path,1,bars,0,2,"float32"))throw std::runtime_error("export refused");
+            for(int i=0;i<1000 && s.exporting();++i)QTest::qWait(10);
+            if(s.exporting())throw std::runtime_error("export did not finish");
+            return readWav(path).samples;};
+        const auto prepare=[](Session& s){s.setMute(s.trackIds()[0].toString(),true);s.setSynth("waveform",2);s.usePianoRoll(true);};
+        Session session;prepare(session);const auto full=exported(session,"full.wav",2);
+        QVERIFY(session.setPianoLength(192));QCOMPARE(session.pianoLength(),192);QCOMPARE(session.undoText(),QString("Undo clip length"));
+        QCOMPARE(session.pianoNotes().size(),4);QCOMPARE(session.trackSources()[1].toString(),QString("Piano roll · 4 notes"));
+        QCOMPARE(session.pianoNotes()[1].toMap()["sounding"].toBool(),true);QCOMPARE(session.pianoNotes()[2].toMap()["sounding"].toBool(),false);
+        // Same sound as a two-beat clip whose later notes were deleted.
+        Session reference;prepare(reference);QVERIFY(reference.deleteNotes({"3","4"}));QVERIFY(reference.setPianoLength(192));
+        const auto shortened=exported(session,"short.wav",2);QVERIFY(shortened==exported(reference,"reference.wav",2));QVERIFY(shortened!=full);
+        // Edits stay inside the active length; silent notes cannot be moved.
+        const auto notes=session.pianoNotes();
+        QVERIFY(!session.addNote(192,24,60,80));QVERIFY(session.message().contains("inside the clip"));QVERIFY(!session.moveNotes({"3"},-24,0));
+        QVERIFY(!session.setPianoLength(0));QVERIFY(!session.setPianoLength(piano_length_limit+1));QCOMPARE(session.pianoNotes(),notes);QCOMPARE(session.pianoLength(),192);
+        QVERIFY(session.setPianoLength(384));QVERIFY(exported(session,"again.wav",2)==full);
+        // Loop off: the first bar plays, then silence.
+        QVERIFY(session.setPianoLoop(false));QVERIFY(!session.pianoLoop());QCOMPARE(session.undoText(),QString("Undo clip loop"));
+        const auto once=exported(session,"once.wav",2);
+        QVERIFY(std::equal(once.begin(),once.begin()+2*96000,full.begin()));
+        QVERIFY(std::all_of(once.begin()+2*96000,once.end(),[](float v){return v==0;}));
+        // Save/Open keeps the length, the loop flag and the silent notes.
+        QVERIFY(session.setPianoLength(192));
+        const auto path=directory.filePath("length.json");QVERIFY(session.saveProject(path));
+        Session reopened;QVERIFY(reopened.loadProject(path));
+        QCOMPARE(reopened.pianoLength(),192);QVERIFY(!reopened.pianoLoop());QCOMPARE(reopened.pianoNotes(),session.pianoNotes());
+        session.undo();session.undo();QCOMPARE(session.pianoLength(),384);QVERIFY(session.pianoLoop());
+    }
+    void qmlPianoRollLength() {
+        Session session;QmlUi ui(session);QVERIFY(ui.window && QTest::qWaitForWindowExposed(ui.window));
+        ui.click("pianoMode");QTRY_VERIFY(session.pianoMode());QCOMPARE(ui.item("pianoLengthSpin")->property("value").toInt(),16);
+        ui.type("pianoLengthSpin","8",true);QTRY_COMPARE(session.pianoLength(),192);
+        QCOMPARE(ui.item("pianoRange")->property("text").toString().contains("2 beats"),true);
+        ui.click("pianoLoop");QTRY_VERIFY(!session.pianoLoop());
+        ui.click("undoButton");QTRY_VERIFY(session.pianoLoop());ui.click("undoButton");QTRY_COMPARE(session.pianoLength(),384);
+    }
     void qmlRelinkMissingAudio() {
         QTemporaryDir root;const auto audio=root.filePath("a.wav"),project=root.filePath("p.json");
         std::vector<qint16> tone(4800);for(std::size_t i=0;i<tone.size();++i)tone[i]=static_cast<qint16>(i%300*50);
