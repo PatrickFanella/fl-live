@@ -203,6 +203,9 @@ if(FL_LIVE_BUILD_DESKTOP)
             add_test(NAME pipewire-private-graph COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_integration.py $<TARGET_FILE:fl-live-play> $<TARGET_FILE:desktop-backend-probe>)
             set_tests_properties(pipewire-private-graph PROPERTIES TIMEOUT 40)
+            add_test(NAME pipewire-desktop-recording COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_capture.py --desktop $<TARGET_FILE:desktop-backend-probe>)
+            set_tests_properties(pipewire-desktop-recording PROPERTIES TIMEOUT 60)
         endif()
         # Fault-injected and interrupted saves through the real Session.
         add_library(fault-inject SHARED tests/fault_inject.cpp)

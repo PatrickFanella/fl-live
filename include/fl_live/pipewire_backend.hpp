@@ -8,6 +8,7 @@ namespace fl_live {
 struct PipeWireConfig {
     std::string remote; // explicit remote; never silently choose a desktop server
     std::string target;
+    std::string input_target; // the desktop's capture stream links here when set
     std::string node_group;
     bool autoconnect = false;
     std::uint32_t sample_rate = 48000;

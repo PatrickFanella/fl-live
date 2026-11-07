@@ -27,6 +27,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include "fl_live/document_io.hpp"
+#include "fl_live/media_import.hpp"
 
 static ProjectSettings readAuthoredSettings(const QString& path) { const auto p = readAuthoredProject(path); return templateView(p.content, p.identities); }
 
@@ -1958,6 +1959,66 @@ private slots:
         QVERIFY(std::any_of(w.samples.begin(),w.samples.begin()+2*30000,[](float v){return v!=0;}));
         QVERIFY(reached.size()>=25);
         QVERIFY(ui.window->grabWindow().save("desktop-keyboard-journey.png"));
+    }
+    // #43/#46/#47: recording armed audio tracks. Silent preview feeds
+    // silence at the render clock; Stop finishes each take, reads it back and
+    // adds it as a new selected clip in one Undo step. Takes live in the
+    // project's recordings folder and Undo never deletes them.
+    void recordingTakes() {
+        QTemporaryDir directory;Session session;
+        const auto audio=session.trackIds()[0].toString(),midi=session.trackIds()[1].toString();
+        QCOMPARE(session.trackKinds()[0].toString(),QString("audio"));QCOMPARE(session.trackKinds()[1].toString(),QString("midi"));
+        const auto clips=[&](Session& s){QStringList r;for(const auto& c:s.trackClips()[0].toList())r.append(c.toMap()["id"].toString());return r;};
+        QVERIFY(!session.record());QVERIFY(session.message().contains("Arm an audio track"));QVERIFY(session.message().contains("Nothing was recorded"));
+        QVERIFY(!session.setArmed(midi,true));QVERIFY(session.message().contains("MIDI recording"));
+        QVERIFY(session.setArmed(audio,true));QCOMPARE(session.armed(),(QVariantList{true,false}));QVERIFY(!session.dirty());
+        QVERIFY(!session.record());QVERIFY(session.message().contains("Save the project first"));QVERIFY(!session.recording());
+        const auto path=directory.filePath("takes.json");QVERIFY(session.saveProject(path));
+        const QDir folder(directory.filePath("recordings"));const auto before=clips(session);
+        QVERIFY(session.record());QVERIFY(session.recording());QVERIFY(session.message().contains("Recording 1 track"));
+        session.tick();QVERIFY(session.running()); // the first of 50 blocks of 480 frames
+        // While recording: arming, track deletion, another take and opening a project are refused.
+        QVERIFY(!session.setArmed(audio,false));QVERIFY(!session.deleteTrack(audio));QVERIFY(!session.record());
+        QVERIFY(!session.loadProject(path));QVERIFY(session.message().contains("Stop recording"));QVERIFY(!session.newProject());
+        QCOMPARE(folder.entryList({"*.part"},QDir::Files).size(),1);
+        for(int i=1;i<50;++i)session.tick();
+        session.stop();session.tick();QVERIFY(!session.recording());QVERIFY(!session.running());
+        QCOMPARE(folder.entryList({"*.part"},QDir::Files).size(),0);
+        const auto files=folder.entryList({"*.wav"},QDir::Files);QCOMPARE(files.size(),1);QVERIFY(files[0].endsWith(" take 1.wav"));
+        const auto file=folder.filePath(files[0]);
+        const auto decoded=fl_live::importWav(file.toStdString());QVERIFY(static_cast<bool>(decoded));
+        QCOMPARE(decoded.clip.samples.size(),std::size_t(50*480*decoded.clip.channels));
+        QVERIFY(std::all_of(decoded.clip.samples.begin(),decoded.clip.samples.end(),[](float v){return v==0.0F;}));
+        // One new clip, selected, named after its place on the track, one Undo step.
+        const auto after=clips(session);QCOMPARE(after.size(),before.size()+1);const auto take=after.last();
+        QCOMPARE(session.selectedClips()[0].toString(),take);QCOMPARE(session.clipNames()[0].toString(),QString("Take %1").arg(after.size()));
+        QVERIFY(session.message().contains("Recorded 1 take as new clips"));QCOMPARE(session.undoText(),QString("Undo recorded take"));
+        QVERIFY(session.dirty());
+        session.undo();QCOMPARE(clips(session),before);QVERIFY(QFile::exists(file));QVERIFY(!session.dirty());
+        session.redo();QCOMPARE(clips(session),after);QCOMPARE(session.selectedClips()[0].toString(),take);
+        QVERIFY(session.saveProject(path));
+        {
+            Session reopened;QVERIFY(reopened.loadProject(path));QCOMPARE(clips(reopened),after);
+            QVERIFY(reopened.selectClip(take));QCOMPARE(reopened.clipNames()[0].toString(),QString("Take %1").arg(after.size()));
+        }
+        // An immediate stop captures nothing: no clip, and the empty file is removed.
+        QVERIFY(session.record());session.stop();session.tick();
+        QVERIFY(session.message().contains("nothing was captured"));QCOMPARE(clips(session),after);
+        QCOMPARE(folder.entryList({"*.wav","*.part"},QDir::Files).size(),1);
+        // The next take never reuses a name.
+        QVERIFY(session.record());for(int i=0;i<4;++i)session.tick();session.stop();session.tick();
+        QVERIFY(QFile::exists(folder.filePath(QString(files[0]).replace(" take 1.wav"," take 2.wav"))));
+        QCOMPARE(clips(session).size(),after.size()+1);
+        // The QML controls: Arm shows only on audio tracks, Record needs an armed track.
+        QmlUi ui(session);QVERIFY(QTest::qWaitForWindowExposed(ui.window));
+        QVERIFY(ui.find(ui.window->contentItem(),"arm1")==nullptr);
+        QVERIFY(ui.item("recordButton")->isEnabled());
+        ui.click("arm0");QTRY_COMPARE(session.armed()[0].toBool(),false);QVERIFY(!ui.item("recordButton")->isEnabled());
+        ui.click("arm0");QTRY_COMPARE(session.armed()[0].toBool(),true);
+        ui.click("recordButton");QTRY_VERIFY(session.recording());QVERIFY(!ui.item("recordButton")->isEnabled());QVERIFY(!ui.item("arm0")->isEnabled());
+        for(int i=0;i<4;++i)session.tick();
+        ui.click("stopButton");QTRY_VERIFY(!session.recording());session.tick();
+        QCOMPARE(clips(session).size(),after.size()+2);QCOMPARE(folder.entryList({"*.wav"},QDir::Files).size(),3);
     }
     // #27: several clips per track. The selected clip is what the track's
     // controls act on; clip create, duplicate and delete are Undo steps and

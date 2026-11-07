@@ -13,6 +13,7 @@
 #include <type_traits>
 #include <functional>
 #include <map>
+#include <set>
 #include <QStringList>
 #include <QLockFile>
 
@@ -66,6 +67,8 @@ class Session final : public QObject {
     Q_PROPERTY(int patternTrackIndex READ patternTrackIndex NOTIFY changed)
     Q_PROPERTY(QVariantList synth READ synth NOTIFY changed)
     Q_PROPERTY(bool pianoMode READ pianoMode NOTIFY changed)
+    Q_PROPERTY(QVariantList armed READ armed NOTIFY changed)
+    Q_PROPERTY(bool recording READ recording NOTIFY changed)
     // Clips of every track as [{id, name}] in order, and each track's
     // selected clip (view state: not saved or undone). A track's controls
     // (launch, sources, pattern, import, range, scene slot) act on its
@@ -144,6 +147,17 @@ public:
     // value}. See docs/devices.md. Each edit is one Undo step and also works
     // while playing.
     Q_INVOKABLE QVariantList trackDevices(int track) const;
+    // Recording (docs/recording.md). Arming is view state on audio tracks.
+    // record() starts one take per armed track, and Play when stopped; Stop
+    // finishes the takes, and each finished take becomes a new clip on its
+    // track, all in one Undo step. Takes go to the saved project's
+    // recordings folder and are never deleted by Undo. Silent preview
+    // records silence at the preview clock; with a remote the PipeWire input
+    // stream is recorded.
+    QVariantList armed() const;
+    Q_INVOKABLE bool setArmed(const QString& trackId, bool armed);
+    bool recording() const { return !takes_.empty(); }
+    Q_INVOKABLE bool record();
     QVariantList trackClips() const;
     QVariantList selectedClips() const;
     Q_INVOKABLE bool selectClip(const QString& clipId);
@@ -337,7 +351,7 @@ private:
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
     enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete, scene_copy, scene_order, track_pan, track_mute, track_solo,
-        track_create, track_duplicate, track_delete, clip_create, clip_duplicate, clip_delete, audio_import, clip_range, audio_relink, assets_collect, automation, synth, piano_mode, note_add, note_delete, note_move, note_resize, note_velocity, piano_length, piano_loop,
+        track_create, track_duplicate, track_delete, clip_create, clip_duplicate, clip_delete, record_take, audio_import, clip_range, audio_relink, assets_collect, automation, synth, piano_mode, note_add, note_delete, note_move, note_resize, note_velocity, piano_length, piano_loop,
         device_add, device_remove, device_value, device_move };
     struct HistoryEntry {
         Content content;
@@ -363,6 +377,18 @@ private:
     std::map<std::uint64_t, std::uint64_t> selected_clip_; // track ID -> clip ID
     fl_live::ClipId trackClip(fl_live::TrackId track) const; // selected, else first
     fl_live::ClipId import_clip_{};
+    std::set<std::uint64_t> armed_;
+    struct Take { fl_live::TrackId track; std::unique_ptr<fl_live::CaptureTake> take; };
+    std::vector<Take> takes_;
+    // Fans one input block out to every take; fixed for a recording's life.
+    struct Fanout final : fl_live::CaptureSink {
+        std::vector<fl_live::CaptureTake*> takes;
+        void capture(std::span<const float> interleaved) noexcept override { for (auto* t : takes) t->capture(interleaved); }
+    } fanout_;
+    std::unique_ptr<fl_live::PipeWireCapture> input_;
+    QString ack_report_; // shown instead of the generic acknowledgement once the stop renders
+    void finishRecording();
+    void openInput(); // throws with actionable text
     std::vector<std::uint64_t> selected_notes_;
     int history_index_hint_ = -1; // note count for the delete Undo label
     const PianoRoll* piano() const;

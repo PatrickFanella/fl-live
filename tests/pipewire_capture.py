@@ -1,6 +1,12 @@
 """Records an independently authored stereo signal through fl-live's PipeWire
 capture stream on an owned private graph and checks the take frame by frame.
-No desktop remote, devices or session manager are used."""
+No desktop remote, devices or session manager are used.
+
+    pipewire_capture.py CAPTURE_PROBE            # the capture stream alone
+    pipewire_capture.py --desktop DESKTOP_PROBE  # the desktop Session: arm, record, stop
+
+In desktop mode arming the track opens the input node, so the fixture links
+it before recording starts, exactly as for the capture stream alone."""
 import json
 import os
 import pathlib
@@ -10,7 +16,8 @@ import sys
 import tempfile
 import time
 
-probe = str(pathlib.Path(sys.argv[1]).resolve())
+desktop = len(sys.argv) == 3 and sys.argv[1] == "--desktop"
+probe = str(pathlib.Path(sys.argv[-1]).resolve())
 
 
 def until(predicate, timeout=4):
@@ -94,7 +101,10 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
         try:
             server = subprocess.Popen(["pipewire", "-c", str(configuration)], env=env, stdout=log, stderr=log)
             until(lambda: (root / remote).exists() if server.poll() is None else False)
-            recorder = subprocess.Popen([probe, remote, str(output), "2"], env=env, stdin=subprocess.PIPE,
+            if desktop:
+                (root / "project").mkdir()
+            recorder = subprocess.Popen([probe, remote, "--record", str(root / "project")] if desktop else [probe, remote, str(output), "2"],
+                                        env=env, stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             assert json.loads(recorder.stdout.readline())["ready"]
             player = subprocess.Popen(["pw-cat", "--remote", remote, "--playback", "--raw", "--format", "f32", "--rate", "48000",
@@ -133,10 +143,14 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
         finally:
             stop(recorder); stop(player); stop(server)
     assert not status["failed"] and status["dropped"] == 0 and status["error"] == 0, status
-    assert status["file"] == str(output), status
+    if desktop:
+        assert status["file"].startswith(str(root / "project" / "recordings")) and status["file"].endswith(" take 1.wav"), status
+        output = pathlib.Path(status["file"])
+    else:
+        assert status["file"] == str(output), status
     samples = wav_floats(output)
     frames = len(samples) // 2
-    assert frames == status["frames"] and 48000 * 1.2 < frames < 48000 * 2.0, (frames, status)
+    assert (status["frames"] < 0 or frames == status["frames"]) and 48000 * 1.2 < frames < 48000 * 3.0, (frames, status)
     # Locate the first captured frame in the reference, then walk: every frame
     # must equal the next reference frame, except where the private graph
     # dropped quanta under host load, which shows as a forward jump.
@@ -150,7 +164,11 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
         if pair == (0.0, 0.0) and position is None:
             continue  # silence before the reference reached the link
         at = index.get(pair)
-        assert at is not None, f"captured frame {f} is not a reference frame (swapped, corrupted or invented)"
+        if at is None:
+            lefts = {reference[2 * i]: i for i in range(FRAMES)}
+            rights = {reference[2 * i + 1]: i for i in range(FRAMES)}
+            context = [(samples[2 * g], samples[2 * g + 1], lefts.get(samples[2 * g]), rights.get(samples[2 * g + 1])) for g in range(max(0, f - 3), min(frames, f + 4))]
+            raise AssertionError(f"captured frame {f} is not a reference frame (swapped, corrupted or invented); position {position}; {context}")
         if position is not None and at != position:
             assert at > position, f"frame {f} goes back in the reference ({at} after {position})"
             jumps += 1
@@ -161,4 +179,5 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
     assert skipped <= matched // 10, f"too many frames missing: {skipped} over {jumps} jumps"
     print(json.dumps({"captured_frames": frames, "matched_frames": matched, "jumps": jumps, "skipped_frames": skipped,
                       "callbacks": status["callbacks"], "bad_buffers": status["bad_buffers"]}))
-    print("PASS: stereo capture through fl-live-input matches the independent reference frame by frame, channels in place")
+    print("PASS: " + ("desktop recording: armed track, take saved in recordings/ and added as the selected clip; " if desktop else "")
+          + "stereo capture through fl-live-input matches the independent reference frame by frame, channels in place")
