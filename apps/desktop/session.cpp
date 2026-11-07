@@ -428,6 +428,10 @@ QString Session::editName(const HistoryEntry& entry) {
     case EditKind::note_velocity: return "note velocity";
     case EditKind::piano_length: return "clip length";
     case EditKind::piano_loop: return "clip loop";
+    case EditKind::device_add: return QString("track %1 new device").arg(entry.index+1);
+    case EditKind::device_remove: return QString("track %1 device removal").arg(entry.index+1);
+    case EditKind::device_value: return QString("track %1 device setting").arg(entry.index+1);
+    case EditKind::device_move: return QString("track %1 device order").arg(entry.index+1);
     case EditKind::synth: return "synth "+QString::fromLatin1(entry.index==0 ? "waveform" : entry.index==1 ? "attack" : entry.index==2 ? "decay" : entry.index==3 ? "sustain" : "release");
     default: return {};
     }
@@ -1496,6 +1500,92 @@ bool Session::resizeNotes(const QVariantList& ids,int deltaTicks) {
 }
 bool Session::setNotesVelocity(const QVariantList& ids,int velocity) {
     return editNotes(EditKind::note_velocity,ids,[&](PianoNote& note){note.velocity=velocity;});
+}
+QVariantList Session::trackDevices(int track) const {
+    QVariantList result;
+    if(track<0 || static_cast<std::size_t>(track)>=identities_->tracks.size())return result;
+    const auto& owner=identities_->tracks[static_cast<std::size_t>(track)];
+    const auto entry=std::find_if(content_->devices.begin(),content_->devices.end(),[&](const auto& e){return e.track==owner.id;});
+    if(entry==content_->devices.end())return result;
+    const auto chain=deviceChain(*entry,owner.kind);
+    for(const auto* stage:{&chain.midi,&chain.audio})
+        for(const auto& d:*stage)result.append(QVariantMap{{"id",identityText(d.id)},{"kind",d.kind==DeviceKind::gain ? "gain" : "transpose"},{"value",d.value}});
+    return result;
+}
+QVariantList Session::allTrackDevices() const {
+    QVariantList result;
+    for(std::size_t i=0;i<identities_->tracks.size();++i)result.append(QVariant(trackDevices(static_cast<int>(i))));
+    return result;
+}
+std::optional<fl_live::TrackId> Session::deviceTrack(std::uint64_t id) const {
+    for(const auto& entry:content_->devices)
+        if(std::any_of(entry.devices.begin(),entry.devices.end(),[&](const auto& d){return d.id==id;}))return entry.track;
+    return std::nullopt;
+}
+bool Session::editDevices(EditKind kind,fl_live::TrackId track,const std::function<void(std::vector<Device>&,SessionContent&)>& change) {
+    if(!changeable())return false;
+    try {
+        const auto owner=std::find_if(identities_->tracks.begin(),identities_->tracks.end(),[&](const auto& t){return t.id==track;});
+        if(owner==identities_->tracks.end())throw std::invalid_argument("Unknown track");
+        auto next=*content_;
+        auto entry=std::find_if(next.devices.begin(),next.devices.end(),[&](const auto& e){return e.track==track;});
+        // Work on the chain order (MIDI stage first) so moves follow what the user sees.
+        std::vector<Device> devices;
+        if(entry!=next.devices.end()){const auto chain=deviceChain(*entry,owner->kind);devices=chain.midi;devices.insert(devices.end(),chain.audio.begin(),chain.audio.end());}
+        change(devices,next);
+        entry=std::find_if(next.devices.begin(),next.devices.end(),[&](const auto& e){return e.track==track;});
+        if(devices.empty()){if(entry!=next.devices.end())next.devices.erase(entry);}
+        else {
+            TrackDevices rebuilt{track,devices,chainConnections(devices,owner->kind)};
+            if(entry!=next.devices.end())*entry=std::move(rebuilt);else next.devices.push_back(std::move(rebuilt));
+        }
+        validateContent(next,*identities_);
+        if(next==*content_)return true;
+        edit(next,kind,static_cast<int>(owner-identities_->tracks.begin()));
+        return *content_==next;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+bool Session::addDevice(const QString& trackId,const QString& kind) {
+    try {
+        const fl_live::TrackId track{parseIdentity(trackId)};
+        if(kind!="gain" && kind!="transpose")throw std::invalid_argument("Unknown device kind");
+        return editDevices(EditKind::device_add,track,[&](std::vector<Device>& devices,SessionContent& next) {
+            if(devices.size()>=devices_per_track_limit)throw std::invalid_argument("A track holds at most 8 devices");
+            const Device added{next.next_device_id++,kind=="gain" ? DeviceKind::gain : DeviceKind::transpose,0};
+            // Transpose goes after the existing MIDI-stage devices; gain at the end.
+            const auto at=kind=="gain" ? devices.end() : std::find_if(devices.begin(),devices.end(),[](const auto& d){return d.kind==DeviceKind::gain;});
+            devices.insert(at,added);
+        });
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+bool Session::removeDevice(const QString& id) {
+    try {
+        const auto value=parseIdentity(id);const auto track=deviceTrack(value);
+        if(!track)throw std::invalid_argument("Unknown device");
+        return editDevices(EditKind::device_remove,*track,[&](std::vector<Device>& devices,SessionContent&) {
+            std::erase_if(devices,[&](const auto& d){return d.id==value;});});
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+bool Session::setDeviceValue(const QString& id,double v) {
+    try {
+        const auto value=parseIdentity(id);const auto track=deviceTrack(value);
+        if(!track)throw std::invalid_argument("Unknown device");
+        return editDevices(EditKind::device_value,*track,[&](std::vector<Device>& devices,SessionContent&) {
+            std::find_if(devices.begin(),devices.end(),[&](const auto& d){return d.id==value;})->value=v;});
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+bool Session::moveDevice(const QString& id,int direction) {
+    try {
+        const auto value=parseIdentity(id);const auto track=deviceTrack(value);
+        if(!track)throw std::invalid_argument("Unknown device");
+        if(direction!=-1 && direction!=1)throw std::invalid_argument("Move a device by one place");
+        return editDevices(EditKind::device_move,*track,[&](std::vector<Device>& devices,SessionContent&) {
+            const auto at=std::find_if(devices.begin(),devices.end(),[&](const auto& d){return d.id==value;});
+            const auto other=at+direction;
+            // A device stays in its stage: transposes before the instrument, gains after.
+            if(other<devices.begin() || other>=devices.end() || other->kind!=at->kind)throw std::invalid_argument("A device moves only within its stage");
+            std::iter_swap(at,other);});
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }
 bool Session::setSynth(const QString& field,int value) {
     if(!changeable())return false;
