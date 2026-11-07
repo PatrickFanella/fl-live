@@ -1,4 +1,5 @@
 #include "authored_project.hpp"
+#include "fl_live/document_io.hpp"
 #include <QTemporaryDir>
 #include <QFile>
 #include <QJsonDocument>
@@ -12,78 +13,148 @@
 template<class F>void rejects(F f){bool failed=false;try{f();}catch(const std::exception&){failed=true;}CHECK(failed);}
 std::vector<float> render(const fl_live::SessionPlan& plan,std::size_t block){
     fl_live::Engine engine(plan);engine.start();
-    for(std::size_t t=0;t<2;++t)CHECK(engine.schedule({fl_live::CommandKind::launch,0,t,0})==fl_live::ScheduleResult::accepted);
+    for(std::size_t t=0;t<plan.tracks.size();++t)CHECK(engine.schedule({fl_live::CommandKind::launch,0,t,0})==fl_live::ScheduleResult::accepted);
     std::vector<float> result(100003);
     for(std::size_t i=0;i<result.size();i+=block)engine.process(std::span(result).subspan(i,std::min(block,result.size()-i)));
     return result;
 }
-int main(){try{
+// Version 3 files are no longer written; build them as the previous release did.
+QByteArray v3(const ProjectSettings& settings,const fl_live::DocumentSnapshot& identities,QJsonArray features={"template-identities-v1"}) {
+    return QJsonDocument(QJsonObject{{"format","fl-live-project"},{"version",3},{"required_features",features},
+        {"settings",QJsonDocument::fromJson(encodeProjectSettings(settings)).object()},
+        {"session",QJsonDocument::fromJson(fl_live::encodeDocumentMetadata(identities)).object()}}).toJson();
+}
+void legacyMigration() {
     const QByteArray legacy=R"({"format":"fl-live-project","version":1,"template":"pulse-steps-v1","tempo":137,"levels":[35,60],"pitches":[48,55,59,62]})";
     auto project=decodeAuthoredProject(legacy);
-    CHECK(project.settings.tempo==137 && project.settings.steps[0].pitch==48);
+    CHECK(project.content.tempo==137 && templateView(project.content,project.identities).steps[0].pitch==48);
+    CHECK(templateView(project.content,project.identities).levels==(std::array<int,2>{35,60}));
     CHECK(project.identities==defaultTemplateIdentities());
-    CHECK(decodeAuthoredProject(encodeProjectSettings(project.settings)).identities==project.identities);
+    const auto settings=templateView(project.content,project.identities);
+    CHECK(decodeAuthoredProject(encodeProjectSettings(settings)).content==project.content);
+    // Version 3: renamed identities above 2^53, reversed clip order.
     fl_live::SessionDocument document(project.identities);
     document.renameTrack(project.identities.tracks[0].id,"Drums");
     document.renameClip(project.identities.clips[1].id,"Melody");
-    project.identities=document.snapshot();
-    // Identity strings above 2^53 remain exact through the actual desktop format.
+    auto identities=document.snapshot();
     constexpr std::uint64_t delta=9007199254740992ULL;
-    for(auto& t:project.identities.tracks)t.id.value+=delta;
-    for(auto& c:project.identities.clips){c.id.value+=delta;c.track.value+=delta;}
-    for(auto& s:project.identities.scenes){s.id.value+=delta;for(auto& e:s.entries){e.track.value+=delta;e.clip.value+=delta;}}
-    project.identities.next_id+=delta;
-    std::reverse(project.identities.clips.begin(),project.identities.clips.end());
-    const auto bytes=encodeAuthoredProject(project);
-    CHECK(QJsonDocument::fromJson(bytes).object()["version"]==3);
-    const auto reopened=decodeAuthoredProject(bytes);
-    CHECK(reopened.settings==project.settings && reopened.identities==project.identities);
-    rejects([&]{decodeProjectSettings(bytes);}); // old source-only API fails safely on v3
-    const fl_live::DocumentRenderPlan mapped(reopened.identities,templateSources(reopened.settings,reopened.identities),48000,
-        137000,{},templateGains(reopened.settings,reopened.identities));
-    const auto original=prepareProject(project.settings);
-    CHECK(render(original,1)==render(mapped.plan(),257));
-    QTemporaryDir directory;CHECK(directory.isValid());const auto path=directory.filePath("authored.json");
-    writeAuthoredProject(path,project);CHECK(readAuthoredProject(path).identities==project.identities);
-    QFile file(path);CHECK(file.open(QIODevice::ReadOnly));const auto saved=file.readAll();file.close();
-    auto invalid=project;invalid.settings.tempo=-1;rejects([&]{writeAuthoredProject(path,invalid);});
-    CHECK(file.open(QIODevice::ReadOnly));CHECK(file.readAll()==saved);file.close();
-    const auto root=QJsonDocument::fromJson(bytes).object();
-    // Incomplete scenes advertise a required capability. Old v3 readers reject
-    // that feature rather than silently restoring an excluded clip.
-    for(std::size_t retained=0;retained<2;++retained) {
-        auto sparse=project;sparse.identities.scenes[0].entries.resize(retained);
-        const auto encoded=encodeAuthoredProject(sparse);
-        auto sparseRoot=QJsonDocument::fromJson(encoded).object();
-        CHECK(sparseRoot["required_features"].toArray()==(QJsonArray{"template-identities-v1","template-scene-slots-v1"}));
-        CHECK(decodeAuthoredProject(encoded).identities==sparse.identities);
-        writeAuthoredProject(path,sparse);CHECK(readAuthoredProject(path).identities==sparse.identities);
-        sparseRoot["required_features"]=QJsonArray{"template-identities-v1"};
-        rejects([&]{decodeAuthoredProject(QJsonDocument(sparseRoot).toJson());});
-    }
-    CHECK(root["required_features"].toArray()==QJsonArray{"template-identities-v1"});
-    auto arrangements=project;fl_live::SessionDocument scenes(arrangements.identities);
-    const auto extra=scenes.createScene("Break");arrangements.identities=scenes.snapshot();
-    auto multiple=QJsonDocument::fromJson(encodeAuthoredProject(arrangements)).object();
-    CHECK(multiple["required_features"].toArray().contains("template-scenes-v1"));
-    CHECK(decodeAuthoredProject(QJsonDocument(multiple).toJson()).identities==arrangements.identities);
-    writeAuthoredProject(path,arrangements);CHECK(readAuthoredProject(path).identities==arrangements.identities);
-    multiple["required_features"]=QJsonArray{"template-identities-v1","template-scene-slots-v1"};
-    rejects([&]{decodeAuthoredProject(QJsonDocument(multiple).toJson());});
-    for(const auto& clip:arrangements.identities.clips)scenes.setSlot(extra,clip.track,clip.id);
-    arrangements.identities=scenes.snapshot();multiple=QJsonDocument::fromJson(encodeAuthoredProject(arrangements)).object();
-    CHECK(multiple["required_features"].toArray()==(QJsonArray{"template-identities-v1","template-scenes-v1"}));
-    CHECK(decodeAuthoredProject(QJsonDocument(multiple).toJson()).identities==arrangements.identities);
-    arrangements.identities.scenes.clear();rejects([&]{encodeAuthoredProject(arrangements);});
+    for(auto& t:identities.tracks)t.id.value+=delta;
+    for(auto& c:identities.clips){c.id.value+=delta;c.track.value+=delta;}
+    for(auto& s:identities.scenes){s.id.value+=delta;for(auto& e:s.entries){e.track.value+=delta;e.clip.value+=delta;}}
+    identities.next_id+=delta;
+    std::reverse(identities.clips.begin(),identities.clips.end());
+    const auto migrated=decodeAuthoredProject(v3(settings,identities));
+    CHECK(migrated.identities==identities && templateView(migrated.content,migrated.identities)==settings);
+    // Migrated content renders the same samples as the template plan did.
+    const fl_live::DocumentRenderPlan before(identities,templateSources(settings,identities),48000,137000,{},templateGains(settings,identities));
+    const fl_live::DocumentRenderPlan after(migrated.identities,contentSources(migrated.content,migrated.identities),48000,137000,{},
+        contentGains(migrated.content,migrated.identities));
+    CHECK(render(before.plan(),1)==render(after.plan(),257));
+    CHECK(render(prepareProject(settings),64)==render(after.plan(),257));
+    // Version 3 feature gates still hold for old files.
+    auto sparse=identities;sparse.scenes[0].entries.resize(1);
+    CHECK(decodeAuthoredProject(v3(settings,sparse,{"template-identities-v1","template-scene-slots-v1"})).identities==sparse);
+    rejects([&]{decodeAuthoredProject(v3(settings,sparse));});
+    fl_live::SessionDocument scenes(identities);scenes.createScene("Break");
+    CHECK(decodeAuthoredProject(v3(settings,scenes.snapshot(),{"template-identities-v1","template-scene-slots-v1","template-scenes-v1"})).identities==scenes.snapshot());
+    rejects([&]{decodeAuthoredProject(v3(settings,scenes.snapshot(),{"template-identities-v1","template-scene-slots-v1"}));});
+    auto root=QJsonDocument::fromJson(v3(settings,identities)).object();
     const auto bad=[&](auto edit){auto value=root;edit(value);rejects([&]{decodeAuthoredProject(QJsonDocument(value).toJson());});};
-    bad([](auto& r){r["version"]=4;});bad([](auto& r){r["version"]=true;});
+    bad([](auto& r){r["version"]=5;});bad([](auto& r){r["version"]=true;});
     bad([](auto& r){r["required_features"]=QJsonArray{"future"};});
     bad([](auto& r){r["extra"]=0;});bad([](auto& r){r.remove("session");});
     bad([](auto& r){auto s=r["settings"].toObject();s["tempo"]=0;r["settings"]=s;});
-    bad([](auto& r){auto d=r["session"].toObject();d["next_id"]="1";r["session"]=d;});
-    auto unsupported=project;unsupported.identities.tracks[0].kind=fl_live::TrackKind::midi;
-    rejects([&]{encodeAuthoredProject(unsupported);});
-    rejects([&]{decodeAuthoredProject(QByteArray(4*1024*1024+65537,' '));});
     rejects([&]{decodeAuthoredProject(legacy+QByteArray(65536,' '));});
-    std::cout<<"PASS: v1/v2 migration, v3 identity persistence, source equivalence and rejection\n";return 0;
+}
+AuthoredProject general() {
+    // Two audio and two MIDI tracks covering every source kind.
+    auto project=defaultProject();
+    fl_live::SessionDocument document(project.identities);
+    const auto audio=document.createTrack("Imported",fl_live::TrackKind::audio);
+    const auto midi=document.createTrack("Bass",fl_live::TrackKind::midi);
+    const auto wav=document.createClip(audio,"Loop"),notes=document.createClip(midi,"Riff");
+    document.setSlot(project.identities.scenes[0].id,midi,notes);
+    document.setTrackMix(audio,fl_live::TrackMix{-30,false,true});
+    project.identities=document.snapshot();
+    project.content.tracks.push_back({audio,55});project.content.tracks.push_back({midi,90});
+    ClipContent sample{wav};sample.audio=AudioSource::wav;sample.asset="/media/loops/break 120.wav";
+    ClipContent riff{notes};riff.pattern.step_count=7;riff.pattern.steps[6]={true,36,100,1};
+    project.content.clips.push_back(sample);project.content.clips.push_back(riff);
+    project.content.tempo=133;
+    return project;
+}
+void generalRoundTrip() {
+    auto project=general();
+    validateContent(project.content,project.identities);
+    const auto bytes=encodeAuthoredProject(project);
+    const auto root=QJsonDocument::fromJson(bytes).object();
+    CHECK(root["version"]==4 && root["required_features"].toArray()==QJsonArray{"general-session-v1"});
+    const auto decoded=decodeAuthoredProject(bytes);
+    CHECK(decoded.identities==project.identities && decoded.content==project.content);
+    QTemporaryDir directory;CHECK(directory.isValid());const auto path=directory.filePath("general.json");
+    writeAuthoredProject(path,project);CHECK(readAuthoredProject(path).content==project.content);
+    // Media is never decoded by the codec; the imported clip renders silence
+    // until resolved, and resolving it makes it play.
+    const fl_live::DocumentRenderPlan silent(decoded.identities,contentSources(decoded.content,decoded.identities));
+    CHECK(std::get<fl_live::AudioClip>(silent.plan().tracks[2].clips[0]).samples==std::vector<float>{0.0F});
+    auto resolved=decoded.content;
+    std::find_if(resolved.clips.begin(),resolved.clips.end(),[](const auto& c){return c.audio==AudioSource::wav;})->media=
+        std::make_shared<const fl_live::AudioClip>(fl_live::AudioClip{{0.25F,-0.25F},true,2});
+    const fl_live::DocumentRenderPlan loud(decoded.identities,contentSources(resolved,decoded.identities),48000,133000,{},contentGains(resolved,decoded.identities));
+    CHECK(std::get<fl_live::AudioClip>(loud.plan().tracks[2].clips[0]).channels==2);
+    CHECK(std::get<fl_live::MidiClip>(loud.plan().tracks[3].clips[0]).notes.size()==5); // template steps 1-4 plus step 7
+    // The imported track is soloed (pan -30): every other track prepares silent.
+    CHECK(loud.plan().tracks[2].gain==0.55F && loud.plan().tracks[2].pan==-0.3F);
+    CHECK(loud.plan().tracks[0].gain==0 && loud.plan().tracks[3].gain==0);
+    // Empty audio tracks and templates without any MIDI track.
+    auto empty=project;
+    std::find_if(empty.content.clips.begin(),empty.content.clips.end(),[](const auto& c){return c.audio==AudioSource::wav;})->audio=AudioSource::empty;
+    std::find_if(empty.content.clips.begin(),empty.content.clips.end(),[](const auto& c){return c.audio==AudioSource::empty;})->asset.clear();
+    CHECK(decodeAuthoredProject(encodeAuthoredProject(empty)).content==empty.content);
+    const auto view=templateView(project.content,project.identities);
+    CHECK(view.tempo==133 && view.levels==(std::array<int,2>{70,25}));
+}
+void generalRejection() {
+    const auto project=general();
+    const auto good=QJsonDocument::fromJson(encodeAuthoredProject(project)).object();
+    const auto bad=[&](auto edit){auto r=good;edit(r);rejects([&]{decodeAuthoredProject(QJsonDocument(r).toJson());});};
+    const auto clip=[&](int i,auto edit){bad([&](auto& r){auto a=r["clips"].toArray();auto c=a[i].toObject();edit(c);a[i]=c;r["clips"]=a;});};
+    bad([](auto& r){r["version"]=5;});
+    bad([](auto& r){r["required_features"]=QJsonArray{"general-session-v1","future"};});
+    bad([](auto& r){r["extra"]=true;});
+    bad([](auto& r){r.remove("tracks");});
+    bad([](auto& r){r["tempo"]=301;});
+    bad([](auto& r){r["session"]=QJsonArray{};});
+    bad([](auto& r){auto a=r["tracks"].toArray();auto t=a[0].toObject();t["level"]=101;a[0]=t;r["tracks"]=a;});
+    bad([](auto& r){auto a=r["tracks"].toArray();a.removeLast();r["tracks"]=a;});
+    bad([](auto& r){auto a=r["clips"].toArray();a.append(a[0]);r["clips"]=a;});
+    bad([](auto& r){auto a=r["clips"].toArray();a.removeLast();r["clips"]=a;});
+    clip(0,[](auto& c){c["audio"]="future";});
+    clip(0,[](auto& c){c.remove("audio");c["pattern"]=QJsonObject{};});           // pattern on an audio clip
+    clip(1,[](auto& c){c.remove("pattern");c["audio"]="pulse";});                 // audio source on a MIDI clip
+    clip(2,[](auto& c){c["path"]="relative.wav";});
+    clip(2,[](auto& c){c["path"]="";});
+    clip(2,[](auto& c){c.remove("path");});
+    clip(0,[](auto& c){c["path"]="/a.wav";});                                      // only wav carries a path
+    clip(3,[](auto& c){auto p=c["pattern"].toObject();p["length"]=17;c["pattern"]=p;});
+    clip(3,[](auto& c){auto p=c["pattern"].toObject();auto s=p["steps"].toArray();s.removeLast();p["steps"]=s;c["pattern"]=p;});
+    clip(3,[](auto& c){c["id"]="99";});
+    // A desktop project keeps one clip per track and at least one scene.
+    auto twoClips=project;fl_live::SessionDocument document(twoClips.identities);
+    const auto extra=document.createClip(twoClips.identities.tracks[0].id,"Second");twoClips.identities=document.snapshot();
+    twoClips.content.clips.push_back({extra});
+    rejects([&]{encodeAuthoredProject(twoClips);});
+    auto noScenes=project;noScenes.identities.scenes.clear();
+    rejects([&]{encodeAuthoredProject(noScenes);});
+    auto badLevel=project;badLevel.content.tracks[0].level=-1;rejects([&]{encodeAuthoredProject(badLevel);});
+    QTemporaryDir directory;CHECK(directory.isValid());const auto path=directory.filePath("keep.json");
+    writeAuthoredProject(path,project);
+    QFile file(path);CHECK(file.open(QIODevice::ReadOnly));const auto saved=file.readAll();file.close();
+    rejects([&]{writeAuthoredProject(path,badLevel);});
+    CHECK(file.open(QIODevice::ReadOnly));CHECK(file.readAll()==saved);
+    rejects([&]{decodeAuthoredProject(QByteArray(4*1024*1024+1024*1024+1,' '));});
+}
+int main(){try{
+    legacyMigration();generalRoundTrip();generalRejection();
+    std::cout<<"PASS: v1-v3 migration with sample equivalence, v4 general content round trip, sources and rejection\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

@@ -2,6 +2,7 @@
 #include "fl_live/pipewire_backend.hpp"
 #include "project.hpp"
 #include "authored_project.hpp"
+#include "fl_live/media_import.hpp"
 #include <QVariantList>
 #include <QObject>
 #include <QTimer>
@@ -10,6 +11,8 @@
 #include <thread>
 #include <optional>
 #include <type_traits>
+#include <functional>
+#include <QStringList>
 
 // QObject and the sole command producer live on the GUI thread. Preview renders
 // there too; a connected backend exclusively owns processing instead.
@@ -54,6 +57,11 @@ class Session final : public QObject {
     Q_PROPERTY(QString mode READ mode NOTIFY changed)
     Q_PROPERTY(bool audioAvailable READ audioAvailable NOTIFY changed)
     Q_PROPERTY(bool exporting READ exporting NOTIFY changed)
+    Q_PROPERTY(int trackCount READ trackCount NOTIFY changed)
+    Q_PROPERTY(QVariantList trackKinds READ trackKinds NOTIFY changed)
+    Q_PROPERTY(QVariantList trackSources READ trackSources NOTIFY changed)
+    Q_PROPERTY(int patternTrackIndex READ patternTrackIndex NOTIFY changed)
+    Q_PROPERTY(bool importing READ importing NOTIFY changed)
     Q_PROPERTY(double exportProgress READ exportProgress NOTIFY changed)
 public:
     explicit Session(fl_live::PipeWireConfig config = {}, QObject* parent = nullptr);
@@ -85,7 +93,22 @@ public:
     Q_INVOKABLE bool renameScene(const QString& id, const QString& name);
     Q_INVOKABLE bool launchScene(const QString& id, const QString& policy);
     Q_INVOKABLE bool stopScene(const QString& id, const QString& policy);
-    int stepCount() const { return settings_.step_count; }
+    // General track management (one clip per track). Stopped edits with Undo.
+    int trackCount() const { return static_cast<int>(identities_->tracks.size()); }
+    QVariantList trackKinds() const;   // "audio" or "midi"
+    QVariantList trackSources() const; // human-readable clip source per track
+    Q_INVOKABLE bool addTrack(const QString& kind);
+    Q_INVOKABLE bool duplicateTrack(const QString& id);
+    Q_INVOKABLE bool deleteTrack(const QString& id);
+    // The step editor shows one MIDI clip; choose it by track. -1 when none.
+    Q_INVOKABLE bool editPattern(const QString& trackId);
+    int patternTrackIndex() const;
+    // WAV decoding runs on a worker; the result is applied as one Undo step
+    // once transport is stopped. One import at a time.
+    Q_INVOKABLE bool importAudio(const QString& trackId, const QString& path);
+    Q_INVOKABLE void cancelImport();
+    bool importing() const { return import_ticket_ != 0 || ready_import_.has_value(); }
+    int stepCount() const { return pattern().step_count; }
     int selectedStep() const { return selected_step_; }
     QVariantList stepEnabled() const;
     QVariantList velocities() const;
@@ -95,7 +118,7 @@ public:
     Q_INVOKABLE void setStepEnabled(int index, bool value);
     Q_INVOKABLE void setVelocity(int index, int value);
     Q_INVOKABLE void setGate(int index, int value);
-    int tempo() const { return settings_.tempo; }
+    int tempo() const { return content_->tempo; }
     QVariantList levels() const;
     QVariantList pitches() const;
     QVariantList pans() const;
@@ -105,7 +128,7 @@ public:
     Q_INVOKABLE bool setPan(const QString& trackId, int value);
     Q_INVOKABLE bool setMute(const QString& trackId, bool value);
     Q_INVOKABLE bool setSolo(const QString& trackId, bool value);
-    bool dirty() const { return settings_ != saved_settings_ || identities_->tracks != saved_identities_->tracks ||
+    bool dirty() const { return *content_ != *saved_content_ || identities_->tracks != saved_identities_->tracks ||
         identities_->clips != saved_identities_->clips || identities_->scenes != saved_identities_->scenes; }
     bool canUndo() const { return canEdit() && history_cursor_ > 0; }
     bool canRedo() const { return canEdit() && history_cursor_ + 1 < history_size_; }
@@ -151,11 +174,12 @@ private:
         const fl_live::DocumentRenderPlan mapped;
         fl_live::RenderController controller;
         std::unique_ptr<fl_live::PipeWireBackend> backend;
-        Prepared(const ProjectSettings& settings, const fl_live::DocumentSnapshot& identities)
-            : mapped(identities, templateSources(settings, identities), 48000,
-                static_cast<std::uint32_t>(settings.tempo)*1000U, {}, templateGains(settings, identities)), controller(mapped.plan()) {}
+        Prepared(const SessionContent& content, const fl_live::DocumentSnapshot& identities)
+            : mapped(identities, contentSources(content, identities), 48000,
+                static_cast<std::uint32_t>(content.tempo)*1000U, {}, contentGains(content, identities)), controller(mapped.plan()) {}
     };
-    ProjectSettings settings_;
+    using Content = std::shared_ptr<const SessionContent>;
+    Content content_ = std::make_shared<const SessionContent>(defaultProject().content);
     using Identities = std::shared_ptr<const fl_live::DocumentSnapshot>;
     Identities identities_ = std::make_shared<const fl_live::DocumentSnapshot>(defaultTemplateIdentities());
     fl_live::SceneId selected_scene_ = identities_->scenes[0].id;
@@ -163,9 +187,10 @@ private:
     const fl_live::PipeWireConfig config_;
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
-    enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete, scene_copy, scene_order, track_pan, track_mute, track_solo };
+    enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete, scene_copy, scene_order, track_pan, track_mute, track_solo,
+        track_create, track_duplicate, track_delete, audio_import };
     struct HistoryEntry {
-        ProjectSettings settings;
+        Content content;
         Identities identities;
         EditKind kind = EditKind::none;
         int index = -1;
@@ -176,10 +201,23 @@ private:
     static_assert(std::is_nothrow_copy_assignable_v<HistoryEntry>);
     std::array<HistoryEntry, history_capacity + 1> history_{};
     std::size_t history_cursor_ = 0, history_size_ = 1;
-    ProjectSettings saved_settings_;
+    Content saved_content_;
     Identities saved_identities_;
     static QString editName(const HistoryEntry& entry);
-    void edit(const ProjectSettings& next, EditKind kind, int index = -1);
+    void edit(const SessionContent& next, EditKind kind, int index = -1);
+    // Applies a document+content change (track management) as one Undo step.
+    bool commitStructure(SessionContent next, const fl_live::DocumentSnapshot& identities, EditKind kind, int index);
+    const StepPattern& pattern() const;
+    void editPatternStep(EditKind kind, int index, const std::function<void(StepPattern&)>& change);
+    fl_live::ClipId pattern_clip_{};
+    void restorePatternTarget();
+    std::unique_ptr<fl_live::WavImportWorker> importer_;
+    std::uint64_t import_ticket_ = 0;
+    fl_live::TrackId import_track_{};
+    QString import_path_;
+    std::optional<fl_live::WavImport> ready_import_;
+    void pollImport();
+    QStringList resolveAssets(SessionContent& content) const;
     void pushHistory(EditKind kind, int index);
     enum class NameKind { track, clip, scene };
     bool rename(const QString& id, const QString& name, NameKind kind);
@@ -193,7 +231,7 @@ private:
     bool addScene(std::optional<fl_live::SceneId> source);
     void restoreSceneSelection(fl_live::SceneId id, bool notify = true);
     int selected_step_ = 0;
-    bool replace(const ProjectSettings& settings, Identities identities = {});
+    bool replace(Content content, Identities identities = {});
     bool editable();
     struct ExportJob {
         ExportProgress progress;
@@ -207,8 +245,8 @@ private:
     QTimer timer_;
     fl_live::RenderStatus status_{};
     std::uint64_t serial_ = 0;
-    std::array<std::uint64_t, 2> track_serials_{};
-    std::array<fl_live::ControlKind, 2> track_requests_{};
+    std::array<std::uint64_t, fl_live::Engine::track_capacity> track_serials_{};
+    std::array<fl_live::ControlKind, fl_live::Engine::track_capacity> track_requests_{};
     QString message_ = "Ready. Launches use the next 4/4 bar.";
     const bool preview_;
     bool failed_ = false;

@@ -27,32 +27,46 @@ int integer(const QJsonValue& value, int low, int high) {
     return static_cast<int>(n);
 }
 }
-fl_live::SessionPlan prepareProject(const ProjectSettings& s) {
-    validate(s);
-    using namespace fl_live;
+namespace {
+fl_live::Frame boundary(int tempo, unsigned hundredths_of_a_beat) {
     // Each boundary rounds independently, rather than accumulating rounded beats.
-    const auto boundary = [&](unsigned hundredths_of_a_beat) -> Frame {
-        const auto numerator = 48000ULL * 60 * hundredths_of_a_beat;
-        const auto denominator = static_cast<unsigned>(s.tempo) * 100;
-        return (numerator + denominator - 1) / denominator;
-    };
-    AudioClip pulse;
-    pulse.samples.resize(static_cast<std::size_t>(boundary(100)));
+    const auto numerator = 48000ULL * 60 * hundredths_of_a_beat;
+    const auto denominator = static_cast<unsigned>(tempo) * 100;
+    return (numerator + denominator - 1) / denominator;
+}
+}
+void validatePattern(const StepPattern& pattern) {
+    ProjectSettings s;
+    s.step_count = pattern.step_count;
+    s.steps = pattern.steps;
+    validate(s);
+}
+fl_live::AudioClip pulseClip(int tempo) {
+    fl_live::AudioClip pulse;
+    pulse.samples.resize(static_cast<std::size_t>(boundary(tempo, 100)));
     for (std::size_t n = 0; n < pulse.samples.size(); ++n) {
         const double t = static_cast<double>(n) / 48000.0;
         pulse.samples[n] = static_cast<float>(0.18 * std::sin(2 * 3.141592653589793 * 110 * t) * std::exp(-22 * t));
     }
-    MidiClip midi{boundary(static_cast<unsigned>(s.step_count) * 100), {}, true};
-    for (unsigned n = 0; n < static_cast<unsigned>(s.step_count); ++n) {
-        const auto& step = s.steps[n];
+    return pulse;
+}
+fl_live::MidiClip patternClip(const StepPattern& pattern, int tempo) {
+    validatePattern(pattern);
+    fl_live::MidiClip midi{boundary(tempo, static_cast<unsigned>(pattern.step_count) * 100), {}, true};
+    for (unsigned n = 0; n < static_cast<unsigned>(pattern.step_count); ++n) {
+        const auto& step = pattern.steps[n];
         if (!step.enabled) continue;
-        const auto start = boundary(n * 100);
-        midi.notes.push_back({start, boundary(n * 100 + static_cast<unsigned>(step.gate)) - start,
+        const auto start = boundary(tempo, n * 100);
+        midi.notes.push_back({start, boundary(tempo, n * 100 + static_cast<unsigned>(step.gate)) - start,
             static_cast<std::uint8_t>(step.pitch), static_cast<float>(step.velocity) / 100});
     }
+    return midi;
+}
+fl_live::SessionPlan prepareProject(const ProjectSettings& s) {
+    validate(s);
     return {48000, static_cast<std::uint32_t>(s.tempo * 1000),
-        {{static_cast<float>(s.levels[0]) / 100, {std::move(pulse)}},
-         {static_cast<float>(s.levels[1]) / 100, {std::move(midi)}}}};
+        {{static_cast<float>(s.levels[0]) / 100, {pulseClip(s.tempo)}},
+         {static_cast<float>(s.levels[1]) / 100, {patternClip({s.step_count, s.steps}, s.tempo)}}}};
 }
 ProjectSettings readProject(const QString& path) {
     QFile file(path);

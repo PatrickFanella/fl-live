@@ -1,19 +1,93 @@
 #include "authored_project.hpp"
 #include "fl_live/document_io.hpp"
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QSaveFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 namespace {
-constexpr qsizetype limit = fl_live::document_metadata_byte_limit + 65536;
+// Metadata plus bounded content: 64 tracks with 16-step patterns and paths.
+constexpr qsizetype limit = fl_live::document_metadata_byte_limit + 1024 * 1024;
+constexpr qsizetype asset_path_limit = 4096;
 fl_live::ClipId clipFor(const fl_live::DocumentSnapshot& identities, fl_live::TrackId track) {
     const auto found=std::find_if(identities.clips.begin(),identities.clips.end(),[track](const auto& clip){return clip.track==track;});
     if(found==identities.clips.end()) throw std::invalid_argument("Missing authored clip");
     return found->id;
+}
+const fl_live::DocumentTrack& trackOf(const fl_live::DocumentSnapshot& identities, fl_live::ClipId clip) {
+    const auto owner=std::find_if(identities.clips.begin(),identities.clips.end(),[clip](const auto& c){return c.id==clip;});
+    if(owner==identities.clips.end())throw std::invalid_argument("Unknown clip");
+    return *std::find_if(identities.tracks.begin(),identities.tracks.end(),[&](const auto& t){return t.id==owner->track;});
+}
+QString idText(std::uint64_t id){return QString::number(static_cast<qulonglong>(id));}
+std::uint64_t idValue(const QJsonValue& value) {
+    bool ok=false;const auto text=value.toString();const auto id=text.toULongLong(&ok);
+    if(!value.isString() || !ok || !id || idText(id)!=text)throw std::invalid_argument("Invalid content identity");
+    return id;
+}
+int integer(const QJsonValue& value,int low,int high) {
+    if(!value.isDouble())throw std::invalid_argument("Project requires numeric content");
+    const double n=value.toDouble();
+    if(!std::isfinite(n) || n<low || n>high || std::floor(n)!=n)throw std::invalid_argument("Project content is out of range or not an integer");
+    return static_cast<int>(n);
+}
+QJsonObject exact(const QJsonValue& value,std::initializer_list<const char*> names) {
+    if(!value.isObject())throw std::invalid_argument("Project content requires an object");
+    const auto object=value.toObject();
+    if(object.size()!=static_cast<qsizetype>(names.size()))throw std::invalid_argument("Unsupported project content fields");
+    for(const auto* name:names)if(!object.contains(QLatin1String(name)))throw std::invalid_argument("Missing project content field");
+    return object;
+}
+QJsonObject encodePattern(const StepPattern& pattern) {
+    QJsonArray steps;
+    for(const auto& step:pattern.steps)
+        steps.append(QJsonObject{{"enabled",step.enabled},{"pitch",step.pitch},{"velocity",step.velocity},{"gate",step.gate}});
+    return QJsonObject{{"length",pattern.step_count},{"steps",steps}};
+}
+StepPattern decodePattern(const QJsonValue& value) {
+    const auto object=exact(value,{"length","steps"});
+    StepPattern pattern;
+    pattern.step_count=integer(object["length"],1,16);
+    const auto steps=object["steps"].toArray();
+    if(!object["steps"].isArray() || steps.size()!=16)throw std::invalid_argument("Pattern requires 16 stored steps");
+    for(int i=0;i<16;++i) {
+        const auto step=exact(steps[i],{"enabled","pitch","velocity","gate"});
+        if(!step["enabled"].isBool())throw std::invalid_argument("Invalid step object");
+        pattern.steps[static_cast<std::size_t>(i)]={step["enabled"].toBool(),integer(step["pitch"],0,127),
+            integer(step["velocity"],0,100),integer(step["gate"],1,100)};
+    }
+    validatePattern(pattern);
+    return pattern;
+}
+AuthoredProject decodeTemplate(const QByteArray& bytes, const QJsonObject& root) {
+    if(root["version"].isDouble() && (root["version"].toDouble()==1 || root["version"].toDouble()==2)) {
+        const auto settings=decodeProjectSettings(bytes);const auto identities=defaultTemplateIdentities();
+        return {migrateTemplate(settings,identities),identities};
+    }
+    const auto features=root["required_features"].toArray();
+    const bool sceneSlots=features.contains("template-scene-slots-v1");
+    const bool multipleScenes=features.contains("template-scenes-v1");
+    QJsonArray expected{"template-identities-v1"};
+    if(sceneSlots)expected.append("template-scene-slots-v1");
+    if(multipleScenes)expected.append("template-scenes-v1");
+    if(root.size()!=5 || !root["version"].isDouble() || root["version"].toDouble()!=3 ||
+       !root["settings"].isObject() || !root["session"].isObject() || !root["required_features"].isArray() ||
+       features!=expected)
+        throw std::invalid_argument("Unsupported authored project fields/version/features");
+    const auto settings=decodeProjectSettings(QJsonDocument(root["settings"].toObject()).toJson(QJsonDocument::Compact));
+    const auto identities=fl_live::decodeDocumentMetadata(QJsonDocument(root["session"].toObject()).toJson(QJsonDocument::Compact));
+    validateTemplateIdentities(identities);
+    if(!multipleScenes && identities.scenes.size()!=1)
+        throw std::invalid_argument("Multiple scenes require template-scenes-v1");
+    if(!sceneSlots && std::any_of(identities.scenes.begin(),identities.scenes.end(),[](const auto& scene){return scene.entries.size()!=2;}))
+        throw std::invalid_argument("Unfilled scene slots require template-scene-slots-v1");
+    return {migrateTemplate(settings,identities),identities};
 }
 }
 fl_live::DocumentSnapshot defaultTemplateIdentities() {
@@ -24,6 +98,10 @@ fl_live::DocumentSnapshot defaultTemplateIdentities() {
     const auto scene=document.createScene("Scene 1");
     document.setSlot(scene,a,ca);document.setSlot(scene,m,cm);
     return document.snapshot();
+}
+AuthoredProject defaultProject() {
+    const auto identities=defaultTemplateIdentities();
+    return {migrateTemplate(ProjectSettings{},identities),identities};
 }
 void validateTemplateIdentities(const fl_live::DocumentSnapshot& identities) {
     fl_live::SessionDocument::validate(identities);
@@ -47,16 +125,105 @@ std::vector<fl_live::DocumentTrackGain> templateGains(const ProjectSettings& set
     return {{identities.tracks[0].id,static_cast<float>(settings.levels[0])/100},
             {identities.tracks[1].id,static_cast<float>(settings.levels[1])/100}};
 }
+SessionContent migrateTemplate(const ProjectSettings& settings,const fl_live::DocumentSnapshot& identities) {
+    validateTemplateIdentities(identities);
+    (void)encodeProjectSettings(settings);
+    SessionContent content{settings.tempo,{},{}};
+    for(std::size_t i=0;i<2;++i) {
+        const auto track=identities.tracks[i].id;
+        content.tracks.push_back({track,settings.levels[i]});
+        ClipContent clip{clipFor(identities,track)};
+        if(i==1)clip.pattern={settings.step_count,settings.steps};
+        content.clips.push_back(std::move(clip));
+    }
+    validateContent(content,identities);
+    return content;
+}
+ProjectSettings templateView(const SessionContent& content,const fl_live::DocumentSnapshot& identities) {
+    ProjectSettings settings;
+    settings.tempo=content.tempo;
+    const auto audio=std::find_if(identities.tracks.begin(),identities.tracks.end(),[](const auto& t){return t.kind==fl_live::TrackKind::audio;});
+    const auto midi=std::find_if(identities.tracks.begin(),identities.tracks.end(),[](const auto& t){return t.kind==fl_live::TrackKind::midi;});
+    if(audio!=identities.tracks.end())settings.levels[0]=trackContent(content,audio->id).level;
+    if(midi!=identities.tracks.end()) {
+        settings.levels[1]=trackContent(content,midi->id).level;
+        const auto& pattern=clipContent(content,clipFor(identities,midi->id)).pattern;
+        settings.step_count=pattern.step_count;settings.steps=pattern.steps;
+    }
+    return settings;
+}
+const ClipContent& clipContent(const SessionContent& content,fl_live::ClipId clip) {
+    const auto found=std::find_if(content.clips.begin(),content.clips.end(),[clip](const auto& c){return c.clip==clip;});
+    if(found==content.clips.end())throw std::invalid_argument("Missing clip content");
+    return *found;
+}
+const TrackContent& trackContent(const SessionContent& content,fl_live::TrackId track) {
+    const auto found=std::find_if(content.tracks.begin(),content.tracks.end(),[track](const auto& t){return t.track==track;});
+    if(found==content.tracks.end())throw std::invalid_argument("Missing track content");
+    return *found;
+}
+void validateContent(const SessionContent& content,const fl_live::DocumentSnapshot& identities) {
+    fl_live::SessionDocument::validate(identities);
+    if(content.tempo<20 || content.tempo>300)throw std::invalid_argument("Tempo must be 20 to 300 BPM");
+    if(identities.scenes.empty())throw std::invalid_argument("A desktop project keeps at least one scene");
+    if(content.tracks.size()!=identities.tracks.size() || content.clips.size()!=identities.clips.size())
+        throw std::invalid_argument("Every track and clip requires exactly one content entry");
+    for(const auto& track:identities.tracks) {
+        const auto& value=trackContent(content,track.id);
+        if(value.level<0 || value.level>100)throw std::invalid_argument("Track level must be 0 to 100 percent");
+        if(std::count_if(content.tracks.begin(),content.tracks.end(),[&](const auto& t){return t.track==track.id;})!=1)
+            throw std::invalid_argument("Duplicate track content");
+        if(static_cast<std::size_t>(std::count_if(identities.clips.begin(),identities.clips.end(),[&](const auto& c){return c.track==track.id;}))!=desktop_clips_per_track)
+            throw std::invalid_argument("Each desktop track holds exactly one clip");
+    }
+    for(const auto& clip:identities.clips) {
+        const auto& value=clipContent(content,clip.id);
+        if(std::count_if(content.clips.begin(),content.clips.end(),[&](const auto& c){return c.clip==clip.id;})!=1)
+            throw std::invalid_argument("Duplicate clip content");
+        validatePattern(value.pattern);
+        const bool wav=value.audio==AudioSource::wav;
+        if(value.audio!=AudioSource::pulse && value.audio!=AudioSource::empty && !wav)throw std::invalid_argument("Unknown audio source");
+        if(wav!=!value.asset.isEmpty() || (!value.asset.isEmpty() && (!QDir::isAbsolutePath(value.asset) || value.asset.size()>asset_path_limit)))
+            throw std::invalid_argument("Imported audio requires one absolute asset path");
+        if(value.media && (!wav || value.media->samples.empty()))throw std::invalid_argument("Decoded media requires an imported WAV clip");
+    }
+}
+std::vector<fl_live::DocumentClipSource> contentSources(const SessionContent& content,const fl_live::DocumentSnapshot& identities) {
+    validateContent(content,identities);
+    std::vector<fl_live::DocumentClipSource> result;
+    for(const auto& clip:identities.clips) {
+        const auto& value=clipContent(content,clip.id);
+        const auto kind=std::find_if(identities.tracks.begin(),identities.tracks.end(),[&](const auto& t){return t.id==clip.track;})->kind;
+        if(kind==fl_live::TrackKind::midi)result.push_back({clip.id,patternClip(value.pattern,content.tempo)});
+        else if(value.audio==AudioSource::pulse)result.push_back({clip.id,pulseClip(content.tempo)});
+        else if(value.media)result.push_back({clip.id,*value.media});
+        else result.push_back({clip.id,fl_live::AudioClip{{0.0F},true}}); // empty or missing: silence
+    }
+    return result;
+}
+std::vector<fl_live::DocumentTrackGain> contentGains(const SessionContent& content,const fl_live::DocumentSnapshot& identities) {
+    validateContent(content,identities);
+    std::vector<fl_live::DocumentTrackGain> result;
+    for(const auto& track:identities.tracks)result.push_back({track.id,static_cast<float>(trackContent(content,track.id).level)/100});
+    return result;
+}
 QByteArray encodeAuthoredProject(const AuthoredProject& project) {
-    validateTemplateIdentities(project.identities);
-    const auto settings=QJsonDocument::fromJson(encodeProjectSettings(project.settings)).object();
-    const auto identities=QJsonDocument::fromJson(fl_live::encodeDocumentMetadata(project.identities)).object();
-    QJsonArray features{"template-identities-v1"};
-    if(std::any_of(project.identities.scenes.begin(),project.identities.scenes.end(),[](const auto& scene){return scene.entries.size()!=2;}))
-        features.append("template-scene-slots-v1");
-    if(project.identities.scenes.size()!=1)features.append("template-scenes-v1");
-    const auto bytes=QJsonDocument(QJsonObject{{"format","fl-live-project"},{"version",3},
-        {"required_features",features}, {"settings",settings},{"session",identities}}).toJson();
+    validateContent(project.content,project.identities);
+    QJsonArray tracks,clips;
+    for(const auto& track:project.identities.tracks)
+        tracks.append(QJsonObject{{"id",idText(track.id.value)},{"level",trackContent(project.content,track.id).level}});
+    for(const auto& clip:project.identities.clips) {
+        const auto& value=clipContent(project.content,clip.id);
+        if(trackOf(project.identities,clip.id).kind==fl_live::TrackKind::midi)
+            clips.append(QJsonObject{{"id",idText(clip.id.value)},{"pattern",encodePattern(value.pattern)}});
+        else if(value.audio==AudioSource::wav)
+            clips.append(QJsonObject{{"id",idText(clip.id.value)},{"audio","wav"},{"path",value.asset}});
+        else clips.append(QJsonObject{{"id",idText(clip.id.value)},{"audio",value.audio==AudioSource::pulse ? "pulse" : "empty"}});
+    }
+    const auto session=QJsonDocument::fromJson(fl_live::encodeDocumentMetadata(project.identities)).object();
+    const auto bytes=QJsonDocument(QJsonObject{{"format","fl-live-project"},{"version",4},
+        {"required_features",QJsonArray{"general-session-v1"}},{"tempo",project.content.tempo},
+        {"session",session},{"tracks",tracks},{"clips",clips}}).toJson();
     if(bytes.size()>limit)throw std::invalid_argument("Authored project exceeds size limit");
     return bytes;
 }
@@ -66,25 +233,45 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
     if(error.error!=QJsonParseError::NoError || !json.isObject())throw std::invalid_argument("Project is not a valid JSON object");
     const auto root=json.object();
     if(root["format"]!="fl-live-project")throw std::invalid_argument("Unsupported project format");
-    if(root["version"].isDouble() && (root["version"].toDouble()==1 || root["version"].toDouble()==2))
-        return {decodeProjectSettings(bytes),defaultTemplateIdentities()};
-    const auto features=root["required_features"].toArray();
-    const bool sceneSlots=features.contains("template-scene-slots-v1");
-    const bool multipleScenes=features.contains("template-scenes-v1");
-    QJsonArray expected{"template-identities-v1"};
-    if(sceneSlots)expected.append("template-scene-slots-v1");
-    if(multipleScenes)expected.append("template-scenes-v1");
-    if(root.size()!=5 || !root["version"].isDouble() || root["version"].toDouble()!=3 ||
-       !root["settings"].isObject() || !root["session"].isObject() || !root["required_features"].isArray() ||
-       features!=expected)
-        throw std::invalid_argument("Unsupported authored project fields/version/features");
-    AuthoredProject project{decodeProjectSettings(QJsonDocument(root["settings"].toObject()).toJson(QJsonDocument::Compact)),
-        fl_live::decodeDocumentMetadata(QJsonDocument(root["session"].toObject()).toJson(QJsonDocument::Compact))};
-    validateTemplateIdentities(project.identities);
-    if(!multipleScenes && project.identities.scenes.size()!=1)
-        throw std::invalid_argument("Multiple scenes require template-scenes-v1");
-    if(!sceneSlots && std::any_of(project.identities.scenes.begin(),project.identities.scenes.end(),[](const auto& scene){return scene.entries.size()!=2;}))
-        throw std::invalid_argument("Unfilled scene slots require template-scene-slots-v1");
+    if(!root["version"].isDouble() || root["version"].toDouble()!=4)return decodeTemplate(bytes,root);
+    const auto v4=exact(root,{"format","version","required_features","tempo","session","tracks","clips"});
+    if(v4["required_features"].toArray()!=QJsonArray{"general-session-v1"})throw std::invalid_argument("Unsupported required project feature");
+    if(!v4["session"].isObject())throw std::invalid_argument("Project requires a session object");
+    AuthoredProject project;
+    project.identities=fl_live::decodeDocumentMetadata(QJsonDocument(v4["session"].toObject()).toJson(QJsonDocument::Compact));
+    project.content.tempo=integer(v4["tempo"],20,300);
+    const auto tracks=v4["tracks"].toArray(),clips=v4["clips"].toArray();
+    if(!v4["tracks"].isArray() || !v4["clips"].isArray() ||
+       tracks.size()>static_cast<qsizetype>(fl_live::SessionDocument::track_limit) ||
+       clips.size()>static_cast<qsizetype>(fl_live::SessionDocument::clip_limit))
+        throw std::invalid_argument("Invalid or oversized project content arrays");
+    for(const auto& value:tracks) {
+        const auto track=exact(value,{"id","level"});
+        project.content.tracks.push_back({fl_live::TrackId{idValue(track["id"])},integer(track["level"],0,100)});
+    }
+    for(const auto& value:clips) {
+        if(!value.isObject())throw std::invalid_argument("Clip content requires an object");
+        const auto object=value.toObject();
+        ClipContent clip;
+        if(object.contains("pattern")) {
+            const auto fields=exact(value,{"id","pattern"});
+            clip.clip=fl_live::ClipId{idValue(fields["id"])};clip.pattern=decodePattern(fields["pattern"]);
+            if(trackOf(project.identities,clip.clip).kind!=fl_live::TrackKind::midi)throw std::invalid_argument("Pattern on an audio clip");
+        } else {
+            const auto source=object["audio"].toString();
+            const auto fields=source=="wav" ? exact(value,{"id","audio","path"}) : exact(value,{"id","audio"});
+            clip.clip=fl_live::ClipId{idValue(fields["id"])};
+            if(trackOf(project.identities,clip.clip).kind!=fl_live::TrackKind::audio)throw std::invalid_argument("Audio source on a MIDI clip");
+            if(source=="pulse")clip.audio=AudioSource::pulse;
+            else if(source=="empty")clip.audio=AudioSource::empty;
+            else if(source=="wav") {
+                if(!fields["path"].isString())throw std::invalid_argument("Imported audio requires a path string");
+                clip.audio=AudioSource::wav;clip.asset=fields["path"].toString();
+            } else throw std::invalid_argument("Unsupported audio source");
+        }
+        project.content.clips.push_back(std::move(clip));
+    }
+    validateContent(project.content,project.identities);
     return project;
 }
 AuthoredProject readAuthoredProject(const QString& path) {

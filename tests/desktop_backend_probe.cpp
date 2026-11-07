@@ -10,7 +10,7 @@
 #include <QTemporaryDir>
 #include <iostream>
 
-static ProjectSettings readAuthoredSettings(const QString& path) { return readAuthoredProject(path).settings; }
+static ProjectSettings readAuthoredSettings(const QString& path) { const auto p = readAuthoredProject(path); return templateView(p.content, p.identities); }
 
 // Invoked only by the owned private-server fixture. Exercises stopped graph
 // replacement; optional workflow mode drives QML signals and captures software

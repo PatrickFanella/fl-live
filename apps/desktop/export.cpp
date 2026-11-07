@@ -17,21 +17,21 @@ std::uint64_t exportFrames(int tempo, int bars) {
 }
 QString exportPartialPath(const QString& path) { return path + QStringLiteral(".part"); }
 
-ExportOutcome exportProjectWav(const QString& path, const ProjectSettings& settings, const fl_live::DocumentSnapshot& identities,
+ExportOutcome exportProjectWav(const QString& path, const SessionContent& content, const fl_live::DocumentSnapshot& identities,
     int bars, ExportProgress* progress) {
     if (bars < 1 || bars > 16) throw std::invalid_argument("Export length must be 1 to 16 bars");
     if (path.trimmed().isEmpty()) throw std::invalid_argument("Enter a new WAV file path");
     // Exclusive checks preserve every existing destination, including links.
     if (QFileInfo::exists(path) || QFileInfo(path).isSymLink())
         throw std::runtime_error("Cannot create WAV: choose a new writable file path");
-    const fl_live::DocumentRenderPlan prepared(identities, templateSources(settings, identities), 48000,
-        static_cast<std::uint32_t>(settings.tempo) * 1000U, {}, templateGains(settings, identities));
+    const fl_live::DocumentRenderPlan prepared(identities, contentSources(content, identities), 48000,
+        static_cast<std::uint32_t>(content.tempo) * 1000U, {}, contentGains(content, identities));
     fl_live::Engine engine(prepared.plan());
     for (std::size_t track = 0; track < prepared.plan().tracks.size(); ++track)
         if (engine.schedule({fl_live::CommandKind::launch, 0, track, 0}) != fl_live::ScheduleResult::accepted)
             throw std::runtime_error("Cannot schedule export clips");
     engine.start();
-    const auto frames = exportFrames(settings.tempo, bars);
+    const auto frames = exportFrames(content.tempo, bars);
     if (progress) progress->total.store(frames);
     constexpr quint16 channels = 2;
     const auto size = static_cast<quint32>(frames * 2 * channels);

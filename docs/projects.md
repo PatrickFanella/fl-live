@@ -1,12 +1,12 @@
 # Project settings and step patterns
 
-The desktop app edits and persists the Pulse + Steps session: tempo from 20–300 integer BPM, two track levels from 0–100 percent and a MIDI pattern of 1–16 quarter-note steps. Each step stores an enabled flag, MIDI pitch 0–127, velocity 0–100 percent and gate 1–100 percent. Selection is UI state and does not mark the document dirty. [Undo/Redo](edit-history.md) restores up to 128 committed document edits while stopped; saved-content equality determines dirty state. Edits require acknowledged stopped transport with no pending control messages, then rebuild at position zero and clear launches.
+The desktop app edits and persists a Session of audio and MIDI tracks; see [general Session tracks](general-session.md) for track management, WAV import and the version 4 file. New projects start as the Pulse + Steps template. Settings are tempo from 20–300 integer BPM, a level from 0–100 percent per track and, per MIDI clip, a pattern of 1–16 quarter-note steps. Each step stores an enabled flag, MIDI pitch 0–127, velocity 0–100 percent and gate 1–100 percent. Selection is UI state and does not mark the document dirty. [Undo/Redo](edit-history.md) restores up to 128 committed document edits while stopped; saved-content equality determines dirty state. Edits require acknowledged stopped transport with no pending control messages, then rebuild at position zero and clear launches.
 
 Select a numbered step in the grid. Note enabled turns it into a note or rest; its pitch, velocity and gate controls retain their values while disabled. Gate is the note duration as a percentage of a quarter note. Velocity scales the engine's normalized velocity, rather than storing a MIDI 7-bit velocity byte. A zero-velocity enabled note is silent. Steps beyond the selected pattern length do not render, but retain their settings when the pattern is shortened and extended. An all-rest pattern is valid.
 
 ## Version 2 source-settings format
 
-Desktop saves now use the [version 3 authored wrapper](desktop-identities.md), embedding this version 2 source-settings object and stable identity metadata/names. The source-only writer still emits version 2 with template `pulse-step-sequencer-v1` for retained fixtures. The 48 kHz mono pulse remains the authored decaying 110 Hz source; the MIDI track uses the original fixed-voice sine instrument. Every document stores exactly 16 step objects, even when the audible pattern is shorter. This is still an authored-template format: it does not store arbitrary tracks, imported media, free-position notes, plugins or an arrangement.
+Desktop saves now use the [version 4 general format](general-session.md#project-files-version-4); the [version 3 authored wrapper](desktop-identities.md), which embedded this version 2 source-settings object, still opens. The source-only writer still emits version 2 with template `pulse-step-sequencer-v1` for retained fixtures. The 48 kHz mono pulse remains the authored decaying 110 Hz source; the MIDI track uses the original fixed-voice sine instrument. Every document stores exactly 16 step objects, even when the audible pattern is shorter. This is still an authored-template format: it does not store arbitrary tracks, imported media, free-position notes, plugins or an arrangement.
 
 A complete four-step default project is:
 
@@ -43,7 +43,7 @@ A complete four-step default project is:
 
 ## Version 1 migration
 
-The reader still accepts version 1 with template `pulse-steps-v1` and its four-element `pitches` array. It maps those pitches to four enabled quarter-note steps, with velocity 70 percent and gate 75 percent. The remaining twelve steps start disabled. Tempo and levels are preserved. Desktop imports of v1/v2 receive deterministic initial track/clip/scene IDs and save as v3; earlier readers reject that new version. Use a new path to retain a legacy original.
+The reader still accepts version 1 with template `pulse-steps-v1` and its four-element `pitches` array. It maps those pitches to four enabled quarter-note steps, with velocity 70 percent and gate 75 percent. The remaining twelve steps start disabled. Tempo and levels are preserved. Desktop imports of v1/v2 receive deterministic initial track/clip/scene IDs and save as v4; earlier readers reject that new version. Use a new path to retain a legacy original.
 
 The pulse length is one beat rounded up to a sample. MIDI starts, note ends and the pattern length round independently from rational musical positions to samples. A gate of 100 percent ends exactly at the next rounded step boundary. Repeated fixed-length clips may gradually drift from the rational launch grid at fractional sample periods. Pattern length is independent of the 4/4 launch grid: a five-step pattern loops over five quarter notes. General musical-time scheduling, swing and ties remain future work.
 
@@ -63,7 +63,7 @@ Tests cover v1 migration, v2 settings and rendered-sample round trips, rests/all
 
 ## Export the current template mix
 
-Stop transport and wait for acknowledgement, enter a new WAV path, choose 1–16 bars, and select **Export both tracks**. Export uses the current settings, including unsaved edits. Both template clips launch at frame zero in a separate offline engine prepared through the same document plan as playback, so track level, pan, mute and solo apply; transport position, active clips, project path, saved checkpoint and Undo/Redo are unchanged.
+Stop transport and wait for acknowledgement, enter a new WAV path, choose 1–16 bars, and select **Export all tracks**. Export uses the current settings, including unsaved edits. Every track's clip launches at frame zero in a separate offline engine prepared through the same document plan as playback, so track level, pan, mute and solo apply; transport position, active clips, project path, saved checkpoint and Undo/Redo are unchanged.
 
 The result is stereo (interleaved left/right), 48 kHz, little-endian 16-bit PCM WAV. Duration is the selected number of 4/4 bars at the current tempo, rounded upward once to a sample boundary. Both clips loop under the existing engine policies. Output ends at that frame without tails or a fade. Samples are clamped to ±1 and rounded to signed PCM using a 32767 scale. This exports the template mix, not a recording of the launch performance or a selection of active clips.
 
