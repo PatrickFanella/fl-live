@@ -1,0 +1,142 @@
+{
+  "verified_at": "2026-11-07T15:05:05.135989+00:00",
+  "base": "main after PR #161",
+  "issues": [
+    43
+  ],
+  "scope": "MIDI input monitoring: live notes from fl-live-midi-input played on the armed MIDI track's synth",
+  "environment": {
+    "machine": "Kvant, pinned CI image (Qt 6.12, PipeWire 1.6.9), docker --network none, QT_QPA_PLATFORM=offscreen",
+    "graph": "owned private PipeWire server, software driver, no session manager",
+    "rate": 48000,
+    "quantum": 256,
+    "source": "pw-midiplay with an authored SMF"
+  },
+  "gates": {
+    "ci/verify.sh": {
+      "desktop": "38/38",
+      "release": "12/12",
+      "engine-only": "9/9",
+      "pipewire-sanitize": "22/22",
+      "document-io-sanitize": "12/12"
+    },
+    "pipewire-midi-monitoring repeats": {
+      "passed": 8,
+      "total": 8
+    }
+  },
+  "tolerance": "each burst within two quanta (512 frames) of its 12,000-frame note; onsets within two quanta of 48,000 frames apart",
+  "runs": [
+    {
+      "lengths": [
+        11519,
+        12031,
+        11775
+      ],
+      "onset_gaps": [
+        47872,
+        48128
+      ]
+    },
+    {
+      "lengths": [
+        11775,
+        12031,
+        11775
+      ],
+      "onset_gaps": [
+        47872,
+        48128
+      ]
+    },
+    {
+      "lengths": [
+        11775,
+        12031,
+        11775
+      ],
+      "onset_gaps": [
+        47616,
+        48128
+      ]
+    },
+    {
+      "lengths": [
+        11519,
+        12031,
+        11775
+      ],
+      "onset_gaps": [
+        47872,
+        48128
+      ]
+    },
+    {
+      "lengths": [
+        11775,
+        12031,
+        12031
+      ],
+      "onset_gaps": [
+        47616,
+        48128
+      ]
+    },
+    {
+      "lengths": [
+        11775,
+        11775,
+        11775
+      ],
+      "onset_gaps": [
+        47872,
+        48128
+      ]
+    },
+    {
+      "lengths": [
+        11775,
+        11775,
+        11775
+      ],
+      "onset_gaps": [
+        47872,
+        48128
+      ]
+    },
+    {
+      "lengths": [
+        11775,
+        12031,
+        11775
+      ],
+      "onset_gaps": [
+        47872,
+        48128
+      ]
+    }
+  ],
+  "verified_behaviors": [
+    "Live notes sound without a clip or running transport at the track's live instrument, gain and pan; note-off releases; transport stop keeps them; silence_live and panic end them; they follow their track through replace; no allocation",
+    "LiveMidi delivers notes to the masked tracks at the next block and silences on a mask change",
+    "In the desktop, an armed MIDI track with Monitor on plays live notes with the transport stopped; Monitor off, disarm and panic silence them",
+    "Through the private graph, three live notes produce three tone bursts of their length within two quanta, then silence"
+  ],
+  "source_sha256": {
+    "include/fl_live/engine.hpp": "1082683e2520c6e2137938e7320e3d472dbcaa4b8924dfba65f5a058d44b9ab2",
+    "src/engine.cpp": "abb792b409baa87ab8e70ecd97a1a8eee11646bd08ee34cac8623d41931a5f6b",
+    "include/fl_live/controller.hpp": "0f2a2696f2ceb96c83fbb5838a1ccea4a6c6e661f724755285e9e8bcefe7d56d",
+    "include/fl_live/input_monitor.hpp": "49888a80d60bf80df1db4b61bc16bf50894b9370f63021080de7f0c0c1bccb32",
+    "include/fl_live/pipewire_backend.hpp": "352cabbd1e20a87443a5ef9a35e1b8a1adfc20784332ba2c800fa663a49b4498",
+    "src/pipewire_backend.cpp": "b5f527e5602eef5fb033a142048746f1aaa51ee859fb3b2861be235b3614b3d3",
+    "src/document_render.cpp": "6af1781fdf864454d0c1761ef56c56e4ebb672e03365867ca24ce5f1aac3f7ce",
+    "apps/desktop/session.hpp": "541a9352ea2d8d6eb6dfe985b27d75e60010e04861d48d1af1a5a1b1c7e02f50",
+    "apps/desktop/session.cpp": "08b8c0838ebfebc857462bf55c718a7378ae8e4ae0d7d7eb0dd0e5fee5eccbdc",
+    "apps/desktop/Main.qml": "56fce53833f0a0aa00c1d1213c53b1d1845752d20db89dc26bdc4b5317fb79c5",
+    "tests/live_input_tests.cpp": "1c87e5af71d4dc54cfa2546346fe6198a27f2f6fee07fe1612fb57bb1f52a297",
+    "tests/desktop_tests.cpp": "fcaabd98bdafb1ddfb0fcbf53f215c2109321dc641f1665cf1822f3749ae8037",
+    "tests/desktop_backend_probe.cpp": "002386642abe68614c43e43c1824397b4823736a6f19aa5f8e2a8663dd9b5cea",
+    "tests/pipewire_midi_capture.py": "0470a87e07e9604a3b24bb52f3cfc9dec0efdd200c7ecb9ebfa8f82f856b6651"
+  },
+  "limits": "Notes apply at block starts: up to one block late, with one block of jitter because the MIDI input and output are unlinked. The live synth is the track's first MIDI clip's. No hardware controller; no latency measurement on physical devices."
+}

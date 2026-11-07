@@ -43,6 +43,8 @@ public:
     // Input monitoring: the output callback mixes `monitor` in after the
     // engine renders. Returns once the data thread has left the previous one.
     void setMonitor(InputMonitor* monitor) noexcept;
+    // MIDI input monitoring: live notes applied before each block.
+    void setLive(LiveMidi* live) noexcept;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

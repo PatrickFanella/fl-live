@@ -130,6 +130,8 @@ Engine::Engine(const SessionPlan& plan) : plan_(&plan) {
     validatePlan(plan);
     runtime_.resize(track_capacity);
     spare_.resize(track_capacity);
+    live_.resize(track_capacity);
+    live_spare_.resize(track_capacity);
     automation_cursor_.resize(track_capacity);
     for (std::size_t pitch = 0; pitch < steps_.size(); ++pitch)
         steps_[pitch] = 440.0 * std::exp2((static_cast<double>(pitch) - 69.0) / 12.0) / plan.sample_rate;
@@ -227,6 +229,17 @@ ReplaceResult Engine::replace(const SessionPlan& next, const PlanMapping& mappin
     result.dropped_commands = count_ - kept;
     count_ = kept;
     runtime_.swap(spare_);
+    for (auto& voices : live_spare_) voices = {};
+    for (std::size_t old = 0; old < plan_->tracks.size(); ++old) {
+        const auto target = mapping.track_from_old[old];
+        if (target < 0) continue;
+        auto& moved = live_spare_[static_cast<std::size_t>(target)];
+        moved = live_[old];
+        const auto release = next.tracks[static_cast<std::size_t>(target)].live_instrument.release;
+        for (auto& live : moved)
+            if (live.voice.active && live.voice.releasing && live.voice.released >= release) live.voice.active = false;
+    }
+    live_.swap(live_spare_);
     for (auto& cursor : automation_cursor_) cursor = {0, 0, 0, 0};
     plan_ = &next;
     return result;
@@ -252,26 +265,32 @@ float Engine::heldEnvelope(const Instrument& in, Frame age) noexcept {
 
 Engine::StereoSample Engine::render_track(std::size_t index) noexcept {
     auto& state = runtime_[index];
-    if (!state.clip) return {};
+    auto& live = live_[index];
+    const bool live_on = std::any_of(live.begin(), live.end(), [](const LiveVoice& v) { return v.voice.active; });
+    if (!state.clip && !live_on) return {};
     const auto& track = plan_->tracks[index];
-    const auto& clip = track.clips[*state.clip];
-    const auto age = position_ - state.launched;
     auto& cursor = automation_cursor_[index];
     const float device = track.device_gain_automation.empty() ? track.device_gain : automationValue(track.device_gain_automation, position_, cursor[2]);
     const float gain = (track.gain_automation.empty() ? track.gain : automationValue(track.gain_automation, position_, cursor[0])) * device;
     const float pan = track.pan_automation.empty() ? track.pan : automationValue(track.pan_automation, position_, cursor[1]);
     const float left_gain = gain * (pan > 0 ? 1 - pan : 1.0F);
     const float right_gain = gain * (pan < 0 ? 1 + pan : 1.0F);
+    float live_value = 0;
+    for (auto& voice : live) if (voice.voice.active) live_value += voice_sample(voice.voice, track.live_instrument);
+    const StereoSample from_live{left_gain * live_value, right_gain * live_value};
+    if (!state.clip) return from_live;
+    const auto& clip = track.clips[*state.clip];
+    const auto age = position_ - state.launched;
     if (const auto* audio = std::get_if<AudioClip>(&clip)) {
         const auto length = audio->samples.size() / audio->channels;
-        if (!audio->loop && age >= length) { state = Runtime{}; return {}; }
+        if (!audio->loop && age >= length) { state = Runtime{}; return from_live; }
         const auto frame = (age % length) * audio->channels;
         const float left = audio->samples[frame];
         const float right = audio->channels == 2 ? audio->samples[frame + 1] : left;
-        return {left_gain * left, right_gain * right};
+        return {left_gain * left + from_live.left, right_gain * right + from_live.right};
     }
     const auto& midi = std::get<MidiClip>(clip);
-    if (!midi.loop && age >= midi.length) { state = Runtime{}; return {}; }
+    if (!midi.loop && age >= midi.length) { state = Runtime{}; return from_live; }
     const auto& instrument = midi.instrument;
     const auto local = age % midi.length;
     // Loop restart resets the note cursor; sounding voices keep their own
@@ -300,37 +319,79 @@ Engine::StereoSample Engine::render_track(std::size_t index) noexcept {
         *it = Voice{note.duration, 0, steps_[static_cast<std::size_t>(pitch)], note.velocity * 0.1F, 0, 0, 0, false, true};
     }
     float value = 0;
-    for (auto& voice : state.voices) {
-        if (!voice.active) continue;
-        double osc = 0;
-        switch (instrument.waveform) {
-        case Waveform::sine: osc = std::sin(voice.phase * 2.0 * std::numbers::pi); break;
-        case Waveform::triangle: osc = 4.0 * std::abs(voice.phase - 0.5) - 1.0; break;
-        case Waveform::square: osc = voice.phase < 0.5 ? 1.0 : -1.0; break;
-        case Waveform::saw: osc = 2.0 * voice.phase - 1.0; break;
-        }
-        const float envelope = voice.releasing
-            ? voice.release_from * (1 - static_cast<float>(voice.released) / static_cast<float>(instrument.release))
-            : heldEnvelope(instrument, voice.age);
-        value += static_cast<float>(osc) * voice.level * envelope;
-        voice.phase += voice.step;
-        voice.phase -= std::floor(voice.phase);
-        ++voice.age;
-        if (voice.releasing) {
-            if (++voice.released >= instrument.release) voice.active = false;
-        } else if (--voice.remaining == 0) {
-            if (instrument.release == 0) voice.active = false;
-            else { voice.releasing = true; voice.released = 0; voice.release_from = heldEnvelope(instrument, voice.age); }
-        }
+    for (auto& voice : state.voices) if (voice.active) value += voice_sample(voice, instrument);
+    return {left_gain * value + from_live.left, right_gain * value + from_live.right};
+}
+// One frame of a voice; advances it and ends or releases it as due.
+float Engine::voice_sample(Voice& voice, const Instrument& instrument) noexcept {
+    double osc = 0;
+    switch (instrument.waveform) {
+    case Waveform::sine: osc = std::sin(voice.phase * 2.0 * std::numbers::pi); break;
+    case Waveform::triangle: osc = 4.0 * std::abs(voice.phase - 0.5) - 1.0; break;
+    case Waveform::square: osc = voice.phase < 0.5 ? 1.0 : -1.0; break;
+    case Waveform::saw: osc = 2.0 * voice.phase - 1.0; break;
     }
-    return {left_gain * value, right_gain * value};
+    const float envelope = voice.releasing
+        ? voice.release_from * (1 - static_cast<float>(voice.released) / static_cast<float>(instrument.release))
+        : heldEnvelope(instrument, voice.age);
+    const float value = static_cast<float>(osc) * voice.level * envelope;
+    voice.phase += voice.step;
+    voice.phase -= std::floor(voice.phase);
+    ++voice.age;
+    if (voice.releasing) {
+        if (++voice.released >= instrument.release) voice.active = false;
+    } else if (--voice.remaining == 0) {
+        if (instrument.release == 0) voice.active = false;
+        else { voice.releasing = true; voice.released = 0; voice.release_from = heldEnvelope(instrument, voice.age); }
+    }
+    return value;
+}
+void Engine::live(std::size_t track, std::uint8_t pitch, float velocity, bool on) noexcept {
+    if (track >= plan_->tracks.size() || pitch > 127) return;
+    auto& voices = live_[track];
+    const auto& instrument = plan_->tracks[track].live_instrument;
+    // A note-off, or a repeated note-on, releases the held voices of the pitch.
+    for (auto& live : voices) {
+        auto& voice = live.voice;
+        if (!voice.active || voice.releasing || live.pitch != pitch) continue;
+        if (instrument.release == 0) voice.active = false;
+        else { voice.releasing = true; voice.released = 0; voice.release_from = heldEnvelope(instrument, voice.age); }
+    }
+    if (!on || !(velocity > 0)) return;
+    auto it = std::find_if(voices.begin(), voices.end(), [](const LiveVoice& v) { return !v.voice.active; });
+    if (it == voices.end())
+        it = std::max_element(voices.begin(), voices.end(), [](const LiveVoice& a, const LiveVoice& b) { return a.voice.age < b.voice.age; });
+    // Held until its note-off: the remaining count never reaches zero.
+    it->voice = Voice{std::numeric_limits<Frame>::max(), 0, steps_[pitch], std::min(velocity, 1.0F) * 0.1F, 0, 0, 0, false, true};
+    it->pitch = pitch;
+}
+void Engine::silence_live() noexcept {
+    for (auto& voices : live_) for (auto& live : voices) live.voice.active = false;
 }
 
 void Engine::process(std::span<float> output) noexcept { (void)process(output, 1); }
 bool Engine::process(std::span<float> output, std::size_t channels) noexcept {
     std::fill(output.begin(), output.end(), 0);
     if (channels < 1 || channels > max_output_channels || output.size() % channels != 0) return false;
-    if (!running_) return true;
+    if (!running_) {
+        // Stopped: no clip is playing, but live input notes still sound and
+        // the transport position does not move.
+        bool live = false;
+        for (std::size_t track = 0; track < plan_->tracks.size() && !live; ++track)
+            live = std::any_of(live_[track].begin(), live_[track].end(), [](const LiveVoice& v) { return v.voice.active; });
+        if (!live) return true;
+        for (std::size_t at = 0; at < output.size(); at += channels) {
+            StereoSample mix;
+            for (std::size_t track = 0; track < plan_->tracks.size(); ++track) {
+                const auto value = render_track(track);
+                mix.left += value.left;
+                mix.right += value.right;
+            }
+            if (channels == 2) { output[at] = mix.left; output[at + 1] = mix.right; }
+            else output[at] = (mix.left + mix.right) / 2;
+        }
+        return true;
+    }
     for (std::size_t at = 0; at < output.size(); at += channels) {
         if (position_ == std::numeric_limits<Frame>::max()) { stop(); return true; }
         while (count_ && commands_[head_].at <= position_) {
@@ -381,6 +442,8 @@ std::size_t Engine::active_voices() const noexcept {
     for (const auto& state : runtime_)
         count += static_cast<std::size_t>(std::count_if(state.voices.begin(), state.voices.end(),
             [](const Voice& v) { return v.active; }));
+    for (const auto& voices : live_)
+        count += static_cast<std::size_t>(std::count_if(voices.begin(), voices.end(), [](const LiveVoice& v) { return v.voice.active; }));
     return count;
 }
 } // namespace fl_live
