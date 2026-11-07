@@ -1,4 +1,5 @@
 #include "project.hpp"
+#include "fl_live/document_io.hpp"
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -119,6 +120,6 @@ void writeProject(const QString& path, const ProjectSettings& s) {
     const auto bytes = encodeProjectSettings(s);
     QSaveFile file(path);
     file.setDirectWriteFallback(false);
-    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit())
+    if (!file.open(QIODevice::WriteOnly) || !fl_live::commitDurably(file, bytes))
         throw std::runtime_error("Cannot save project atomically; previous file was preserved");
 }
