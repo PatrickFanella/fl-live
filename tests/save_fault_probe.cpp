@@ -26,8 +26,8 @@ QStringList entries(const QString& dir) {
 AuthoredProject large(int tempo) {
     // Many named scenes make the file large enough (about 90 KB) that a kill
     // can land inside the write, not only between saves.
-    AuthoredProject project{ProjectSettings{}, defaultTemplateIdentities()};
-    project.settings.tempo = tempo;
+    auto project = defaultProject();
+    project.content.tempo = tempo;
     fl_live::SessionDocument document(project.identities);
     const auto source = project.identities.scenes[0];
     for (int i = 1; i < 256; ++i) {
@@ -67,7 +67,7 @@ int faults(const QString& dir) {
         require(session.dirty() && session.projectPath() == path && session.tempo() == 140 &&
                 session.pitches()[0].toInt() == 50 && session.undoText() == undo && session.canUndo(), name + ": session state changed");
         // The open project still reloads after the failed save.
-        require(readAuthoredProject(path).settings.tempo == 130, name + ": destination no longer readable");
+        require(readAuthoredProject(path).content.tempo == 130, name + ": destination no longer readable");
         std::cout << "PASS fault " << fault << '\n';
     }
     // History still works and a later save succeeds.
@@ -75,7 +75,8 @@ int faults(const QString& dir) {
     require(session.pitches()[0].toInt() == 60 && session.dirty(), "undo after failed saves");
     session.redo();
     require(session.saveProject(path) && !session.dirty(), "save after faults failed");
-    require(readAuthoredProject(path).settings.tempo == 140 && readAuthoredProject(path).settings.steps[0].pitch == 50, "saved content");
+    const auto saved = readAuthoredProject(path);
+    require(saved.content.tempo == 140 && templateView(saved.content, saved.identities).steps[0].pitch == 50, "saved content");
     std::cout << "PASS: write, sync and rename faults preserve destination, neighbors, document, history and dirty state" << std::endl;
     return 0;
 }
