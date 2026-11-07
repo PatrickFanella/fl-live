@@ -18,7 +18,7 @@
     }
   },
   "verified_behaviors": [
-    "28 Tab stops reached from the current focus, each with visualFocus (or the grid's active focus) and its box inside the window",
+    "29 Tab stops over 24 distinct controls (counted from the journey's script; the test asserts at least 25), each reached from the current focus with visualFocus (or the grid's active focus) and its box inside the window",
     "Ctrl+Shift+M, Space on buttons and check boxes, typed fields, arrow keys and Alt+arrows in the piano roll, Up in a combo box and spin boxes, Ctrl+Z, Ctrl+S and Ctrl+E",
     "Resulting state: two keyboard-entered notes (one moved to tick 216, one lengthened to 120 ticks and raised to pitch 65), a +12 transpose, level 75, scene membership, one automation point; Undo of a later level change",
     "Saved project holds the device and the level; the float export is non-silent from frame 0",
