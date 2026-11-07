@@ -32,7 +32,17 @@ Tick **Automation** on a track to show its lane editor (a view choice; it is not
 - For exact values from the keyboard, type a position in beats and a value, then press **Add point**.
 - **Clear** removes the lane.
 
-Every change is a stopped edit and one Undo step ("Undo track 1 automation"). Invalid positions or values and unknown parameters are refused without history changes. `Session::automationPoints`, `setAutomationPoint`, `removeAutomationPoint` and `clearAutomation` expose the same operations.
+Every change is one Undo step and also [applies while playing](general-session.md#playback-edits) ("Undo track 1 automation"). Invalid positions or values and unknown parameters are refused without history changes. `Session::automationPoints`, `setAutomationPoint`, `removeAutomationPoint` and `clearAutomation` expose the same operations.
+
+## Output qualification
+
+`automation-qualification` (#57) checks rendered output against an oracle written independently of the engine:
+
+- **Boundaries.** Bar boundaries come from 128-bit integer arithmetic and agree with `TempoGrid`. The interpolation is restated from the policy above.
+- **Frame-by-frame oracle.** At 133.333 BPM (bars of 86,400.22 frames), a level lane and a pan lane on two audio tracks run with a next-bar scene launch and a next-bar stop requested mid-bar from the render-owned clock. A [plan replacement](plan-replacement.md) swaps the level lane at a frame inside a segment. Every one of the 269,201 stereo frames matches the oracle, and output is identical at blocks 1, 64, 127, 257, 1,000 and 4,096. No allocation is intercepted while processing.
+- **Concurrent swaps.** While a render thread runs, the control thread replaces a constant lane 1,023 times with increasing values. Every rendered sample comes from one plan and never steps back.
+
+The desktop test `automationOutputSurvivesReopen` writes level and pan lanes at 137 BPM, saves, reopens in a fresh session and exports again. Track IDs, mute state and lane points match, the float exports are sample-identical, and sampled frames match the beat-to-frame rounding and interpolation stated independently. The [receipt](../validation/automation-qualification.json) records the run.
 
 ## Persistence
 

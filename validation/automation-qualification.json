@@ -1,0 +1,51 @@
+{
+  "verified_at": "2026-11-07T10:15:34.701113+00:00",
+  "base": "feat/edit-bursts (PR #133) head",
+  "issues": [
+    57
+  ],
+  "scope": "Automation output against independent oracles at a fractional tempo, through live replacement, under concurrent replacement and across Save/reopen",
+  "environment": "Kvant, pinned CI image, docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 24,
+      "total": 24
+    },
+    "release": {
+      "passed": 10,
+      "total": 10
+    },
+    "engine-only": {
+      "passed": 8,
+      "total": 8
+    },
+    "pipewire-sanitize": {
+      "passed": 18,
+      "total": 18
+    },
+    "document-io-sanitize": {
+      "passed": 11,
+      "total": 11
+    },
+    "thread-sanitizer": {
+      "passed": 3,
+      "total": 3,
+      "note": "Local -fsanitize=thread build of automation-qualification-tests, three runs, no reports"
+    }
+  },
+  "verified_behaviors": [
+    "Bar boundaries from 128-bit integer arithmetic (86401, 172801, 259201 at 133.333 BPM) agree with TempoGrid",
+    "Gain and pan lanes with a render-owned next-bar scene launch and next-bar stop match the independent interpolation oracle on all 269,201 stereo frames within 1e-6",
+    "A plan replacement swaps the level lane mid-segment at an exact frame; output identical at blocks 1/64/127/257/1000/4096; no allocation intercepted while processing",
+    "1023 concurrent automation replacements: every sample belongs to one plan and values never step back",
+    "Desktop: level/pan lanes at 137 BPM survive Save and reopening in a fresh session with the same track IDs, mute state and points; float exports are sample-identical and sampled frames match the stated rounding and interpolation exactly"
+  ],
+  "source_sha256": {
+    "tests/automation_qualification_tests.cpp": "57b8c8bac632426d01bd2129c558de1cdad4e398b9e9abdf0f862661194c8d93",
+    "tests/desktop_tests.cpp": "45c1b2039b52214b1ab9065ccf56947f142030da6a8a0481ea9ab968b36bf3f4",
+    "src/engine.cpp": "19cf16efa761f23ace007637eaa6e3444c0b1603aae67f94b9913ab88b38b741",
+    "include/fl_live/controller.hpp": "7dedbd1f9adab218604cc1cc11ab826b3420c208f5f60e512f9e196bb60aed37",
+    "apps/desktop/authored_project.cpp": "1918cc32c7bb4980f402483bbabb7066f86049f407014dcfc4c1f8eee35a55fb"
+  },
+  "limits": "Song-time level and pan lanes only; offline engine and offscreen desktop export; no physical audio."
+}

@@ -1414,6 +1414,41 @@ private slots:
         QVERIFY(!session.saveProject(path));QVERIFY(session.message().contains("already exists"));
         QCOMPARE(readAuthoredProject(path).identities.tracks.size(),4u);
     }
+    // Level and pan lanes at a non-dividing tempo export the same samples
+    // after Save and reopening in a fresh session, and match an independent
+    // statement of the beat-to-frame rounding and interpolation.
+    void automationOutputSurvivesReopen() {
+        QTemporaryDir directory;const auto path=directory.filePath("lanes.json"),again=directory.filePath("lanes-again.json");
+        auto project=defaultProject();project.content.tempo=137;
+        const auto pulse=project.identities.tracks[0].id;
+        project.content.automation={{pulse,AutomatedParameter::level,{{0,0},{150,100},{600,25},{1000,80}}},{pulse,AutomatedParameter::pan,{{0,-100},{800,100}}}};
+        writeAuthoredProject(path,project);
+        Session first;QVERIFY(first.loadProject(path));QVERIFY(first.setMute(first.trackIds()[1].toString(),true));QVERIFY(first.saveProject(again));
+        QVERIFY(first.exportAudio(directory.filePath("a.wav"),1,3,0,2,"float32"));QTRY_VERIFY(!first.exporting());
+        Session second;QVERIFY(second.loadProject(again));
+        QCOMPARE(second.trackIds(),first.trackIds());QCOMPARE(second.mutes(),first.mutes());
+        QCOMPARE(second.automationPoints(0,"level"),first.automationPoints(0,"level"));QCOMPARE(second.automationPoints(0,"pan"),first.automationPoints(0,"pan"));
+        QVERIFY(second.exportAudio(directory.filePath("b.wav"),1,3,0,2,"float32"));QTRY_VERIFY(!second.exporting());
+        const auto a=readWav(directory.filePath("a.wav")),b=readWav(directory.filePath("b.wav"));
+        const std::size_t frames=(3ULL*48000*240000+137000-1)/137000; // three bars at 137 BPM, rounded up
+        QCOMPARE(a.samples.size(),2*frames);QVERIFY(a.samples==b.samples);
+        // frame = ceil(48000 * 60 * position / (tempo * 100)); linear between frames.
+        const auto frame=[](std::uint64_t at){return (2880000ULL*at+13700-1)/13700;};
+        const auto lane=[&](std::vector<std::pair<int,double>> points,std::size_t f){
+            std::vector<std::pair<std::uint64_t,float>> p;for(auto [at,v]:points)p.push_back({frame(static_cast<std::uint64_t>(at)),static_cast<float>(v/100.0)});
+            if(f<=p.front().first)return p.front().second;if(f>=p.back().first)return p.back().second;
+            std::size_t i=0;while(p[i+1].first<=f)++i;
+            const double t=static_cast<double>(f-p[i].first)/static_cast<double>(p[i+1].first-p[i].first);
+            return static_cast<float>(p[i].second+(static_cast<double>(p[i+1].second)-p[i].second)*t);
+        };
+        QCOMPARE(frame(150),std::uint64_t(31533));QCOMPARE(frame(1000),std::uint64_t(210219));
+        const auto source=pulseClip(137);
+        for(std::size_t f=0;f<frames;f+=997) {
+            const float gain=lane({{0,0},{150,100},{600,25},{1000,80}},f),pan=lane({{0,-100},{800,100}},f);
+            const float x=source.samples[f%source.samples.size()];
+            QCOMPARE(a.samples[2*f],gain*(pan>0 ? 1-pan : 1.0F)*x);QCOMPARE(a.samples[2*f+1],gain*(pan<0 ? 1+pan : 1.0F)*x);
+        }
+    }
     void automationIdentityStability() {
         // Lanes are keyed by stable track IDs through rename, duplicate,
         // delete, Undo and Save/Open.
