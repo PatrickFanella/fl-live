@@ -1760,6 +1760,69 @@ private slots:
         QTRY_COMPARE(session.automationPoints(0,"device:1").size(),3);QCOMPARE(session.automationPoints(0,"device:1")[1].toList(),(QVariantList{200.0,-6.0}));
         ui.click("undoButton");QTRY_COMPARE(session.automationPoints(0,"device:1").size(),2);
     }
+    // #78: the device journey through the QML, then a burst of device edits
+    // while playing, with panic, Undo and voice cleanup.
+    void qmlDeviceJourney() {
+        QTemporaryDir directory;const auto project=directory.filePath("devices.json");
+        const auto changes=[](const std::vector<float>& s,std::size_t from,std::size_t to){int n=0;for(std::size_t f=from+1;f<to;++f)if((s[2*f]>0)!=(s[2*(f-1)]>0))++n;return n;};
+        std::vector<float> first;
+        {
+            Session session;QmlUi ui(session);QVERIFY(ui.window && QTest::qWaitForWindowExposed(ui.window));
+            ui.click("mute0");ui.keys("synthWaveform",Qt::Key_Down,2);QTRY_COMPARE(session.synth()[0].toInt(),2);
+            // Transpose +12 and gain -6 dB on the steps track, then automate the gain from -60 dB to 0 over bar 1.
+            ui.click("addTranspose1");ui.click("addGain1");QTRY_COMPARE(session.trackDevices(1).size(),2);
+            ui.type("deviceValue1_0","12",true);ui.type("deviceValue1_1","-6",true);
+            QTRY_COMPARE(session.trackDevices(1)[0].toMap()["value"].toDouble(),12.0);QTRY_COMPARE(session.trackDevices(1)[1].toMap()["value"].toDouble(),-6.0);
+            ui.click("automationToggle1");ui.keys("automationParameter1",Qt::Key_Down,3);
+            QCOMPARE(ui.item("automationParameter1")->property("currentText").toString(),QString("Gain 2"));
+            ui.type("automationAt1","0",true);ui.type("automationValue1","-60",true);ui.click("automationAdd1");
+            ui.type("automationAt1","4",true);ui.type("automationValue1","0",true);ui.click("automationAdd1");
+            QTRY_COMPARE(session.automationPoints(1,"device:2").size(),2);
+            // Play, edit the transpose live, undo it live.
+            ui.click("clip1");ui.click("playButton");QTRY_VERIFY(session.running());QTRY_VERIFY_WITH_TIMEOUT(session.activeVoices()>0,5000);
+            ui.type("deviceValue1_0","7",true);QTRY_COMPARE(session.trackDevices(1)[0].toMap()["value"].toDouble(),7.0);QVERIFY(session.running());
+            ui.click("undoButton");QTRY_COMPARE(session.trackDevices(1)[0].toMap()["value"].toDouble(),12.0);QVERIFY(session.running());
+            ui.click("stopButton");QTRY_VERIFY(!session.running());QTRY_COMPARE(session.activeVoices(),0);
+            ui.type("projectFile",project);ui.click("saveProjectButton");QVERIFY(!session.dirty());
+            ui.keys("exportFormat",Qt::Key_Down,2);ui.exportTo(session,directory.filePath("first.wav"),"2");QTRY_VERIFY(!session.exporting());
+            first=readWav(directory.filePath("first.wav")).samples;QVERIFY(ui.window->close());
+        }
+        // Oracle: template notes 60/64/67/72 (18000 frames each, velocity 70, level 25 %) an octave up; gain
+        // factor linear from 10^-3 to 1 over bar 1, then 1 (the lane replaces the -6 dB value).
+        const float low=static_cast<float>(std::pow(10.0,-60.0/20));
+        for(std::size_t f=0;f<192000;f+=1999) {
+            const auto local=f%96000;const bool sounding=local%24000<18000;
+            const float factor=f>=96000 ? 1.0F : static_cast<float>(low+(1.0-static_cast<double>(low))*static_cast<double>(f)/96000.0);
+            const float level=(0.25F*factor)*(1.0F*((70.0F/100)*0.1F)*1.0F);
+            QCOMPARE(std::abs(first[2*f]),sounding ? level : 0.0F);
+        }
+        const double base[]={261.63,329.63,392.0,523.25}; // C4 E4 G4 C5
+        for(std::size_t beat=0;beat<4;++beat) {
+            const auto from=96000+beat*24000;const double expected=2*base[beat]*2*18000/48000.0; // an octave up: twice the crossings
+            QVERIFY2(std::abs(changes(first,from,from+18000)-expected)<=3,qPrintable(QString::number(changes(first,from,from+18000))));
+        }
+        Session session;QmlUi ui(session);QVERIFY(ui.window && QTest::qWaitForWindowExposed(ui.window));
+        ui.type("projectFile",project);ui.click("openProjectButton");QTRY_COMPARE(session.trackDevices(1).size(),2);
+        QCOMPARE(session.automationPoints(1,"device:2").size(),2);
+        ui.keys("exportFormat",Qt::Key_Down,2);ui.exportTo(session,directory.filePath("reopened.wav"),"2");QTRY_VERIFY(!session.exporting());
+        QVERIFY(readWav(directory.filePath("reopened.wav")).samples==first);
+        // Burst: 60 device edits while playing, with a panic in the middle; nothing is left sounding.
+        QVERIFY(session.launchScene(session.sceneId(),"immediate"));session.play();QTRY_VERIFY(session.running());
+        const auto applied=session.playbackEdits();
+        for(int i=0;i<60;++i) {
+            QVERIFY(session.setDeviceValue("1",(i%25)-12));
+            if(i%3==0)QVERIFY(session.setDeviceValue("2",-(i%20)));
+            if(i==30){session.panic();QTRY_VERIFY(!session.running());QTRY_COMPARE(session.activeVoices(),0);session.play();QTRY_VERIFY(session.running());}
+            if(i%10==0)session.tick();
+        }
+        for(int i=0;i<10;++i)session.tick();
+        QVERIFY(session.playbackEdits()>applied);QCOMPARE(session.trackDevices(1)[0].toMap()["value"].toDouble(),static_cast<double>((59%25)-12));
+        for(int i=0;i<84;++i)session.undo();   // back to the reopened state
+        QCOMPARE(session.trackDevices(1)[0].toMap()["value"].toDouble(),12.0);
+        session.stop();QTRY_VERIFY(!session.running());QCOMPARE(session.activeVoices(),0);
+        ui.exportTo(session,directory.filePath("undone.wav"),"2");QTRY_VERIFY(!session.exporting());
+        QVERIFY(readWav(directory.filePath("undone.wav")).samples==first);
+    }
     void qmlRelinkMissingAudio() {
         QTemporaryDir root;const auto audio=root.filePath("a.wav"),project=root.filePath("p.json");
         std::vector<qint16> tone(4800);for(std::size_t i=0;i<tone.size();++i)tone[i]=static_cast<qint16>(i%300*50);

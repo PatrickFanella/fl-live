@@ -1,0 +1,36 @@
+{
+  "verified_at": "2026-11-07T11:35:21.661625+00:00",
+  "base": "feat/device-automation (PR #145) head",
+  "issues": [
+    78,
+    15
+  ],
+  "scope": "Gain and transpose device graphs across playback, live replacement, Undo and save/reopen",
+  "environment": "Kvant, pinned CI image, docker --network none, Qt offscreen platform, silent preview clock",
+  "gates": {
+    "desktop": {
+      "passed": 24,
+      "total": 24
+    },
+    "desktop-asan device tests": {
+      "passed": 8,
+      "total": 8,
+      "note": "Local FL_LIVE_SANITIZERS=ON desktop build, ASAN detect_leaks=0 for Qt: qmlDeviceJourney, deviceAutomationInSession, deviceEditing, gainDeviceOutput, transposeDeviceOutput, deviceChainsInSession, qmlDeviceEditing, qmlDeviceAutomation"
+    }
+  },
+  "verified_behaviors": [
+    "QML journey: transpose +12 and gain -6 added and set, gain automated -60 -> 0 dB over bar 1, played, transpose edited and undone while playing, stopped with no voices, saved and exported",
+    "Float export oracle at every 1999th frame: |sample| = (0.25 * factor) * (0.7 * 0.1) while a template note sounds, 0 between notes, with factor linear from 10^-3 to 1 over bar 1 and 1 after; zero crossings in bar 2 match twice C4/E4/G4/C5 within 3",
+    "Reopening in a fresh window exports identical samples (stable parameter state and bindings)",
+    "About 80 device edits while playing (two devices, one automated) with a panic midway; playback edits activate; Undo back to the reopened state exports the original samples; Stop leaves no voice",
+    "Earlier receipts: device-graph.json (invalid graph rejection), device-editing.json (gain/transpose oracles), device-automation.json (lanes), plan-replacement.json and edit-bursts.json (replacement/retirement ownership and bounded work)"
+  ],
+  "source_sha256": {
+    "tests/desktop_tests.cpp": "843987a640f57b518c77121cc0f556f2a105f403bed86cd79d7d49ba8bb3e75b",
+    "apps/desktop/session.cpp": "16ac4723756496f62838c779f634c45655c79db1aba45028fbd1082f468f6f7e",
+    "apps/desktop/authored_project.cpp": "03b116fe68ebc0cf1260795832233045f4580b716417005c38afa1bbeb3f2b80",
+    "src/engine.cpp": "b8295436bb739748908a4939da536605824dd0a42b7ebc8af7c259602d543293",
+    "include/fl_live/controller.hpp": "7a5fe0867242b12b04a4315d33afab34dec6a8ea44764b120188d79beeb11265"
+  },
+  "limits": "Offscreen platform and silent preview clock; no physical audio or real-time deadline measurement."
+}

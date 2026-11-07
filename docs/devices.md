@@ -96,3 +96,5 @@ For automation (#77):
 - `qmlDeviceAutomation` draws gain points at the lane's top and bottom (+12 and −60 dB), types one, and undoes.
 
 The [device automation receipt](../validation/device-automation.json) records the run.
+
+For qualification (#78), `qmlDeviceJourney` runs the whole path through the production QML. It adds a transpose and a gain device, sets +12 and −6, automates the gain from −60 dB to 0 over bar 1, plays, edits the transpose live and undoes it live, stops, saves and exports. The float export matches an independent oracle at every 1,999th frame: template notes an octave up, at the velocity × level × automated factor, and silent between notes. Zero crossings at twice the original pitches confirm the octave. A fresh window reopens and exports the same samples. A burst of about 80 device edits while playing, with a panic in the middle, leaves no voice sounding. Undo back to the reopened state exports the original samples again. The device tests also pass under AddressSanitizer in a local desktop build, and the [qualification receipt](../validation/device-qualification.json) records both runs.
