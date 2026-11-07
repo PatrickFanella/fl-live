@@ -29,6 +29,8 @@ struct PipeWireBackend::Impl {
     // Transport anchor: the graph-clock frame of a cycle and the transport
     // frame rendered first in it, published under a sequence counter.
     std::atomic<std::uint64_t> anchor_sequence{0}, anchor_graph{0}, anchor_transport{0};
+    std::atomic<InputMonitor*> monitor{nullptr};
+    std::atomic<int> monitor_inside{0};
     spa_io_position* position = nullptr; // data thread only, set through io_changed
     bool started = false, initialized = false;
 
@@ -102,6 +104,9 @@ struct PipeWireBackend::Impl {
                 self.min_render_frames.store(count);
             if (count > self.max_render_frames.load()) self.max_render_frames.store(count);
             self.controller.process(output, channels);
+            self.monitor_inside.fetch_add(1);
+            if (auto* monitored = self.monitor.load()) monitored->mix(output, channels);
+            self.monitor_inside.fetch_sub(1);
             // Controls apply at the block start, so a transport running after
             // the block ran for all of it.
             if (self.position && self.controller.running()) {
@@ -176,6 +181,10 @@ struct PipeWireBackend::Impl {
 PipeWireBackend::PipeWireBackend(RenderController& controller, PipeWireConfig config)
     : impl_(std::make_unique<Impl>(controller, std::move(config))) { impl_->connect(); }
 PipeWireBackend::~PipeWireBackend() = default;
+void PipeWireBackend::setMonitor(InputMonitor* monitor) noexcept {
+    impl_->monitor.store(monitor);
+    while (impl_->monitor_inside.load() != 0) std::this_thread::yield();
+}
 BackendStatus PipeWireBackend::status() const noexcept {
     BackendStatus value{impl_->state.load(), impl_->error.load(), impl_->callbacks.load(), impl_->frames.load(),
         impl_->bad_buffers.load(), impl_->max_ns.load(), impl_->over_budget.load(),

@@ -7,6 +7,7 @@ No desktop remote, devices or session manager are used.
     pipewire_capture.py --desktop --loss server DESKTOP_PROBE  # kill the server mid-take, restart, Retry audio
     pipewire_capture.py --desktop --loss input DESKTOP_PROBE   # destroy only the input node mid-take
     pipewire_capture.py --desktop --route-change DESKTOP_PROBE # unlink and relink the input mid-take
+    pipewire_capture.py --desktop --monitor DESKTOP_PROBE      # input monitoring heard in the output
 
 In desktop mode arming the track opens the input node, so the fixture links
 it before recording starts, exactly as for the capture stream alone."""
@@ -22,6 +23,7 @@ import time
 desktop = "--desktop" in sys.argv
 loss = sys.argv[sys.argv.index("--loss") + 1] if "--loss" in sys.argv else None
 route_change = "--route-change" in sys.argv
+monitor = "--monitor" in sys.argv
 assert loss in (None, "server", "input") and (desktop or not loss) and (desktop or not route_change) and not (loss and route_change), sys.argv
 probe = str(pathlib.Path(sys.argv[-1]).resolve())
 
@@ -109,7 +111,8 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
             until(lambda: (root / remote).exists() if server.poll() is None else False)
             if desktop:
                 (root / "project").mkdir()
-            recorder = subprocess.Popen([probe, remote, "--record-loss" if loss else "--record", str(root / "project")] if desktop else [probe, remote, str(output), "2"],
+            mode = "--monitor" if monitor else "--record-loss" if loss else "--record"
+            recorder = subprocess.Popen([probe, remote, mode, str(root / "project")] if desktop else [probe, remote, str(output), "2"],
                                         env=env, stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             assert json.loads(recorder.stdout.readline())["ready"]
@@ -134,6 +137,46 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
                 listing = subprocess.run(["pw-link", "--remote", remote, direction], env=env, capture_output=True, text=True, timeout=2)
                 return next((line.strip() for line in listing.stdout.splitlines() if line.startswith(prefix)), None)
 
+            if monitor:
+                # The desktop output goes to a recorder; the armed, monitored
+                # track at level 50% and pan -50 plays the input into it.
+                heard = root / "monitored.f32"
+                sink = subprocess.Popen(["pw-cat", "--remote", remote, "--record", "--raw", "--format", "f32", "--rate", "48000",
+                    "--channels", "1", "--channel-map", "MONO", "--target", "0", "--sample-count", "72000", "--properties",
+                    "{ node.name = fixture-sink node.group = pipewire.test node.always-process = true }", "-"],
+                    env=env, stdout=heard.open("wb"), stderr=subprocess.PIPE)
+
+                def configure_mono(name, direction):
+                    dump = subprocess.run(["pw-dump", "--remote", remote], env=env, capture_output=True, text=True, timeout=2)
+                    node = next((v for v in json.loads(dump.stdout) if v.get("info", {}).get("props", {}).get("node.name") == name), None)
+                    if not node:
+                        return False
+                    parameter = ("{ direction = " + direction + " mode = dsp format = { mediaType = audio mediaSubtype = raw "
+                                 "format = F32 rate = 48000 channels = 1 position = [ MONO ] } }")
+                    return subprocess.run(["pw-cli", "--remote", remote, "set-param", str(node["id"]), "PortConfig", parameter],
+                                          env=env, capture_output=True, text=True, timeout=2).returncode == 0
+                # The input chosen in the app reaches the stream; with no session
+                # manager here, the fixture still makes the links itself.
+                dump = json.loads(subprocess.run(["pw-dump", "--remote", remote], env=env, capture_output=True, text=True, timeout=2).stdout)
+                chosen = next(v["info"]["props"].get("target.object") for v in dump if v.get("info", {}).get("props", {}).get("node.name") == "fl-live-input")
+                assert chosen == "fixture-source", chosen
+                until(lambda: configure("fixture-source", "Output"))
+                until(lambda: configure("fl-live-input", "Input"))
+                until(lambda: configure_mono("fl-live-output", "Output"))
+                until(lambda: configure_mono("fixture-sink", "Input"))
+                for channel in ("FL", "FR"):
+                    subprocess.run(["pw-link", "--remote", remote, until(lambda: port("--output", f"fixture-source:output_{channel}")),
+                                    until(lambda: port("--input", f"fl-live-input:input_{channel}"))], env=env, check=True, capture_output=True, timeout=2)
+                subprocess.run(["pw-link", "--remote", remote, until(lambda: port("--output", "fl-live-output:")),
+                                until(lambda: port("--input", "fixture-sink:"))], env=env, check=True, capture_output=True, timeout=2)
+                sink.wait(timeout=15)  # pw-cat ends with status 1 when --sample-count is reached; the size is checked below
+                recorder.stdin.write("stop\n"); recorder.stdin.flush()
+                assert json.loads(recorder.stdout.readline())["done"]
+                assert recorder.wait(timeout=5) == 0, recorder.stderr.read()
+                raw = heard.read_bytes()
+                assert len(raw) == 72000 * 4, (len(raw), sink.stderr.read())
+                mono = struct.unpack(f"<{len(raw) // 4}f", raw)
+                raise StopIteration
             until(lambda: configure("fixture-source", "Output"))
             until(lambda: configure("fl-live-input", "Input"))
             pairs = []
@@ -177,8 +220,12 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
                 recorder.stdin.write("stop\n"); recorder.stdin.flush()
                 status = json.loads(recorder.stdout.readline())
             assert recorder.wait(timeout=5) == 0, recorder.stderr.read()
+        except StopIteration:
+            pass
         finally:
             stop(recorder); stop(player); stop(server)
+            if monitor:
+                stop(sink)
     def check(samples, minimum, allowance=10, partial=False):
         frames = len(samples) // 2
         # Locate the first captured frame in the reference, then walk: every frame
@@ -240,6 +287,38 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
         print(json.dumps(result))
         print("PASS: input node destroyed mid-take: output keeps running, the take is finished as the selected clip and "
               "matches the reference frame by frame up to the loss; the track is disarmed")
+        sys.exit(0)
+    if monitor:
+        # Expected output, computed in 32-bit float as the monitor does:
+        # (0.5 * L + 0.25 * R) / 2. From the first full match on, every sample
+        # must be the next expected one, or a counted forward jump where the
+        # graph slipped.
+        f32 = lambda x: struct.unpack("<f", struct.pack("<f", x))[0]
+        sequence = [f32(f32(0.5 * reference[2 * i]) + f32(0.25 * reference[2 * i + 1])) / 2 for i in range(FRAMES)]
+        expected = {}
+        for i, value in enumerate(sequence):
+            expected.setdefault(value, i)
+        # Start at eight samples in a row that follow the input; before that
+        # the two input channels are still being linked one at a time, and a
+        # half-linked value can equal some expected value by chance.
+        begin = next(f for f in range(len(mono) - 8)
+                     if expected.get(mono[f]) is not None and all(expected.get(mono[f + k]) == expected[mono[f]] + k for k in range(8)))
+        position, matched, jumps, skipped = None, 0, 0, 0
+        for f, value in enumerate(mono[begin:], begin):
+            # Different input pairs can mix to the same value, so the next
+            # expected sample is tried first and the lookup only finds jumps.
+            at = position if position is not None and position < FRAMES and sequence[position] == value else expected.get(value)
+            assert at is not None, f"output sample {f} ({value}) is not the monitored input at level 50% and pan -50"
+            if position is not None and at != position:
+                assert at > position, f"sample {f} goes back in the input"
+                jumps += 1
+                skipped += at - position
+            position = at + 1
+            matched += 1
+        assert matched > 48000 and skipped <= matched // 10, (matched, jumps, skipped)
+        print(json.dumps({"output_samples": len(mono), "first_followed_sample": begin, "matched_samples": matched, "jumps": jumps, "skipped": skipped}))
+        print("PASS: input monitoring: the desktop output carries the input at the armed track's level and pan, (0.5 L + 0.25 R) / 2 "
+              "in mono, sample for sample")
         sys.exit(0)
     assert not status["failed"] and status["dropped"] == 0 and status["error"] == 0, status
     if desktop:

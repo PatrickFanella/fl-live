@@ -1,0 +1,68 @@
+{
+  "verified_at": "2026-11-07T14:51:58.882484+00:00",
+  "base": "main after PR #160",
+  "issues": [
+    43
+  ],
+  "scope": "Audio input monitoring through the output and choosing the audio and MIDI input nodes in the app",
+  "environment": {
+    "machine": "Kvant, pinned CI image (Qt 6.12, PipeWire 1.6.9), docker --network none, QT_QPA_PLATFORM=offscreen",
+    "graph": "owned private PipeWire server, software driver only, no session manager",
+    "rate": 48000,
+    "quantum": 256
+  },
+  "gates": {
+    "ci/verify.sh": {
+      "desktop": "36/36",
+      "release": "11/11",
+      "engine-only": "8/8",
+      "pipewire-sanitize": "21/21",
+      "document-io-sanitize": "11/11"
+    },
+    "pipewire-input-monitoring repeats": {
+      "passed": 8,
+      "total": 8
+    }
+  },
+  "measurements": {
+    "monitored output samples following the input exactly (of 72,000 recorded, level 50%, pan -50)": [
+      70976,
+      70720,
+      70720,
+      70464,
+      70720,
+      70720,
+      70720,
+      70720
+    ],
+    "jumps": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "verified_behaviors": [
+    "InputMonitor mixes at its gains (mono (L + R) / 2), consumes input while silent, counts underruns and overruns, bounds the backlog to one cycle, and neither side allocates or touches files",
+    "An armed audio track with Monitor on plays the input through the desktop output at its level and pan, sample for sample against an independent reference",
+    "The audio input node chosen in the app reaches the PipeWire stream as target.object",
+    "Monitor is refused on MIDI tracks and is not an Undo step; input names are trimmed, one line, and cannot change while recording"
+  ],
+  "source_sha256": {
+    "include/fl_live/input_monitor.hpp": "2f96e1604296326430647ff3b1839d7865c1559fd690b886628280b7b5f3c661",
+    "include/fl_live/pipewire_backend.hpp": "ee1c30c13d4deed47cb9b42307ef72443ea78c49983e14aceb07826ac275ceb1",
+    "src/pipewire_backend.cpp": "f77094d107d092bcac8ad1a303b5f1481d74df814679d03253ea7d5fa4886b0f",
+    "apps/desktop/session.hpp": "6528108a28aff325a239dc3695b8092594eedb93dcee2f4d6be546d871e412e9",
+    "apps/desktop/session.cpp": "72a148e9d8dd0cd34589f5450fe43a50d1ba298e4cc0192797ff256e5411fcd8",
+    "apps/desktop/Main.qml": "963ea4552f7cdacc9d437eae217791a6bde548345a30751e926144b6a7e20aaf",
+    "tests/capture_tests.cpp": "3cdaf8759a14147196b20cbf511d8b7ac448dc78a94154a84bfaf47d280ab856",
+    "tests/desktop_tests.cpp": "bdf7ac0eeec4fc4ea478d81e415dede37b1a3fd7fa099e58e655b472b1fa3700",
+    "tests/desktop_backend_probe.cpp": "fe28934dcb2f1a4570a1352aee364fc1f57f93a21e9438682ad0ac50264f47e0",
+    "tests/pipewire_capture.py": "fa6f6e078bef9fbcd788e33273fa08a254f061b61d871381ead25e96911a9ff7"
+  },
+  "limits": "No session manager in the fixture, so linking by the chosen node name (done by WirePlumber on a desktop) is not exercised; the fixture links by hand. Monitoring delay is not measured, and automation is not applied to monitoring. MIDI input monitoring and a list of devices to choose from are not built. Physical devices are not qualified (#19, #20)."
+}

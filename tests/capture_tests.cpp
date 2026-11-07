@@ -4,6 +4,7 @@
 // File calls are interposed here so the test can see which thread makes them
 // and inject a failing write.
 #include "fl_live/capture.hpp"
+#include "fl_live/input_monitor.hpp"
 #include <sndfile.h>
 #include <dlfcn.h>
 #include <csignal>
@@ -285,6 +286,47 @@ void midiTake() {
     MidiTake idle;
     require(idle.finish().notes.empty() && idle.finish().frames == 0, "a take that never ran is empty");
 }
+
+// Input monitoring: the input side pushes stereo blocks, the output side
+// mixes them at the gains (mono: (L + R) / 2), neither allocates, missing
+// input is counted, and a backlog beyond two cycles is dropped.
+void inputMonitor() {
+    InputMonitor monitor(64);
+    const std::vector<float> in{0.5F, -0.25F, 0.125F, 1.0F, -1.0F, 0.75F}; // three stereo frames
+    std::array<float, 6> stereo{};
+    in_callback = true;
+    monitor.capture(in);
+    monitor.mix(stereo, 2); // gains 0: consumed, nothing mixed
+    in_callback = false;
+    require(stereo == std::array<float, 6>{} && monitor.status().mixed == 0, "silent while off, input still consumed");
+    monitor.setGain(0.5F, 0.25F);
+    std::array<float, 6> twice{1, 1, 1, 1, 1, 1};
+    std::array<float, 3> mono{};
+    in_callback = true;
+    monitor.capture(in);
+    monitor.mix(twice, 2);   // added to what the engine rendered
+    monitor.capture(in);
+    monitor.mix(mono, 1);
+    monitor.mix(mono, 1);    // nothing waiting: an underrun
+    in_callback = false;
+    require(twice == std::array<float, 6>{1.25F, 0.9375F, 1.0625F, 1.25F, 0.5F, 1.1875F}, "stereo mix at the left and right gains");
+    require(mono == std::array<float, 3>{(0.25F - 0.0625F) / 2, (0.0625F + 0.25F) / 2, (-0.5F + 0.1875F) / 2}, "mono is (L + R) / 2");
+    auto status = monitor.status();
+    require(status.mixed == 6 && status.underruns == 1, "mixed frames and the underrun are counted");
+    // Six blocks of three frames wait for a three-frame output: all but one
+    // cycle is dropped, so the delay stays bounded.
+    in_callback = true;
+    for (int i = 0; i < 6; ++i) monitor.capture(in);
+    std::array<float, 6> late{};
+    monitor.mix(late, 2);
+    in_callback = false;
+    status = monitor.status();
+    require(status.skipped == 15 && late == std::array<float, 6>{0.25F, -0.0625F, 0.0625F, 0.25F, -0.5F, 0.1875F}, "a backlog keeps only the newest cycle");
+    InputMonitor tiny(2);
+    tiny.capture(in);
+    require(tiny.status().overruns == 1, "a block that does not fit is refused and counted");
+    require(callback_allocations.load() == 0 && callback_io.load() == 0, "monitoring neither allocates nor touches files");
+}
 }
 
 int main() {
@@ -297,10 +339,11 @@ int main() {
         writeFailure(dir);
         interruptedRecovery(dir);
         midiTake();
+        inputMonitor();
         std::filesystem::remove_all(dir);
         std::cout << "PASS: all-or-nothing ring; 400 blocks written bit for bit with no allocation or file call in the capture thread; "
                      "overflow drops whole blocks with written + dropped = captured; a failed write keeps a readable .part file; "
-                     "MIDI takes pair notes and close held ones with no callback allocation; a take killed mid-recording recovers bit for bit without changing the .part or replacing a file; truncated and invalid files handled\n";
+                     "input monitoring mixes at its gains with a bounded delay; MIDI takes pair notes and close held ones with no callback allocation; a take killed mid-recording recovers bit for bit without changing the .part or replacing a file; truncated and invalid files handled\n";
         return 0;
     } catch (const std::exception& error) {
         std::filesystem::remove_all(dir);

@@ -2072,6 +2072,30 @@ private slots:
         QCOMPARE(clips(1).size(),after.size()+1);
         session.undo();QCOMPARE(clips(1),after);
     }
+    // #43: monitoring toggles and input choice. Only audio tracks monitor;
+    // the toggle is view state like Arm, not an Undo step.
+    void monitoringToggles() {
+        Session session;
+        const auto audio=session.trackIds()[0].toString(),midi=session.trackIds()[1].toString();
+        QCOMPARE(session.monitored(),(QVariantList{false,false}));
+        QVERIFY(!session.setMonitored(midi,true));QVERIFY(session.message().contains("Only audio tracks"));
+        QVERIFY(session.setMonitored(audio,true));QCOMPARE(session.monitored(),(QVariantList{true,false}));QVERIFY(!session.canUndo());
+        QmlUi ui(session);QVERIFY(QTest::qWaitForWindowExposed(ui.window));
+        QVERIFY(ui.find(ui.window->contentItem(),"monitor1")==nullptr);
+        ui.click("monitor0");QTRY_COMPARE(session.monitored()[0].toBool(),false);
+        ui.click("monitor0");QTRY_COMPARE(session.monitored()[0].toBool(),true);
+        // Input choice: stored, shown, refused while recording, cleared by an
+        // empty name; a name of more than one line is refused.
+        QVERIFY(session.setInputTarget("  usb-mic  "));QCOMPARE(session.inputTarget(),QString("usb-mic"));QVERIFY(session.message().contains("links to usb-mic"));
+        QVERIFY(!session.setMidiInputTarget("a\nb"));QCOMPARE(session.midiInputTarget(),QString());
+        ui.type("midiInputTarget","keys",true);QTRY_COMPARE(session.midiInputTarget(),QString("keys"));
+        QTemporaryDir directory;QVERIFY(session.saveProject(directory.filePath("inputs.json")));
+        QVERIFY(session.setArmed(audio,true));QVERIFY(session.record());
+        QVERIFY(!session.setInputTarget("other"));QVERIFY(session.message().contains("Stop recording"));QCOMPARE(session.inputTarget(),QString("usb-mic"));
+        QVERIFY(!ui.item("inputTarget")->isEnabled());
+        session.stop();session.tick();
+        QVERIFY(session.setInputTarget(""));QCOMPARE(session.inputTarget(),QString());QVERIFY(session.message().contains("waits for an external link"));
+    }
     // #50: the audio and MIDI recording journey through the production QML
     // with synthetic pointer and keyboard input: arm, record, stop, edit
     // both clips, save, reopen and play. Preview feeds silence for audio and

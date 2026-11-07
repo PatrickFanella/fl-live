@@ -153,6 +153,18 @@ ApplicationWindow {
             Button { objectName: "playButton"; text: "Play"; enabled: session.audioAvailable; onClicked: session.play() }
             Button { objectName: "retryAudioButton"; text: "Retry audio"; visible: !session.audioAvailable; onClicked: session.reconnectAudio() }
             Button { objectName: "stopButton"; text: "Stop"; onClicked: session.stop() }
+            TextField {
+                objectName: "inputTarget"; placeholderText: "Audio input node"; text: session.inputTarget; Layout.preferredWidth: 150
+                enabled: !session.recording; onEditingFinished: if (text !== session.inputTarget) session.setInputTarget(text)
+                Accessible.name: "Audio input node to record from"
+                ToolTip.visible: hovered; ToolTip.text: "The PipeWire node the audio input links to. Empty waits for a link made elsewhere."
+            }
+            TextField {
+                objectName: "midiInputTarget"; placeholderText: "MIDI input node"; text: session.midiInputTarget; Layout.preferredWidth: 150
+                enabled: !session.recording; onEditingFinished: if (text !== session.midiInputTarget) session.setMidiInputTarget(text)
+                Accessible.name: "MIDI input node to record from"
+                ToolTip.visible: hovered; ToolTip.text: "The PipeWire node the MIDI input links to. Empty waits for a link made elsewhere."
+            }
             Button {
                 objectName: "recoverTakes"; text: "Recover takes"; visible: session.interruptedTakes.length > 0
                 onClicked: session.recoverTakes()
@@ -318,6 +330,7 @@ ApplicationWindow {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     Label { objectName: "clipState" + index; text: session.clipStates[index]; Layout.fillWidth: true; color: session.activeClips[index] >= 0 ? "#68d9a4" : "#b7c5d8" }
+                                    CheckBox { objectName: "monitor" + index; text: "Monitor"; visible: !trackColumn.midi; checked: session.monitored[index] === true; onClicked: session.setMonitored(trackColumn.trackId, checked); Accessible.name: "Monitor the input on track " + (index + 1) + " while armed" }
                                     CheckBox { objectName: "arm" + index; text: "Arm"; checked: session.armed[index] === true; enabled: !session.recording; onClicked: session.setArmed(trackColumn.trackId, checked); Accessible.name: "Arm track " + (index + 1) + " for recording" }
                                     CheckBox { objectName: "sceneIncluded" + index; text: "Include in scene"; checked: session.sceneIncluded[index]; enabled: session.canChange; onClicked: session.setSceneIncluded(trackColumn.trackId, checked); Accessible.name: "Include track " + (index+1) + " in scene"; ToolTip.visible: hovered; ToolTip.text: "An excluded track stops when this scene launches." }
                                 }
