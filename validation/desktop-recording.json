@@ -1,0 +1,107 @@
+{
+  "verified_at": "2026-11-07T12:52:14.127843+00:00",
+  "base": "main after PR #153 (144a188)",
+  "issues": [
+    43,
+    46,
+    47
+  ],
+  "scope": "Audio recording in the desktop: arming, takes in the project's recordings folder, recorded clips with Undo/Redo and save/reopen, through preview and through the live PipeWire input stream on a private graph",
+  "environment": "Kvant, pinned CI image (Qt 6.12, PipeWire 1.6.9), docker --network none, QT_QPA_PLATFORM=offscreen, owned private PipeWire server at quantum 256, no devices or session manager",
+  "gates": {
+    "desktop": {
+      "passed": 27,
+      "total": 27
+    },
+    "pipewire-sanitize": {
+      "passed": 20,
+      "total": 20
+    },
+    "pipewire-desktop-recording repeats": {
+      "passed": 12,
+      "total": 12
+    }
+  },
+  "runs": [
+    {
+      "captured_frames": 71936,
+      "matched_frames": 71936,
+      "jumps": 0
+    },
+    {
+      "captured_frames": 71936,
+      "matched_frames": 71936,
+      "jumps": 0
+    },
+    {
+      "captured_frames": 71936,
+      "matched_frames": 71936,
+      "jumps": 0
+    },
+    {
+      "captured_frames": 71936,
+      "matched_frames": 71936,
+      "jumps": 0
+    },
+    {
+      "captured_frames": 71936,
+      "matched_frames": 71936,
+      "jumps": 0
+    },
+    {
+      "captured_frames": 71936,
+      "matched_frames": 71936,
+      "jumps": 0
+    },
+    {
+      "captured_frames": 71936,
+      "matched_frames": 71936,
+      "jumps": 0
+    },
+    {
+      "captured_frames": 71936,
+      "matched_frames": 71936,
+      "jumps": 0
+    },
+    {
+      "captured_frames": 71936,
+      "matched_frames": 71936,
+      "jumps": 0
+    },
+    {
+      "captured_frames": 71936,
+      "matched_frames": 71936,
+      "jumps": 0
+    },
+    {
+      "captured_frames": 72192,
+      "matched_frames": 72192,
+      "jumps": 0
+    },
+    {
+      "captured_frames": 71936,
+      "matched_frames": 71936,
+      "jumps": 0
+    }
+  ],
+  "verified_behaviors": [
+    "Arm exists only on audio tracks; arming a MIDI track is refused with the reason",
+    "Record is refused without an armed track or a saved project, and refuses a second Record, arming, track deletion, Open and New while recording; nothing is recorded on refusal",
+    "A 50-tick preview take is exactly 24,000 silent frames in recordings/TRACK take 1.wav, added and selected as a new clip in one Undo step",
+    "Undo removes the clip and keeps the file; Redo and save/reopen restore the clip",
+    "An immediate stop leaves no clip and deletes the empty file; the next take never reuses a name",
+    "Record and Stop through the production QML controls add a clip",
+    "Arming opens fl-live-input; a 1.5 s live take through Session::record() matches an independent stereo reference frame by frame and becomes the track's selected clip"
+  ],
+  "source_sha256": {
+    "apps/desktop/session.hpp": "040734e835b57279011ae44343b327fc24d550794e9483e34fe80997625035d0",
+    "apps/desktop/session.cpp": "f1b10f9fe900c6369493180c6290cd481644dbcdddf3ca6fe41a15fbc2edbec3",
+    "apps/desktop/Main.qml": "b87fef3da6ef32afecc100e98c27ee9b1c5c8d11861784d801423f1aab416b1f",
+    "apps/desktop/main.cpp": "8caf3b701f429ad988e106addcdc90db882bb4550adf8d52668a58c0bfb36ef2",
+    "include/fl_live/pipewire_backend.hpp": "7fdb11cf17f770108de895a32c2039c27386491dd683023eaf5fcd0811137c56",
+    "tests/desktop_tests.cpp": "b1491574066d9d7ec1db91f01d188e9669430a89bd54eb1a8f983dfc75380e55",
+    "tests/desktop_backend_probe.cpp": "011a9796c539e4baf894c436d39c8f00b5e14ecac0beff58eb34924ca87ef2a2",
+    "tests/pipewire_capture.py": "2b0961b45d485806f84ea0ead9ba4b3aed9368f7836ab0759ad6d096827cffdd"
+  },
+  "limits": "Audio only; MIDI recording, input monitoring and in-app input choice are not built (#43). No device-loss finalization (#46), timestamps (#45) or crash recovery (#48). Private software graph and offscreen QML only; no physical input, native Wayland or latency measurement."
+}

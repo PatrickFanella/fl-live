@@ -13,6 +13,7 @@
 #include "fl_live/document_io.hpp"
 #include <stdexcept>
 #include <cmath>
+#include <filesystem>
 
 namespace {
 std::uint64_t parseIdentity(const QString& text) {
@@ -418,6 +419,7 @@ QString Session::editName(const HistoryEntry& entry) {
     case EditKind::track_create: return "new track";
     case EditKind::track_duplicate: return QString("track %1 duplicate").arg(entry.index+1);
     case EditKind::track_delete: return "track deletion";
+    case EditKind::record_take: return entry.index == 1 ? "recorded take" : "recorded takes";
     case EditKind::clip_create: return QString("track %1 new clip").arg(entry.index+1);
     case EditKind::clip_duplicate: return QString("track %1 clip duplicate").arg(entry.index+1);
     case EditKind::clip_delete: return QString("track %1 clip deletion").arg(entry.index+1);
@@ -640,6 +642,7 @@ bool Session::saveProject(const QString& path) {
     }
 }
 bool Session::loadProject(const QString& path) {
+    if (recording()) { message_ = "Stop recording before opening another project."; emit changed(); return false; }
     if (dirty()) { message_ = "Save your changes before opening another project."; emit changed(); return false; }
     if (!editable()) return false;
     try {
@@ -704,7 +707,13 @@ void Session::send(fl_live::ControlKind kind, std::size_t track, std::size_t cli
     emit changed();
 }
 void Session::play() { send(fl_live::ControlKind::start); }
-void Session::stop() { send(fl_live::ControlKind::stop); }
+void Session::stop() {
+    if (!recording()) { send(fl_live::ControlKind::stop); return; }
+    finishRecording();
+    const auto report = message_; // the take report outranks the acknowledgement notice
+    send(fl_live::ControlKind::stop);
+    if (message_ == "Awaiting render acknowledgement") { message_ = report; ack_report_ = report; emit changed(); }
+}
 void Session::rewind() {
     if (running() || pending()) { message_ = "Stop transport before returning to the start."; emit changed(); return; }
     send(fl_live::ControlKind::rewind);
@@ -730,6 +739,9 @@ void Session::tick() {
     if (preview_) {
         std::array<float, 960> discarded{};
         prepared_->controller.process(discarded, 2); // 480 stereo frames; simulated clock, no audio output
+        // Silent preview has no input: takes record silence at the same clock.
+        static const std::array<float, 960> silence{};
+        if (recording()) fanout_.capture(silence);
     }
     if (prepared_->backend && prepared_->backend->status().error) {
         audioFailed("Audio backend disconnected");
@@ -738,7 +750,8 @@ void Session::tick() {
     status_ = prepared_->controller.status();
     if (!failed_ && status_.handled_serial != before.handled_serial)
         message_ = status_.rejected != before.rejected ? "Engine rejected a scheduled command" :
-            "Render acknowledged. Track indicators show active clips and queued actions.";
+            !ack_report_.isEmpty() ? ack_report_ : "Render acknowledged. Track indicators show active clips and queued actions.";
+    if (status_.handled_serial != before.handled_serial) ack_report_.clear();
     emit changed();
 }
 
@@ -1063,8 +1076,103 @@ bool Session::duplicateTrack(const QString& id) {
         message_="Duplicated track; the copy has new IDs and shares imported audio";emit changed();return true;
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }
+QVariantList Session::armed() const {
+    QVariantList result;for(const auto& t:identities_->tracks)result.append(armed_.contains(t.id.value));return result;
+}
+bool Session::setArmed(const QString& trackId,bool armed) {
+    try {
+        const fl_live::TrackId id{parseIdentity(trackId)};
+        const auto track=std::find_if(identities_->tracks.begin(),identities_->tracks.end(),[&](const auto& t){return t.id==id;});
+        if(track==identities_->tracks.end())throw std::invalid_argument("Unknown track");
+        if(track->kind!=fl_live::TrackKind::audio)throw std::invalid_argument("Only audio tracks record in this version; MIDI recording is not built yet");
+        if(recording())throw std::invalid_argument("Stop recording before changing which tracks are armed");
+        // The input stream opens with the first armed track, so recording
+        // starts without stream setup, and closes when none is armed.
+        if(armed && armed_.empty())openInput();
+        if(armed)armed_.insert(id.value);else armed_.erase(id.value);
+        if(armed_.empty())input_.reset();
+        emit changed();return true;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+void Session::openInput() {
+    if(preview_ || input_)return;
+    auto input=config_;input.channels=2;input.target=config_.input_target;input.autoconnect=!config_.input_target.empty();
+    try{input_=std::make_unique<fl_live::PipeWireCapture>(input);}
+    catch(const std::exception& error){throw std::runtime_error(std::string("Cannot open the recording input: ")+error.what());}
+}
+bool Session::record() {
+    try {
+        if(recording())throw std::invalid_argument("Already recording");
+        if(failed_)throw std::invalid_argument("Audio is stopped; choose Retry audio before recording");
+        std::vector<fl_live::TrackId> tracks;
+        for(const auto& t:identities_->tracks)if(armed_.contains(t.id.value))tracks.push_back(t.id);
+        if(tracks.empty())throw std::invalid_argument("Arm an audio track to record");
+        if(owned_path_.isEmpty() || !QFileInfo::exists(owned_path_))throw std::invalid_argument("Save the project first; takes are stored in its recordings folder");
+        const QDir folder(QFileInfo(owned_path_).absolutePath()+"/recordings");
+        if(!QDir().mkpath(folder.path()))throw std::runtime_error(("Cannot create "+folder.path()).toStdString());
+        std::vector<Take> takes;
+        for(const auto& id:tracks) {
+            auto name=QString::fromUtf8(std::find_if(identities_->tracks.begin(),identities_->tracks.end(),[&](const auto& t){return t.id==id;})->name);
+            for(auto& c:name)if(!c.isLetterOrNumber() && c!=' ' && c!='-' && c!='_')c='-';
+            QString path;
+            for(int n=1;;++n) {
+                path=folder.filePath(QString("%1 take %2.wav").arg(name).arg(n));
+                if(!QFileInfo::exists(path) && !QFileInfo::exists(path+".part"))break;
+            }
+            takes.push_back({id,std::make_unique<fl_live::CaptureTake>(path.toStdString(),2,48000)});
+        }
+        openInput();
+        takes_=std::move(takes);
+        fanout_.takes.clear();
+        for(auto& t:takes_)fanout_.takes.push_back(t.take.get());
+        if(input_)input_->setSink(&fanout_);
+        if(!running())play();
+        message_=QString("Recording %1 track%2 into %3").arg(takes_.size()).arg(takes_.size()==1 ? "" : "s").arg(folder.path());
+        emit changed();return true;
+    }catch(const std::exception& error){
+        message_=QString("Could not start recording: %1. Nothing was recorded.").arg(QString::fromUtf8(error.what()));
+        emit changed();return false;
+    }
+}
+void Session::finishRecording() {
+    // Detach first: after this the data thread no longer touches any take.
+    if(input_)input_->setSink(nullptr);
+    fanout_.takes.clear();
+    auto takes=std::move(takes_);takes_.clear();
+    QStringList notes;
+    auto snapshot=*identities_;snapshot.next_id=next_identity_;
+    fl_live::SessionDocument candidate(std::move(snapshot));
+    auto next=*content_;
+    std::vector<std::pair<fl_live::TrackId,fl_live::ClipId>> added;
+    for(auto& take:takes) {
+        const auto status=take.take->finish();
+        const auto file=QString::fromStdString(status.file.string());
+        if(status.overflowed)notes.append(QString("%1 dropped %2 frames when the disk fell behind").arg(QFileInfo(file).fileName()).arg(status.frames_dropped));
+        if(status.failed){notes.append(QString::fromStdString(status.error));continue;}
+        if(!status.frames_written){std::error_code ignored;std::filesystem::remove(status.file,ignored);continue;}
+        // An Undo during the take may have removed its track; the file stays.
+        if(std::none_of(candidate.snapshot().tracks.begin(),candidate.snapshot().tracks.end(),[&](const auto& t){return t.id==take.track;}))
+            {notes.append(QString("The take's track no longer exists; the take is kept as %1").arg(file));continue;}
+        const auto count=static_cast<std::size_t>(std::count_if(candidate.snapshot().clips.begin(),candidate.snapshot().clips.end(),[&](const auto& c){return c.track==take.track;}));
+        if(count>=desktop_clips_per_track){notes.append(QString("The track already has 8 clips; the take is kept as %1").arg(file));continue;}
+        auto decoded=fl_live::importWav(status.file);
+        if(!decoded){notes.append(QString("The take %1 could not be read back: %2").arg(file,QString::fromStdString(decoded.message)));continue;}
+        const auto clip=candidate.createClip(take.track,"Take "+std::to_string(count+1));
+        ClipContent value{clip};
+        value.audio=AudioSource::wav;value.asset=file;value.media=std::make_shared<const fl_live::AudioClip>(std::move(decoded.clip));
+        next.clips.push_back(std::move(value));
+        added.emplace_back(take.track,clip);
+    }
+    if(!added.empty() && commitStructure(std::move(next),candidate.snapshot(),EditKind::record_take,static_cast<int>(added.size()))) {
+        for(const auto& [track,clip]:added)selected_clip_[track.value]=clip.value;
+        notes.prepend(QString("Recorded %1 take%2 as new clips").arg(added.size()).arg(added.size()==1 ? "" : "s"));
+    } else if(added.empty() && notes.isEmpty()) notes.append("Recording stopped; nothing was captured");
+    message_=notes.join(". ")+".";
+    emit changed();
+}
 bool Session::deleteTrack(const QString& id) {
     if(!changeable())return false;
+    if(recording()){message_="Stop recording before deleting a track";emit changed();return false;}
     try {
         const fl_live::TrackId target{parseIdentity(id)};
         fl_live::SessionDocument candidate(*identities_);
@@ -1393,6 +1501,7 @@ bool Session::discardRecovery(const QString& file) {
     return true;
 }
 bool Session::newProject() {
+    if (recording()) { message_ = "Stop recording before starting a new project."; emit changed(); return false; }
     if (dirty()) { message_ = "Save your changes before starting a new project."; emit changed(); return false; }
     if (!editable()) return false;
     try {

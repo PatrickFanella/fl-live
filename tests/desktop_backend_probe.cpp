@@ -8,6 +8,9 @@
 #include <functional>
 #include <QElapsedTimer>
 #include <QTemporaryDir>
+#include <QDir>
+#include <QFileInfo>
+#include <string>
 #include <iostream>
 
 static ProjectSettings readAuthoredSettings(const QString& path) { const auto p = readAuthoredProject(path); return templateView(p.content, p.identities); }
@@ -17,11 +20,37 @@ static ProjectSettings readAuthoredSettings(const QString& path) { const auto p 
 // output in the parent fixture. This is not native input or hardware QA.
 int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
-    if (argc != 2 && argc != 3) return 2;
+    if (argc != 2 && argc != 3 && !(argc == 4 && std::string_view(argv[2]) == "--record")) return 2;
     try {
         fl_live::PipeWireConfig config;
         config.remote = argv[1]; config.node_group = "pipewire.test";
         Session session(config);
+        if (argc == 4) {
+            // Desktop recording through the live input stream (#46/#47):
+            // arming track 1 of a saved project opens fl-live-input, which
+            // the fixture links; "record" records; "stop" finishes the take
+            // as a clip.
+            const auto track = session.trackIds()[0].toString();
+            const auto project = QDir(argv[3]).filePath("recorded.json");
+            if (!session.saveProject(project) || !session.setArmed(track, true)) return 1;
+            const auto before = session.trackClips()[0].toList().size();
+            std::cout << "{\"ready\": true}" << std::endl;
+            std::string line;
+            while (std::getline(std::cin, line) && line != "record") {}
+            if (!session.record()) { std::cerr << session.message().toStdString() << '\n'; return 1; }
+            while (std::getline(std::cin, line) && line != "stop") {}
+            session.stop();
+            const auto clips = session.trackClips()[0].toList();
+            const auto files = QDir(QDir(argv[3]).filePath("recordings")).entryList({"*.wav"}, QDir::Files);
+            const bool added = clips.size() == before + 1 && session.selectedClips()[0] == clips.last().toMap()["id"] &&
+                               session.message().startsWith("Recorded 1 take") && files.size() == 1;
+            const auto file = files.isEmpty() ? QString() : QDir(QDir(argv[3]).filePath("recordings")).filePath(files[0]);
+            std::cout << "{\"frames\": -1"
+                      << ", \"dropped\": " << (session.message().contains("dropped") ? 1 : 0)
+                      << ", \"failed\": " << (added ? "false" : "true") << ", \"file\": \"" << file.toStdString()
+                      << "\", \"callbacks\": -1, \"bad_buffers\": -1, \"error\": 0}" << std::endl;
+            return added ? 0 : 1;
+        }
         if (argc == 3 && std::string_view(argv[2]) == "--recovery") {
             const auto trackId=session.trackIds()[0],clipId=session.clipIds()[0];
             const auto sceneId=session.sceneId();

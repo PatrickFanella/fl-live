@@ -11,6 +11,8 @@ Every failure the desktop can report names what it was working on, and says what
 | Missing audio when opening | "Project opened. Missing audio plays as silence; relink or import it: NAME (reason)" | The reference to the file | **Relink** to the moved file, or import another |
 | Export: bad settings, existing file, missing folder, write failure | "Could not export NAME: reason" | The document; any existing file is left as it was, and no partial file remains | Adjust the settings or choose another path |
 | Audio server missing or lost | "reason (PipeWire remote R, target T). Audio is stopped; your project and history are kept." | The document and history; Save still works | Restore the server or output, then **Retry audio** |
+| Record: no armed track, unsaved project, input stream cannot open, take file cannot be created | "Could not start recording: reason. Nothing was recorded." | Everything; no file is left | Arm a track, save the project, or fix the input, then record again |
+| A take that fails to write, cannot be read back, lost its track or would exceed eight clips | "… the take is kept as PATH" or "Writing the recording failed: … kept in NAME.part" | The document, and the take's file in `recordings/` | Import or relink the kept file if you want it as a clip |
 | A full control queue | "Control queue full. Try again, or use Silence now." | Everything, including an edit made at that moment | Try again; **Silence now** always works |
 
 Plugins are not hosted yet, so there are no plugin failures to report; plugin failures belong to #72.
