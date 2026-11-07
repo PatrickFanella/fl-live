@@ -17,8 +17,17 @@ struct ClipContent {
     // Decoded asset; not persisted. Null means missing or not yet loaded,
     // which renders silence. Shared and immutable, so history copies are cheap.
     std::shared_ptr<const fl_live::AudioClip> media;
+    // Imported clips only: play source frames [range_start, range_start +
+    // length), where length 0 means to the end of the source. Source-rate
+    // playback, no warping. loop false plays the range once and stops.
+    std::uint64_t range_start = 0;
+    std::uint64_t range_length = 0;
+    bool loop = true;
+    bool hasRange() const { return range_start != 0 || range_length != 0 || !loop; }
     bool operator==(const ClipContent&) const = default;
 };
+// Frames of a decoded clip (samples / channels), 0 when not resolved.
+std::uint64_t mediaFrames(const ClipContent& clip);
 struct TrackContent {
     fl_live::TrackId track;
     int level = 70; // percent

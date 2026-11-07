@@ -8,6 +8,9 @@ ApplicationWindow {
     minimumWidth: 900; minimumHeight: 620
     visible: true
     property bool discardOnClose: false
+    // Notifies only when the number of tracks actually changes, so the track
+    // Repeater keeps its delegates (and their focus and edits) otherwise.
+    readonly property int trackSlots: session.trackCount
     property bool textOwnsUndo: (activeFocusItem instanceof TextInput || activeFocusItem instanceof TextEdit) && !activeFocusItem.readOnly
     Shortcut { sequences: [StandardKey.Undo]; enabled: session.canUndo && !window.textOwnsUndo && !closeDialog.visible && !renameDialog.visible; onActivated: session.undo() }
     Shortcut { sequences: [StandardKey.Redo]; enabled: session.canRedo && !window.textOwnsUndo && !closeDialog.visible && !renameDialog.visible; onActivated: session.redo() }
@@ -166,13 +169,14 @@ ApplicationWindow {
                         Label { visible: session.trackCount === 0; text: "No tracks. Add an audio or MIDI track."; color: "#b7c5d8" }
                         Repeater {
                             // An integer model keeps delegates (and focus) stable across status updates.
-                            model: session.trackCount
+                            model: window.trackSlots
                             ColumnLayout {
                                 id: trackColumn
                                 required property int index
                                 readonly property string trackId: session.trackIds[index] || ""
                                 readonly property bool midi: session.trackKinds[index] === "midi"
-                                Layout.preferredWidth: 300; Layout.alignment: Qt.AlignTop
+                                // Wide enough for the range row; every row must fit so columns never overlap.
+                                Layout.preferredWidth: 340; Layout.maximumWidth: 340; Layout.alignment: Qt.AlignTop
                                 spacing: 8
                                 RowLayout {
                                     Layout.fillWidth: true
@@ -212,6 +216,60 @@ ApplicationWindow {
                                     visible: !trackColumn.midi; Layout.fillWidth: true
                                     TextField { id: audioPath; objectName: "audioPath" + index; Layout.fillWidth: true; placeholderText: "WAV file path"; Accessible.name: "WAV file to import into track " + (index + 1) }
                                     Button { objectName: "importAudio" + index; text: "Import"; enabled: !session.importing; onClicked: session.importAudio(trackColumn.trackId, audioPath.text); ToolTip.visible: hovered; ToolTip.text: "Mono or stereo WAV at 48 kHz. Decoding runs in the background; the clip changes once transport is stopped." }
+                                }
+                                Canvas {
+                                    id: waveform
+                                    objectName: "waveform" + index
+                                    readonly property real frames: session.clipFrames[index] || 0
+                                    readonly property var range: session.clipRanges[index] || [0, 0, true]
+                                    // A string key changes only when the drawing would, so the
+                                    // 10 ms status updates do not repaint the canvas.
+                                    readonly property string paintKey: frames + ":" + range[0] + ":" + range[1] + ":" + range[2] + ":" + width
+                                    visible: !trackColumn.midi && frames > 0
+                                    Layout.fillWidth: true; Layout.preferredHeight: 56
+                                    onPaintKeyChanged: requestPaint()
+                                    Accessible.role: Accessible.Graphic
+                                    Accessible.name: "Waveform of track " + (index + 1) + ", playing " + (range[0] / 48000).toFixed(3) + " to " + (range[1] / 48000).toFixed(3) + " seconds" + (range[2] ? ", looped" : ", once")
+                                    onPaint: {
+                                        const ctx = getContext("2d")
+                                        ctx.reset()
+                                        ctx.fillStyle = "#1c222b"; ctx.fillRect(0, 0, width, height)
+                                        if (frames <= 0 || width < 1) return
+                                        const x0 = range[0] / frames * width, x1 = range[1] / frames * width
+                                        ctx.fillStyle = range[2] ? "#2c4a3f" : "#4a3f2c"; ctx.fillRect(x0, 0, Math.max(1, x1 - x0), height)
+                                        const peaks = session.waveform(index, Math.max(1, Math.floor(width)))
+                                        ctx.strokeStyle = "#9fe3c4"; ctx.beginPath()
+                                        for (let i = 0; i < peaks.length; ++i) {
+                                            const lo = Math.max(-1, Math.min(1, peaks[i][0])), hi = Math.max(-1, Math.min(1, peaks[i][1]))
+                                            ctx.moveTo(i + 0.5, height / 2 - hi * height / 2); ctx.lineTo(i + 0.5, height / 2 - lo * height / 2 + 1)
+                                        }
+                                        ctx.stroke()
+                                    }
+                                }
+                                RowLayout {
+                                    visible: waveform.visible; Layout.fillWidth: true
+                                    Label { text: "Start ms"; color: "#9daabd" }
+                                    SpinBox {
+                                        objectName: "rangeStart" + index; editable: true; Layout.preferredWidth: 88
+                                        from: 0; to: Math.max(0, Math.ceil(waveform.range[1] / 48) - 1)
+                                        value: Math.round(waveform.range[0] / 48); enabled: session.canEdit
+                                        onValueModified: session.setClipRange(trackColumn.trackId, Math.min(value * 48, waveform.range[1] - 1), waveform.range[1], waveform.range[2])
+                                        Accessible.name: "Track " + (index + 1) + " clip start in milliseconds"
+                                    }
+                                    Label { text: "End"; color: "#9daabd" }
+                                    SpinBox {
+                                        objectName: "rangeEnd" + index; editable: true; Layout.preferredWidth: 88
+                                        from: Math.floor(waveform.range[0] / 48) + 1; to: Math.ceil(waveform.frames / 48)
+                                        value: Math.ceil(waveform.range[1] / 48); enabled: session.canEdit
+                                        // The last millisecond step always reaches the true end of the source.
+                                        onValueModified: session.setClipRange(trackColumn.trackId, waveform.range[0], Math.min(value * 48, waveform.frames), waveform.range[2])
+                                        Accessible.name: "Track " + (index + 1) + " clip end in milliseconds"
+                                    }
+                                    CheckBox {
+                                        objectName: "rangeLoop" + index; text: "Loop"; checked: waveform.range[2]; enabled: session.canEdit
+                                        onClicked: session.setClipRange(trackColumn.trackId, waveform.range[0], waveform.range[1], checked)
+                                        Accessible.name: "Loop track " + (index + 1) + " clip range"; ToolTip.visible: hovered; ToolTip.text: "Off plays the range once, then the track stops."
+                                    }
                                 }
                                 RowLayout {
                                     Layout.fillWidth: true

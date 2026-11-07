@@ -708,6 +708,86 @@ private slots:
         QVERIFY(!findItem(window->contentItem(),"deleteTrack2")->property("enabled").toBool());
         click("stopButton");session.tick();QVERIFY(!session.running());
     }
+    void clipRangeEditing() {
+        QTemporaryDir directory;const auto ramp=directory.filePath("ramp.wav");
+        // 4800 mono frames (100 ms): a 480-frame ramp repeated ten times.
+        std::vector<qint16> samples(4800);for(std::size_t i=0;i<samples.size();++i)samples[i]=static_cast<qint16>((i%480)*64);
+        writeWav(ramp,1,48000,samples);
+        Session session;QVERIFY(session.addTrack("audio"));const auto track=session.trackIds()[2].toString();
+        QVERIFY(session.importAudio(track,ramp));QTRY_VERIFY(!session.importing());
+        QCOMPARE(session.clipFrames()[2].toDouble(),4800.0);QCOMPARE(session.clipFrames()[0].toDouble(),0.0);
+        QCOMPARE(session.clipRanges()[2],QVariant(QVariantList{0.0,4800.0,true}));
+        const auto peaks=session.waveform(2,10);QCOMPARE(peaks.size(),10);
+        for(const auto& peak:peaks){QCOMPARE(peak.toList()[0].toFloat(),0.0F);QCOMPARE(peak.toList()[1].toFloat(),479.0F*64/32768);}
+        QVERIFY(session.waveform(0,10).isEmpty());QVERIFY(session.waveform(2,0).isEmpty());QVERIFY(session.waveform(9,10).isEmpty());
+        QVERIFY(session.setClipRange(track,480,960,false));
+        QCOMPARE(session.clipRanges()[2],QVariant(QVariantList{480.0,960.0,false}));QCOMPARE(session.undoText(),QString("Undo track 3 clip range"));
+        const auto undo=session.undoText();
+        for(const auto& bad:std::vector<std::array<double,2>>{{960,960},{900,800},{0,4801},{-1,10},{1.5,10},{0,std::nan("")}})
+            QVERIFY(!session.setClipRange(track,bad[0],bad[1],true));
+        QVERIFY(!session.setClipRange(session.trackIds()[0].toString(),0,10,true));
+        QVERIFY(!session.setClipRange(session.trackIds()[1].toString(),0,10,true));
+        QCOMPARE(session.undoText(),undo);QCOMPARE(session.clipRanges()[2],QVariant(QVariantList{480.0,960.0,false}));
+        // Exported audio: the soloed track plays source frames 480..959 once.
+        QVERIFY(session.setSolo(track,true));
+        const auto pcm=[](float v){return static_cast<qint16>(std::lround(std::clamp(v,-1.0F,1.0F)*32767.0F));};
+        const auto exported=[&](const QString& name){QVERIFY(session.exportWav(directory.filePath(name),1));QTRY_VERIFY(!session.exporting());};
+        exported("once.wav");auto frames=readStereo(directory.filePath("once.wav"));
+        for(std::size_t i=0;i<frames.size();++i) {
+            const float source=i<480 ? static_cast<float>(i*64)/32768 : 0.0F;
+            QCOMPARE(frames[i][0],pcm(0.7F*source));QCOMPARE(frames[i][1],pcm(0.7F*source));
+        }
+        QVERIFY(session.setClipRange(track,480,960,true));exported("loop.wav");frames=readStereo(directory.filePath("loop.wav"));
+        for(std::size_t i=0;i<frames.size();i+=97)QCOMPARE(frames[i][0],pcm(0.7F*static_cast<float>((i%480)*64)/32768));
+        // End at the true end of the source is stored as "to the end".
+        QVERIFY(session.setClipRange(track,4000,4800,true));QCOMPARE(session.clipRanges()[2],QVariant(QVariantList{4000.0,4800.0,true}));
+        QVERIFY(session.setClipRange(track,480,960,false));
+        const auto path=directory.filePath("ranges.json");QVERIFY(session.saveProject(path));
+        {QFile file(path);QVERIFY(file.open(QIODevice::ReadOnly));QVERIFY(file.readAll().contains("clip-ranges-v1"));}
+        Session reopened;QVERIFY(reopened.loadProject(path));QCOMPARE(reopened.clipRanges()[2],QVariant(QVariantList{480.0,960.0,false}));
+        // A file that became shorter opens whole, with a message.
+        writeWav(ramp,1,48000,std::vector<qint16>(400,1000));
+        Session shorter;QVERIFY(shorter.loadProject(path));QVERIFY(shorter.message().contains("range reset"));
+        QCOMPARE(shorter.clipRanges()[2],QVariant(QVariantList{0.0,400.0,false})); // loop choice is kept
+        // Re-importing replaces the source and plays it whole.
+        QVERIFY(session.importAudio(track,ramp));QTRY_VERIFY(!session.importing());
+        QCOMPARE(session.clipRanges()[2],QVariant(QVariantList{0.0,400.0,true}));
+        session.undo();QCOMPARE(session.clipRanges()[2],QVariant(QVariantList{480.0,960.0,false}));
+    }
+    void qmlClipRange() {
+        QTemporaryDir directory;const auto ramp=directory.filePath("ramp.wav");
+        std::vector<qint16> samples(48000);for(std::size_t i=0;i<samples.size();++i)samples[i]=static_cast<qint16>(std::sin(static_cast<double>(i)/200)*20000);
+        writeWav(ramp,1,48000,samples);
+        Session session;QVERIFY(session.importAudio(session.trackIds()[0].toString(),ramp));QTRY_VERIFY(!session.importing());
+        QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("session",&session);
+        engine.load(QUrl("qrc:/ui/Main.qml"));
+        auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());QVERIFY(window);QVERIFY(QTest::qWaitForWindowExposed(window));
+        std::function<QQuickItem*(QQuickItem*,const QString&)> findItem=[&](QQuickItem* root,const QString& name)->QQuickItem* {
+            if(root->objectName()==name && root->isVisible())return root;
+            for(auto* child:root->childItems())if(auto* match=findItem(child,name))return match;
+            return nullptr;
+        };
+        QVERIFY(findItem(window->contentItem(),"waveform0"));QVERIFY(!findItem(window->contentItem(),"waveform1"));
+        auto* start=findItem(window->contentItem(),"rangeStart0");QVERIFY(start);
+        start->forceActiveFocus();QTest::keyClick(window,Qt::Key_Up);
+        QCOMPARE(session.clipRanges()[0],QVariant(QVariantList{48.0,48000.0,true}));
+        auto* end=findItem(window->contentItem(),"rangeEnd0");QVERIFY(end);
+        end->forceActiveFocus();QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier);
+        for(const char c:QByteArray("250"))QTest::keyClick(window,c);
+        QTest::keyClick(window,Qt::Key_Return);
+        QTRY_COMPARE(session.clipRanges()[0],QVariant(QVariantList{48.0,12000.0,true}));
+        auto* loop=findItem(window->contentItem(),"rangeLoop0");
+        QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,loop->mapToScene(QPointF(loop->width()/2,loop->height()/2)).toPoint());
+        QCOMPARE(session.clipRanges()[0],QVariant(QVariantList{48.0,12000.0,false}));
+        QCOMPARE(findItem(window->contentItem(),"waveform0")->property("paintKey").toString().section(':',0,3),QString("48000:48:12000:false"));
+        for(const auto* name:{"rangeLoop0","solo0","importAudio0","deleteTrack0"}) {
+            auto* item=findItem(window->contentItem(),name);QVERIFY2(item,name);
+            QVERIFY2(item->mapToItem(findItem(window->contentItem(),"clip1"),QPointF(item->width(),0)).x()<0,name); // stays left of track 2
+        }
+        QVERIFY(window->grabWindow().save("desktop-clip-range.png"));
+        session.undo();QCOMPARE(session.clipRanges()[0],QVariant(QVariantList{48.0,12000.0,true}));
+        QTRY_VERIFY(findItem(window->contentItem(),"rangeLoop0")->property("checked").toBool());
+    }
     void qmlMixerInput() {
         Session session;
         QQmlApplicationEngine engine;

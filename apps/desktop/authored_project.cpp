@@ -152,6 +152,9 @@ ProjectSettings templateView(const SessionContent& content,const fl_live::Docume
     }
     return settings;
 }
+std::uint64_t mediaFrames(const ClipContent& clip) {
+    return clip.media && clip.media->channels ? clip.media->samples.size()/clip.media->channels : 0;
+}
 const ClipContent& clipContent(const SessionContent& content,fl_live::ClipId clip) {
     const auto found=std::find_if(content.clips.begin(),content.clips.end(),[clip](const auto& c){return c.clip==clip;});
     if(found==content.clips.end())throw std::invalid_argument("Missing clip content");
@@ -186,6 +189,11 @@ void validateContent(const SessionContent& content,const fl_live::DocumentSnapsh
         if(wav!=!value.asset.isEmpty() || (!value.asset.isEmpty() && (!QDir::isAbsolutePath(value.asset) || value.asset.size()>asset_path_limit)))
             throw std::invalid_argument("Imported audio requires one absolute asset path");
         if(value.media && (!wav || value.media->samples.empty()))throw std::invalid_argument("Decoded media requires an imported WAV clip");
+        if(value.hasRange() && !wav)throw std::invalid_argument("Only imported audio clips have a source range");
+        if(value.range_start>fl_live::PreparationBudget::audio_frame_limit || value.range_length>fl_live::PreparationBudget::audio_frame_limit)
+            throw std::invalid_argument("Source range exceeds the import frame limit");
+        if(const auto frames=mediaFrames(value); frames && (value.range_start>=frames || value.range_length>frames-value.range_start))
+            throw std::invalid_argument("Source range must be a nonempty part of the imported audio");
     }
 }
 std::vector<fl_live::DocumentClipSource> contentSources(const SessionContent& content,const fl_live::DocumentSnapshot& identities) {
@@ -196,7 +204,15 @@ std::vector<fl_live::DocumentClipSource> contentSources(const SessionContent& co
         const auto kind=std::find_if(identities.tracks.begin(),identities.tracks.end(),[&](const auto& t){return t.id==clip.track;})->kind;
         if(kind==fl_live::TrackKind::midi)result.push_back({clip.id,patternClip(value.pattern,content.tempo)});
         else if(value.audio==AudioSource::pulse)result.push_back({clip.id,pulseClip(content.tempo)});
-        else if(value.media)result.push_back({clip.id,*value.media});
+        else if(value.media) {
+            // Copy only the selected source frames; the engine loops or stops
+            // at the end of this copy.
+            const auto channels=value.media->channels;
+            const auto frames=mediaFrames(value);
+            const auto length=value.range_length ? value.range_length : frames-value.range_start;
+            const auto first=value.media->samples.begin()+static_cast<std::ptrdiff_t>(value.range_start*channels);
+            result.push_back({clip.id,fl_live::AudioClip{{first,first+static_cast<std::ptrdiff_t>(length*channels)},value.loop,channels}});
+        }
         else result.push_back({clip.id,fl_live::AudioClip{{0.0F},true}}); // empty or missing: silence
     }
     return result;
@@ -210,19 +226,26 @@ std::vector<fl_live::DocumentTrackGain> contentGains(const SessionContent& conte
 QByteArray encodeAuthoredProject(const AuthoredProject& project) {
     validateContent(project.content,project.identities);
     QJsonArray tracks,clips;
+    // Ranges are written only when used, behind their own required feature.
+    const bool ranges=std::any_of(project.content.clips.begin(),project.content.clips.end(),[](const auto& c){return c.hasRange();});
     for(const auto& track:project.identities.tracks)
         tracks.append(QJsonObject{{"id",idText(track.id.value)},{"level",trackContent(project.content,track.id).level}});
     for(const auto& clip:project.identities.clips) {
         const auto& value=clipContent(project.content,clip.id);
         if(trackOf(project.identities,clip.id).kind==fl_live::TrackKind::midi)
             clips.append(QJsonObject{{"id",idText(clip.id.value)},{"pattern",encodePattern(value.pattern)}});
-        else if(value.audio==AudioSource::wav)
-            clips.append(QJsonObject{{"id",idText(clip.id.value)},{"audio","wav"},{"path",value.asset}});
+        else if(value.audio==AudioSource::wav) {
+            QJsonObject object{{"id",idText(clip.id.value)},{"audio","wav"},{"path",value.asset}};
+            if(ranges)object.insert("range",QJsonObject{{"start",static_cast<double>(value.range_start)},
+                {"length",static_cast<double>(value.range_length)},{"loop",value.loop}});
+            clips.append(object);
+        }
         else clips.append(QJsonObject{{"id",idText(clip.id.value)},{"audio",value.audio==AudioSource::pulse ? "pulse" : "empty"}});
     }
     const auto session=QJsonDocument::fromJson(fl_live::encodeDocumentMetadata(project.identities)).object();
     const auto bytes=QJsonDocument(QJsonObject{{"format","fl-live-project"},{"version",4},
-        {"required_features",QJsonArray{"general-session-v1"}},{"tempo",project.content.tempo},
+        {"required_features",ranges ? QJsonArray{"general-session-v1","clip-ranges-v1"} : QJsonArray{"general-session-v1"}},
+        {"tempo",project.content.tempo},
         {"session",session},{"tracks",tracks},{"clips",clips}}).toJson();
     if(bytes.size()>limit)throw std::invalid_argument("Authored project exceeds size limit");
     return bytes;
@@ -235,7 +258,8 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
     if(root["format"]!="fl-live-project")throw std::invalid_argument("Unsupported project format");
     if(!root["version"].isDouble() || root["version"].toDouble()!=4)return decodeTemplate(bytes,root);
     const auto v4=exact(root,{"format","version","required_features","tempo","session","tracks","clips"});
-    if(v4["required_features"].toArray()!=QJsonArray{"general-session-v1"})throw std::invalid_argument("Unsupported required project feature");
+    const bool ranges=v4["required_features"].toArray()==QJsonArray{"general-session-v1","clip-ranges-v1"};
+    if(!ranges && v4["required_features"].toArray()!=QJsonArray{"general-session-v1"})throw std::invalid_argument("Unsupported required project feature");
     if(!v4["session"].isObject())throw std::invalid_argument("Project requires a session object");
     AuthoredProject project;
     project.identities=fl_live::decodeDocumentMetadata(QJsonDocument(v4["session"].toObject()).toJson(QJsonDocument::Compact));
@@ -259,7 +283,7 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
             if(trackOf(project.identities,clip.clip).kind!=fl_live::TrackKind::midi)throw std::invalid_argument("Pattern on an audio clip");
         } else {
             const auto source=object["audio"].toString();
-            const auto fields=source=="wav" ? exact(value,{"id","audio","path"}) : exact(value,{"id","audio"});
+            const auto fields=source!="wav" ? exact(value,{"id","audio"}) : ranges ? exact(value,{"id","audio","path","range"}) : exact(value,{"id","audio","path"});
             clip.clip=fl_live::ClipId{idValue(fields["id"])};
             if(trackOf(project.identities,clip.clip).kind!=fl_live::TrackKind::audio)throw std::invalid_argument("Audio source on a MIDI clip");
             if(source=="pulse")clip.audio=AudioSource::pulse;
@@ -267,6 +291,14 @@ AuthoredProject decodeAuthoredProject(const QByteArray& bytes) {
             else if(source=="wav") {
                 if(!fields["path"].isString())throw std::invalid_argument("Imported audio requires a path string");
                 clip.audio=AudioSource::wav;clip.asset=fields["path"].toString();
+                if(ranges) {
+                    const auto range=exact(fields["range"],{"start","length","loop"});
+                    const int limit=static_cast<int>(fl_live::PreparationBudget::audio_frame_limit);
+                    clip.range_start=static_cast<std::uint64_t>(integer(range["start"],0,limit));
+                    clip.range_length=static_cast<std::uint64_t>(integer(range["length"],0,limit));
+                    if(!range["loop"].isBool())throw std::invalid_argument("Range loop must be true or false");
+                    clip.loop=range["loop"].toBool();
+                }
             } else throw std::invalid_argument("Unsupported audio source");
         }
         project.content.clips.push_back(std::move(clip));

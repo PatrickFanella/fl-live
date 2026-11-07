@@ -27,6 +27,12 @@ Every track column shows its kind, clip source, level, pan, mute, solo, scene in
 
 Enter a path under an audio track and choose **Import**. Decoding runs on a `WavImportWorker` thread under the [WAV admission policy](media-import.md): one or two channels, 48 kHz only, no resampling. The track shows "Importing NAME…" meanwhile; one import runs at a time. A refused file reports the importer's message ("Import failed: …") and changes nothing. A successful import replaces that track's clip source as one Undo step. If transport is running when decoding finishes, the result waits and is applied after Stop.
 
+## Waveform and source range
+
+An audio track with an imported WAV shows its waveform: per-pixel minimum/maximum peaks of the whole source across all channels. Peaks are computed on the GUI thread when the view needs them and cached per decoded clip and width; the render callback never prepares view data. The canvas repaints only when the source, range or width changes.
+
+**Start ms**, **End** and **Loop** choose which source frames play. The range is in source frames at the session rate; the controls step in milliseconds (48 frames), and the last End step always reaches the true end of the file. Playback is source-rate with no warping: the selected frames are copied into the prepared clip, which loops or, with Loop off, plays once and then stops the track until it is launched again. A range must be nonempty and inside the file; invalid ranges, ranges on non-imported clips and edits while playing are refused without changing history. Each range edit is one Undo step. Importing a new file resets the range to the whole file. The shaded part of the waveform is the selected range (green looped, amber once).
+
 ## Project files (version 4)
 
 Save writes `fl-live-project` version 4 with required feature `general-session-v1`:
@@ -47,17 +53,21 @@ Save writes `fl-live-project` version 4 with required feature `general-session-v
 }
 ```
 
+When any imported clip has a range other than "whole file, looped", the file also declares required feature `clip-ranges-v1` and every `wav` clip carries `"range": {"start": FRAME, "length": FRAMES, "loop": BOOL}`, where length 0 means to the end of the file. Files without ranges keep the plain form, so they still open in builds that predate ranges.
+
 Every object has an exact field set. MIDI clips carry `pattern`; audio clips carry `audio` (`pulse`, `empty` or `wav`) and, for `wav` only, an absolute `path`. Unknown versions, features, fields, sources, relative paths, kind mismatches, missing or duplicate entries and out-of-range values fail before the current project is replaced. Versions 1–3 still open and migrate to the same content; their rendered samples are unchanged. Older releases refuse version 4.
 
-Opening a project decodes its imported WAVs on the control thread before preparing playback. A missing or refused file does not block opening: the clip plays silence, the track shows "Missing: NAME" and the status line lists each missing file with the reason. Saving keeps the original path, so restoring the file and reopening repairs it. Relinking to a moved file is not offered yet (#60).
+Opening a project decodes its imported WAVs on the control thread before preparing playback. If a file became shorter than its saved range, it opens playing the whole file and the status line says the range was reset. A missing or refused file does not block opening: the clip plays silence, the track shows "Missing: NAME" and the status line lists each missing file with the reason. Saving keeps the original path, so restoring the file and reopening repairs it. Relinking to a moved file is not offered yet (#60).
 
 ## Verification
 
-`authored-project-io` checks v1/v2/v3 migration with sample-identical renders, a four-track v4 round trip covering every source kind with IDs above 2^53, render sources for resolved and unresolved media, and rejection of malformed content.
+`authored-project-io` checks clip-range persistence, feature gating and bounds, and one-shot and looped range rendering at blocks 1/7/257 frames. It also checks v1/v2/v3 migration with sample-identical renders, a four-track v4 round trip covering every source kind with IDs above 2^53, render sources for resolved and unresolved media, and rejection of malformed content.
 
 `desktop-session` adds:
 
 - `generalTrackManagement`: add tracks, per-track patterns, worker import of a stereo WAV, refused imports, an import held until Stop, a four-track stereo export compared channel by channel with independent per-track renders, Save/Open with byte-identical re-export, a missing asset, Duplicate with new IDs and copied scene slot, Delete with editor fallback, Undo/Redo of both, and an empty project.
+- `clipRangeEditing`: waveform peaks of a known ramp, range edits and refusals, an exported one-shot range and a looped range compared sample by sample, Save/Open of ranges, a file that became shorter, and re-import resetting the range.
+- `qmlClipRange`: keyboard edits of Start and End, a pointer click on Loop, Undo, and a check that every row of an audio column stays inside its column.
 - `trackLimit`: 64 tracks, refused 65th add and duplicate without history change, Save/Open.
 - `qmlTrackManagement`: actual pointer input on Add audio/MIDI track, Import, Edit pattern, step editing, Duplicate, Delete, Undo, clip launch and Play.
 

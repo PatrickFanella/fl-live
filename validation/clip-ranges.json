@@ -1,0 +1,39 @@
+{
+  "verified_at": "2026-11-07T07:55:22.316217+00:00",
+  "base": "general Session branch 101f6a5",
+  "issues": [
+    31
+  ],
+  "scope": "Waveform display and source start/end/loop range editing for imported audio clips",
+  "environment": "Kvant, pinned CI image (Qt 6.12.0), docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 18,
+      "total": 18,
+      "desktop_tests": "35 Qt test functions passed"
+    },
+    "document-io-sanitize": {
+      "passed": 7,
+      "total": 7
+    }
+  },
+  "verified_behaviors": [
+    "Range persistence behind required feature clip-ranges-v1, written only when used; malformed, out-of-bounds and misplaced range fields are refused",
+    "One-shot and looped ranges render the selected source frames exactly from a launch at frame 13 for blocks of 1, 7 and 257 frames; length 0 plays to the end; an unresolved clip keeps its range and renders silence",
+    "Waveform peaks of a known ramp; peaks are computed on the GUI thread, cached per decoded clip and width, never in the render callback",
+    "Range edits refuse empty, reversed, out-of-file, fractional and NaN ranges and non-imported clips without history change; each valid edit is one Undo step",
+    "Exported audio of a soloed track: a 480-frame one-shot range followed by silence, and the looped range, sample by sample",
+    "Save/Open keeps ranges; a file that became shorter opens whole with a message; re-import resets the range",
+    "Actual offscreen keyboard edits of Start and End, pointer click on Loop, Undo; a layout check that audio-column rows stay inside their column (this caught an overlap where the range row covered the next track's Duplicate button)"
+  ],
+  "source_sha256": {
+    "apps/desktop/authored_project.hpp": "a12116fa64c9d33cb489fdb30c2a5edeb8df5c5ddf483e2c15b918b4de4d0e66",
+    "apps/desktop/authored_project.cpp": "a124a34e7ab3a148f896f41f788cc299872ffa211ce9566010ec6d634d1fd39a",
+    "apps/desktop/session.hpp": "b325baff27637b84c9e44468727d09f879c65c27b51488cc08e119034cc4455d",
+    "apps/desktop/session.cpp": "1956eb8be38627e4b43998eccabff285deb8ce5eb5c0910cca948d84e21fca9b",
+    "apps/desktop/Main.qml": "1f18f253840df86dcd8ae9330bda4e6aaece5081487215b399777ed11b663485",
+    "tests/authored_project_tests.cpp": "59f8ab3bde6efbf0832182529bc079ad1c0250d20f76522623534158a71d2f52",
+    "tests/desktop_tests.cpp": "b366a2ce9759de96b97959996be8ae2f6e8d3b09a11e108d272c914ed40a4af7"
+  },
+  "limits": "Source-rate playback only; no warping, fades or crossfades at range boundaries. Offscreen checks; native Wayland and physical output remain unqualified."
+}

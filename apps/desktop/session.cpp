@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <stdexcept>
+#include <cmath>
 
 namespace {
 std::uint64_t parseIdentity(const QString& text) {
@@ -387,6 +388,7 @@ QString Session::editName(const HistoryEntry& entry) {
     case EditKind::track_duplicate: return QString("track %1 duplicate").arg(entry.index+1);
     case EditKind::track_delete: return "track deletion";
     case EditKind::audio_import: return QString("track %1 audio import").arg(entry.index+1);
+    case EditKind::clip_range: return QString("track %1 clip range").arg(entry.index+1);
     default: return {};
     }
 }
@@ -825,6 +827,7 @@ void Session::pollImport() {
     auto next=*content_;
     auto& clip=*std::find_if(next.clips.begin(),next.clips.end(),[&](const auto& c){return c.clip==firstClip(*identities_,import_track_);});
     clip.audio=AudioSource::wav;clip.asset=import_path_;
+    clip.range_start=0;clip.range_length=0;clip.loop=true; // a new source plays whole
     clip.media=std::make_shared<const fl_live::AudioClip>(std::move(import.clip));
     const auto before=content_;
     edit(next,EditKind::audio_import,static_cast<int>(track-identities_->tracks.begin()));
@@ -836,8 +839,77 @@ QStringList Session::resolveAssets(SessionContent& content) const {
     for(auto& clip:content.clips) {
         if(clip.audio!=AudioSource::wav)continue;
         auto result=fl_live::importWav(clip.asset.toStdString(),fl_live::WavImportPolicy{48000,fl_live::PreparationBudget::audio_frame_limit/2});
-        if(result)clip.media=std::make_shared<const fl_live::AudioClip>(std::move(result.clip));
+        if(result) {
+            clip.media=std::make_shared<const fl_live::AudioClip>(std::move(result.clip));
+            const auto frames=mediaFrames(clip);
+            if(clip.range_start>=frames || clip.range_length>frames-clip.range_start) {
+                // The file changed since saving; play it whole rather than refuse.
+                clip.range_start=0;clip.range_length=0;
+                missing.append(QFileInfo(clip.asset).fileName() + " (shorter than its saved range; range reset to the whole file)");
+            }
+        }
         else missing.append(QFileInfo(clip.asset).fileName() + " (" + QString::fromStdString(result.message) + ")");
     }
     return missing;
+}
+QVariantList Session::clipFrames() const {
+    QVariantList result;
+    for(const auto& track:identities_->tracks)result.append(static_cast<double>(mediaFrames(clipContent(*content_,firstClip(*identities_,track.id)))));
+    return result;
+}
+QVariantList Session::clipRanges() const {
+    QVariantList result;
+    for(const auto& track:identities_->tracks) {
+        const auto& clip=clipContent(*content_,firstClip(*identities_,track.id));
+        const auto frames=mediaFrames(clip);
+        const auto end=clip.range_length ? clip.range_start+clip.range_length : frames;
+        result.append(QVariant(QVariantList{static_cast<double>(clip.range_start),static_cast<double>(end),clip.loop}));
+    }
+    return result;
+}
+bool Session::setClipRange(const QString& trackId,double startFrame,double endFrame,bool loop) {
+    if(!editable())return false;
+    try {
+        const fl_live::TrackId id{parseIdentity(trackId)};
+        const auto index=prepared_->mapped.trackIndex(id);
+        if(!index)throw std::invalid_argument("Unknown track");
+        auto next=*content_;
+        auto& clip=*std::find_if(next.clips.begin(),next.clips.end(),[&](const auto& c){return c.clip==firstClip(*identities_,id);});
+        const auto frames=mediaFrames(clip);
+        if(clip.audio!=AudioSource::wav || !frames)throw std::invalid_argument("Import a WAV into this track before setting its range");
+        if(!std::isfinite(startFrame) || !std::isfinite(endFrame) || startFrame<0 || endFrame>static_cast<double>(frames) ||
+           startFrame!=std::floor(startFrame) || endFrame!=std::floor(endFrame) || endFrame<=startFrame)
+            throw std::invalid_argument("Range must start before it ends, inside the imported audio");
+        clip.range_start=static_cast<std::uint64_t>(startFrame);
+        const auto end=static_cast<std::uint64_t>(endFrame);
+        clip.range_length=end==frames ? 0 : end-clip.range_start; // 0 keeps "to the end"
+        clip.loop=loop;
+        if(next==*content_)return true;
+        edit(next,EditKind::clip_range,static_cast<int>(*index));
+        return *content_==next;
+    }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+}
+QVariantList Session::waveform(int track,int bins) const {
+    if(track<0 || static_cast<std::size_t>(track)>=identities_->tracks.size() || bins<1 || bins>4096)return {};
+    const auto& clip=clipContent(*content_,firstClip(*identities_,identities_->tracks[static_cast<std::size_t>(track)].id));
+    if(!clip.media)return {};
+    const auto key=std::make_pair(clip.media.get(),bins);
+    if(const auto found=waveform_cache_.find(key);found!=waveform_cache_.end() && found->second.first.lock()==clip.media)return found->second.second;
+    if(waveform_cache_.size()>256)waveform_cache_.clear();
+    const auto& media=*clip.media;
+    const auto frames=mediaFrames(clip);
+    QVariantList result;
+    for(int bin=0;bin<bins;++bin) {
+        const auto first=frames*static_cast<std::uint64_t>(bin)/static_cast<std::uint64_t>(bins);
+        const auto last=std::max(first+1,frames*static_cast<std::uint64_t>(bin+1)/static_cast<std::uint64_t>(bins));
+        float low=0,high=0;bool any=false;
+        for(auto frame=first;frame<last && frame<frames;++frame)
+            for(std::uint32_t c=0;c<media.channels;++c) {
+                const float v=media.samples[frame*media.channels+c];
+                low=any ? std::min(low,v) : v;high=any ? std::max(high,v) : v;any=true;
+            }
+        result.append(QVariant(QVariantList{low,high}));
+    }
+    waveform_cache_[key]={clip.media,result};
+    return result;
 }

@@ -12,6 +12,7 @@
 #include <optional>
 #include <type_traits>
 #include <functional>
+#include <map>
 #include <QStringList>
 
 // QObject and the sole command producer live on the GUI thread. Preview renders
@@ -62,6 +63,8 @@ class Session final : public QObject {
     Q_PROPERTY(QVariantList trackSources READ trackSources NOTIFY changed)
     Q_PROPERTY(int patternTrackIndex READ patternTrackIndex NOTIFY changed)
     Q_PROPERTY(bool importing READ importing NOTIFY changed)
+    Q_PROPERTY(QVariantList clipFrames READ clipFrames NOTIFY changed)
+    Q_PROPERTY(QVariantList clipRanges READ clipRanges NOTIFY changed)
     Q_PROPERTY(double exportProgress READ exportProgress NOTIFY changed)
 public:
     explicit Session(fl_live::PipeWireConfig config = {}, QObject* parent = nullptr);
@@ -107,6 +110,14 @@ public:
     // once transport is stopped. One import at a time.
     Q_INVOKABLE bool importAudio(const QString& trackId, const QString& path);
     Q_INVOKABLE void cancelImport();
+    // Imported clips: decoded frames per track (0 if none), and [start, end,
+    // loop] in source frames. setClipRange takes an exclusive end frame and is
+    // one Undo step. waveform returns bins x [min, max] of the whole source,
+    // prepared on the GUI thread and cached per decoded clip.
+    QVariantList clipFrames() const;
+    QVariantList clipRanges() const;
+    Q_INVOKABLE bool setClipRange(const QString& trackId, double startFrame, double endFrame, bool loop);
+    Q_INVOKABLE QVariantList waveform(int track, int bins) const;
     bool importing() const { return import_ticket_ != 0 || ready_import_.has_value(); }
     int stepCount() const { return pattern().step_count; }
     int selectedStep() const { return selected_step_; }
@@ -188,7 +199,7 @@ private:
     std::unique_ptr<Prepared> prepared_;
     QString project_path_, owned_path_;
     enum class EditKind { none, tempo, level, pitch, velocity, gate, enabled, length, track_name, clip_name, scene_name, scene_slot, scene_create, scene_delete, scene_copy, scene_order, track_pan, track_mute, track_solo,
-        track_create, track_duplicate, track_delete, audio_import };
+        track_create, track_duplicate, track_delete, audio_import, clip_range };
     struct HistoryEntry {
         Content content;
         Identities identities;
@@ -218,6 +229,9 @@ private:
     std::optional<fl_live::WavImport> ready_import_;
     void pollImport();
     QStringList resolveAssets(SessionContent& content) const;
+    // Keyed by decoded clip and bin count; the weak pointer rejects a stale
+    // entry if a freed clip's address is reused.
+    mutable std::map<std::pair<const fl_live::AudioClip*, int>, std::pair<std::weak_ptr<const fl_live::AudioClip>, QVariantList>> waveform_cache_;
     void pushHistory(EditKind kind, int index);
     enum class NameKind { track, clip, scene };
     bool rename(const QString& id, const QString& name, NameKind kind);
