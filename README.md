@@ -27,7 +27,8 @@ Use a new output path; existing files are refused. The eight-second, mono PCM16 
 ## Implemented
 
 - Constant-tempo 4/4 sample clock and exact rational bar-boundary calculation.
-- Source-rate mono audio clips, looping/one-shot playback and track gain.
+- Source-rate mono or interleaved stereo audio clips, looping/one-shot playback, track gain and balance-law pan.
+- Stereo engine mix with an explicit mono downmix; optional mono or FL/FR PipeWire output.
 - MIDI clip note scheduling with a minimal fixed-capacity sine instrument.
 - Sample-timed clip launch/replacement/stop, bounded command storage and explicit overflow results.
 - Transport stop/panic, frozen stopped position and stopped rewind.

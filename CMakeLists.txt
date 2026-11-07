@@ -95,6 +95,12 @@ if(BUILD_TESTING)
                 --quantum 257 --live-probe $<TARGET_FILE:live-quantum-probe> --reference-producer)
             set_tests_properties(pipewire-reference-live-quantums PROPERTIES TIMEOUT 30)
         endif()
+        foreach(quantum IN ITEMS 257 1024)
+            add_test(NAME pipewire-stereo-${quantum} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_integration.py $<TARGET_FILE:fl-live-play>
+                --quantum ${quantum} --channels 2)
+            set_tests_properties(pipewire-stereo-${quantum} PROPERTIES TIMEOUT 30)
+        endforeach()
         foreach(quantum IN ITEMS 257 1024 16384)
             add_test(NAME pipewire-quantum-${quantum} COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_integration.py $<TARGET_FILE:fl-live-play>
