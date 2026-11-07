@@ -23,11 +23,70 @@ static ProjectSettings readAuthoredSettings(const QString& path) { const auto p 
 // output in the parent fixture. This is not native input or hardware QA.
 int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
-    if (argc != 2 && argc != 3 && !(argc == 4 && (std::string_view(argv[2]) == "--record" || std::string_view(argv[2]) == "--record-loss" || std::string_view(argv[2]) == "--record-midi"))) return 2;
+    if (argc != 2 && argc != 3 && !(argc == 5 && std::string_view(argv[2]) == "--record-loopback") && !(argc == 4 && (std::string_view(argv[2]) == "--record" || std::string_view(argv[2]) == "--record-loss" || std::string_view(argv[2]) == "--record-midi" || std::string_view(argv[2]) == "--record-placement"))) return 2;
     try {
         fl_live::PipeWireConfig config;
         config.remote = argv[1]; config.node_group = "pipewire.test";
         Session session(config);
+        if (argc == 5 && std::string_view(argv[2]) == "--record-loopback") {
+            // Loopback placement (#45): the audio track plays a clip with a
+            // click on each bar line while the fixture feeds the output back
+            // into fl-live-input; the take is placed with the transport anchor.
+            const QDir project(argv[3]);
+            const auto track = session.trackIds()[0].toString();
+            if (!session.saveProject(project.filePath("loopback.json")) || !session.importAudio(track, QString::fromLocal8Bit(argv[4]))) return 1;
+            QElapsedTimer deadline; deadline.start();
+            while (session.importing() && deadline.elapsed() < 5000) { session.tick(); QTest::qWait(5); }
+            const auto clicks = session.selectedClips()[0].toString();
+            if (session.importing() || !session.setArmed(track, true) || !session.launchClip(clicks)) { std::cerr << session.message().toStdString() << '\n'; return 1; }
+            std::cout << "{\"ready\": true}" << std::endl;
+            std::string line;
+            while (std::getline(std::cin, line) && line != "record") {}
+            if (!session.record()) { std::cerr << session.message().toStdString() << '\n'; return 1; }
+            deadline.restart();
+            while (session.position().split('.')[0].toInt() < 5 && deadline.elapsed() < 20000) { session.tick(); QTest::qWait(5); }
+            session.stop();
+            const auto files = QDir(project.filePath("recordings")).entryList({"*.wav"}, QDir::Files);
+            QJsonObject result{{"message", session.message()}, {"range_start", session.clipRanges()[0].toList()[0].toDouble()},
+                               {"file", files.size() == 1 ? project.filePath("recordings/" + files[0]) : QString()},
+                               {"selected_is_take", session.selectedClips()[0].toString() != clicks}};
+            std::cout << QJsonDocument(result).toJson(QJsonDocument::Compact).toStdString() << std::endl;
+            return 0;
+        }
+        if (argc == 4 && std::string_view(argv[2]) == "--record-placement") {
+            // Placement against the transport (#45): arms the audio and MIDI
+            // tracks, records from the start, prints the transport anchor so
+            // the fixture can schedule events on bar lines, and stops once
+            // the transport reaches bar 5.
+            const QDir project(argv[3]);
+            if (!session.saveProject(project.filePath("placed.json")) || !session.setArmed(session.trackIds()[0].toString(), true) ||
+                !session.setArmed(session.trackIds()[1].toString(), true)) return 1;
+            std::cout << "{\"ready\": true}" << std::endl;
+            std::string line;
+            while (std::getline(std::cin, line) && line != "record") {}
+            if (!session.record()) { std::cerr << session.message().toStdString() << '\n'; return 1; }
+            QElapsedTimer deadline; deadline.start();
+            while (!session.transportAnchor()["valid"].toBool() && deadline.elapsed() < 3000) { session.tick(); QTest::qWait(2); }
+            const auto anchor = session.transportAnchor();
+            std::cout << QJsonDocument(QJsonObject::fromVariantMap(anchor)).toJson(QJsonDocument::Compact).toStdString() << std::endl;
+            while (session.position().split('.')[0].toInt() < 5 && deadline.elapsed() < 20000) { session.tick(); QTest::qWait(5); }
+            session.stop();
+            QJsonObject result{{"message", session.message()}};
+            const auto audioClip = session.selectedClips()[0].toString(), midiClip = session.selectedClips()[1].toString();
+            result["range_start"] = session.clipRanges()[0].toList()[0].toDouble();
+            const auto files = QDir(project.filePath("recordings")).entryList({"*.wav"}, QDir::Files);
+            result["file"] = files.size() == 1 ? project.filePath("recordings/" + files[0]) : QString();
+            session.selectClip(midiClip);
+            QJsonArray notes;
+            for (const auto& n : session.pianoNotes()) {
+                const auto m = n.toMap();
+                notes.append(QJsonArray{m["start"].toInt(), m["length"].toInt(), m["pitch"].toInt(), m["velocity"].toInt()});
+            }
+            result["notes"] = notes;
+            Q_UNUSED(audioClip);
+            std::cout << QJsonDocument(result).toJson(QJsonDocument::Compact).toStdString() << std::endl;
+            return 0;
+        }
         if (argc == 4 && std::string_view(argv[2]) == "--record-midi") {
             // Desktop MIDI recording through fl-live-midi-input (#43/#47):
             // arming the MIDI track opens the input; "record" records until

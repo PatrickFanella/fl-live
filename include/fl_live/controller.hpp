@@ -201,6 +201,10 @@ public:
         }
         publish();
     }
+    // Rendering thread only, after process(): the transport as that block
+    // left it, without copying the whole status.
+    [[nodiscard]] bool running() const noexcept { return running_.load(std::memory_order_relaxed); }
+    [[nodiscard]] Frame position() const noexcept { return position_.load(std::memory_order_relaxed); }
     [[nodiscard]] RenderStatus status() const noexcept {
         for (;;) {
             const auto first = sequence_.load();

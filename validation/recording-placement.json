@@ -1,0 +1,107 @@
+{
+  "verified_at": "2026-11-07T14:22:42.864632+00:00",
+  "base": "feat/recording-cleanup (PR #158) head",
+  "issues": [
+    45
+  ],
+  "scope": "Recording timestamps, placement on the transport's bar lines, and compensation policy, measured for audio and MIDI against independent timelines",
+  "environment": {
+    "machine": "Kvant, pinned CI image (Qt 6.12, PipeWire 1.6.9), docker --network none",
+    "device": "owned private PipeWire server, software driver node only; no physical device",
+    "rate": 48000,
+    "quantum": 256,
+    "tempo_bpm": 120,
+    "bar_frames": 96000,
+    "tick_frames": 250
+  },
+  "policy": {
+    "timestamps": "graph clock shared by the output, audio input and MIDI input in one driver group; the output publishes a transport anchor (graph frame, transport frame) each cycle; takes record the graph frame of their first cycle; MIDI events carry cycle frame plus offset",
+    "placement": "a recorded clip starts at the first bar line at or after the take's first frame: audio by the clip range (file keeps everything), MIDI by counting notes from it and leaving earlier notes out; Record from a stopped transport returns to the start",
+    "compensation": "none; physical converter and buffer latency are not measured here and not subtracted"
+  },
+  "tolerance": {
+    "audio_frames": 256,
+    "midi_ticks": 0
+  },
+  "gates": {
+    "ci/verify.sh": {
+      "desktop": "35/35",
+      "release": "11/11",
+      "engine-only": "8/8",
+      "pipewire-sanitize": "21/21",
+      "document-io-sanitize": "11/11"
+    },
+    "pipewire-recording-placement repeats": {
+      "passed": 8,
+      "total": 8
+    },
+    "pipewire-recording-loopback repeats": {
+      "passed": 8,
+      "total": 8
+    },
+    "edit-bursts release repeats": {
+      "passed": 400,
+      "total": 400
+    }
+  },
+  "measurements": {
+    "anchor-scheduled events": {
+      "audio_offset_frames": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "midi_offset_ticks": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "clicks_per_run": 3,
+      "notes_per_run": 4
+    },
+    "loopback of fl-live's own output": {
+      "offset_frames": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "clicks_per_run": 5
+    }
+  },
+  "verified_behaviors": [
+    "Clicks emitted on transport bar lines land 0 frames from the recorded audio clip's bar lines, the same for every bar",
+    "MIDI notes emitted on beat lines land on their exact ticks in the recorded piano-roll clip",
+    "fl-live's own output, clicking on every bar line and fed back into its input, lands 0 frames from the recorded clip's bar lines without any anchor-based scheduling",
+    "Recording while running places the audio range and MIDI notes at the next bar line and reports notes left out before it; Record from a stopped transport starts on bar 1"
+  ],
+  "source_sha256": {
+    "include/fl_live/capture.hpp": "55530238b5afb15ac28dc51ba6351cdc82e68dd987143353849724e109f55655",
+    "src/capture.cpp": "d88b24d41e03644ed760195cda3800dbe1150ea6334a7826735be912cccc29e0",
+    "include/fl_live/controller.hpp": "6099afe8b013ce550a1334975d0b3f4c0be6191803dbe27cf4ef94bc7dee98ad",
+    "include/fl_live/pipewire_backend.hpp": "265dc1f15269edf0a8d25ac672e3a62fb02e2657c96b9e178a3bb89b7a94ecf1",
+    "src/pipewire_backend.cpp": "016b5aae61d474dc944bec354f73cfa3bdcfff27edf704134a166e328e6cd904",
+    "apps/desktop/session.hpp": "44dea19109444521a50536e66e38889b0fca288f31771ce9b4b0f0bae9532d47",
+    "apps/desktop/session.cpp": "8c3d162a3aa57fa76aed43ea781faea6834401a655cd51a3c85361490f385004",
+    "tests/desktop_tests.cpp": "612c7bfd80f14d17999973fddb7027086093b299e979afd44b44732142f87254",
+    "tests/desktop_backend_probe.cpp": "5d60fdf8a1204ed88206c1c5c32cddf3fe8ddd2112cfc3baf5357b010c60b613",
+    "tests/graph_source.cpp": "591b7867416dc66a8f620654e5186d2edb0d6739dacd5279def620777f1b79ce",
+    "tests/pipewire_placement.py": "2e91f3ecf18a289fd1a749f6d315b52239f2badede79b119afa720769acb0792",
+    "tests/edit_burst_tests.cpp": "a84e104edeb0d8ec7cbc8393ff1855ccc9bfdca77086cc285127da751b164d17"
+  },
+  "limits": "Software graph only: zero offset is the graph's scheduling, not a physical round trip; device latency (#19) is neither measured nor compensated. 4/4 only. The edit-bursts change only relaxes a timing-dependent assertion (saturation shown as refused controls or busy replacements)."
+}

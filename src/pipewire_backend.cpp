@@ -26,6 +26,10 @@ struct PipeWireBackend::Impl {
     std::atomic<bool> format_ok{false};
     std::atomic<std::uint64_t> callbacks{0}, frames{0}, bad_buffers{0}, max_ns{0}, over_budget{0};
     std::atomic<std::uint64_t> min_render_frames{0}, max_render_frames{0};
+    // Transport anchor: the graph-clock frame of a cycle and the transport
+    // frame rendered first in it, published under a sequence counter.
+    std::atomic<std::uint64_t> anchor_sequence{0}, anchor_graph{0}, anchor_transport{0};
+    spa_io_position* position = nullptr; // data thread only, set through io_changed
     bool started = false, initialized = false;
 
     Impl(RenderController& value, PipeWireConfig settings) : controller(value), config(std::move(settings)) {}
@@ -58,6 +62,9 @@ struct PipeWireBackend::Impl {
             format.rate == self.config.sample_rate;
         self.format_ok.store(valid);
         if (!valid) { self.error.store(-ENOTSUP); self.controller.panic(); }
+    }
+    static void io_changed(void* data, std::uint32_t id, void* area, std::uint32_t size) noexcept {
+        if (id == SPA_IO_Position) static_cast<Impl*>(data)->position = size >= sizeof(spa_io_position) ? static_cast<spa_io_position*>(area) : nullptr;
     }
     static void process(void* data) noexcept {
         auto& self = *static_cast<Impl*>(data);
@@ -95,6 +102,16 @@ struct PipeWireBackend::Impl {
                 self.min_render_frames.store(count);
             if (count > self.max_render_frames.load()) self.max_render_frames.store(count);
             self.controller.process(output, channels);
+            // Controls apply at the block start, so a transport running after
+            // the block ran for all of it.
+            if (self.position && self.controller.running()) {
+                const auto at = self.anchor_sequence.load(std::memory_order_relaxed);
+                self.anchor_sequence.store(at + 1, std::memory_order_relaxed);
+                std::atomic_thread_fence(std::memory_order_release);
+                self.anchor_graph.store(self.position->clock.position, std::memory_order_relaxed);
+                self.anchor_transport.store(static_cast<std::uint64_t>(self.controller.position()) - count, std::memory_order_relaxed);
+                self.anchor_sequence.store(at + 2, std::memory_order_release);
+            }
         }
         const auto submitted = audio.chunk->size / stride;
         self.frames.fetch_add(submitted);
@@ -134,7 +151,7 @@ struct PipeWireBackend::Impl {
         if (!stream) throw std::runtime_error("cannot create PipeWire stream");
         static const pw_stream_events stream_events = [] {
             pw_stream_events value{}; value.version = PW_VERSION_STREAM_EVENTS;
-            value.state_changed = state_changed; value.param_changed = param_changed; value.process = process; return value;
+            value.state_changed = state_changed; value.param_changed = param_changed; value.io_changed = io_changed; value.process = process; return value;
         }();
         pw_stream_add_listener(stream, &stream_hook, &stream_events, this);
         alignas(8) std::array<std::byte, 1024> storage{};
@@ -160,9 +177,17 @@ PipeWireBackend::PipeWireBackend(RenderController& controller, PipeWireConfig co
     : impl_(std::make_unique<Impl>(controller, std::move(config))) { impl_->connect(); }
 PipeWireBackend::~PipeWireBackend() = default;
 BackendStatus PipeWireBackend::status() const noexcept {
-    return {impl_->state.load(), impl_->error.load(), impl_->callbacks.load(), impl_->frames.load(),
+    BackendStatus value{impl_->state.load(), impl_->error.load(), impl_->callbacks.load(), impl_->frames.load(),
         impl_->bad_buffers.load(), impl_->max_ns.load(), impl_->over_budget.load(),
         impl_->min_render_frames.load(), impl_->max_render_frames.load()};
+    for (;;) {
+        const auto first = impl_->anchor_sequence.load(std::memory_order_acquire);
+        if (first & 1U) { std::this_thread::yield(); continue; }
+        value.anchor_graph = impl_->anchor_graph.load(std::memory_order_relaxed);
+        value.anchor_transport = impl_->anchor_transport.load(std::memory_order_relaxed);
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (impl_->anchor_sequence.load(std::memory_order_relaxed) == first) { value.anchor_valid = first != 0; return value; }
+    }
 }
 
 struct PipeWireCapture::Impl {
@@ -179,6 +204,7 @@ struct PipeWireCapture::Impl {
     // thread that cleared the sink can wait until no old pointer is in use.
     std::atomic<CaptureSink*> sink{nullptr};
     std::atomic<int> inside{0};
+    spa_io_position* position = nullptr; // data thread only, set through io_changed
     bool started = false, initialized = false;
 
     explicit Impl(PipeWireConfig settings) : config(std::move(settings)) {}
@@ -207,6 +233,9 @@ struct PipeWireCapture::Impl {
         self.format_ok.store(valid);
         if (!valid) self.error.store(-ENOTSUP);
     }
+    static void io_changed(void* data, std::uint32_t id, void* area, std::uint32_t size) noexcept {
+        if (id == SPA_IO_Position) static_cast<Impl*>(data)->position = size >= sizeof(spa_io_position) ? static_cast<spa_io_position*>(area) : nullptr;
+    }
     static void process(void* data) noexcept {
         auto& self = *static_cast<Impl*>(data);
         pw_buffer* buffer = pw_stream_dequeue_buffer(self.stream);
@@ -222,7 +251,10 @@ struct PipeWireCapture::Impl {
             const auto count = audio.chunk->size / stride;
             const auto* first = reinterpret_cast<const float*>(static_cast<const std::byte*>(audio.data) + audio.chunk->offset);
             self.inside.fetch_add(1);
-            if (auto* target = self.sink.load()) target->capture(std::span(first, count * channels));
+            if (auto* target = self.sink.load()) {
+                if (self.position) target->cycle(self.position->clock.position, static_cast<std::uint32_t>(self.position->clock.duration));
+                target->capture(std::span(first, count * channels));
+            }
             self.inside.fetch_sub(1);
             self.frames.fetch_add(count);
         }
@@ -253,7 +285,7 @@ struct PipeWireCapture::Impl {
         if (!stream) throw std::runtime_error("cannot create PipeWire stream");
         static const pw_stream_events stream_events = [] {
             pw_stream_events value{}; value.version = PW_VERSION_STREAM_EVENTS;
-            value.state_changed = state_changed; value.param_changed = param_changed; value.process = process; return value;
+            value.state_changed = state_changed; value.param_changed = param_changed; value.io_changed = io_changed; value.process = process; return value;
         }();
         pw_stream_add_listener(stream, &stream_hook, &stream_events, this);
         alignas(8) std::array<std::byte, 1024> storage{};

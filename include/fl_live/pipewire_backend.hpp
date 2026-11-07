@@ -26,6 +26,11 @@ struct BackendStatus {
     std::uint64_t processing_over_budget;
     std::uint64_t min_render_frames;
     std::uint64_t max_render_frames;
+    // Transport anchor (docs/recording.md): in the cycle starting at graph
+    // frame anchor_graph the transport rendered anchor_transport first.
+    // Valid once the transport has run with a graph clock.
+    bool anchor_valid = false;
+    std::uint64_t anchor_graph = 0, anchor_transport = 0;
 };
 class PipeWireBackend {
 public:

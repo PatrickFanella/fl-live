@@ -14,8 +14,13 @@ namespace fl_live {
 class CaptureSink {
 public:
     virtual ~CaptureSink() = default;
+    // Once per cycle before its capture() call: the cycle's first frame on
+    // the graph clock and its length. Streams without a clock never call it.
+    virtual void cycle(std::uint64_t, std::uint32_t) noexcept {}
     virtual void capture(std::span<const float> interleaved) noexcept = 0;
 };
+// The graph-clock frame of a take's first cycle, or none before it ran.
+inline constexpr std::uint64_t no_origin = ~std::uint64_t{0};
 // Single-producer/single-consumer ring of interleaved float samples with a
 // fixed, preallocated capacity. push() is all or nothing: a block that does
 // not fit is refused whole, never split. Neither side allocates or locks.
@@ -62,7 +67,10 @@ public:
     CaptureTake& operator=(const CaptureTake&) = delete;
     ~CaptureTake();
     // Callback side: no allocation, lock, file I/O or wait.
+    void cycle(std::uint64_t frame, std::uint32_t frames) noexcept override;
     void capture(std::span<const float> interleaved) noexcept override;
+    // Graph-clock frame of the first cycle, or no_origin.
+    [[nodiscard]] std::uint64_t origin() const noexcept { return origin_.load(std::memory_order_acquire); }
     // Control side: stops accepting, writes what the ring holds, closes and
     // renames. Repeated calls return the same status.
     CaptureStatus finish();
@@ -76,6 +84,7 @@ private:
     std::atomic<bool> accepting_{true}, stop_{false};
     std::atomic<std::uint64_t> written_{0}, dropped_frames_{0}, dropped_blocks_{0};
     std::atomic<bool> failed_{false};
+    std::atomic<std::uint64_t> origin_{no_origin};
     mutable std::mutex mutex_; // worker/control only: error text and final status
     std::string error_;
     void* file_ = nullptr; // SNDFILE*, worker-owned until finish()
@@ -118,6 +127,7 @@ public:
     void cycle(std::uint64_t frame, std::uint32_t frames) noexcept override;
     void midi(std::uint64_t frame, std::span<const std::uint8_t> message) noexcept override;
     void drain();            // control side; call regularly so the ring does not fill
+    [[nodiscard]] std::uint64_t origin() const noexcept { return origin_.load(std::memory_order_acquire); }
     MidiTakeStatus finish(); // stops accepting; repeated calls return the same status
 private:
     struct Event { std::uint64_t frame; std::uint8_t status, data1, data2; };
