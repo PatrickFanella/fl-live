@@ -42,10 +42,15 @@ target_compile_options(fl_live_document_render PRIVATE -Wall -Wextra -Wpedantic 
 
 if(FL_LIVE_BUILD_RENDERER)
     find_package(PkgConfig REQUIRED)
+    find_package(Threads REQUIRED)
     # Initial qualified baseline; upgrades are explicit changes.
     pkg_check_modules(SNDFILE REQUIRED IMPORTED_TARGET sndfile=1.2.2)
     add_executable(fl-live-render apps/render.cpp)
     target_link_libraries(fl-live-render PRIVATE fl_live_engine PkgConfig::SNDFILE)
+    # WAV admission for control/worker threads; never linked into rendering.
+    add_library(fl_live_media src/media_import.cpp)
+    target_link_libraries(fl_live_media PUBLIC fl_live_engine Threads::Threads PRIVATE PkgConfig::SNDFILE)
+    target_compile_options(fl_live_media PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 endif()
 
 include(CTest)
@@ -68,6 +73,10 @@ if(BUILD_TESTING)
     add_test(NAME control-handoff COMMAND controller-tests)
     set_tests_properties(control-handoff PROPERTIES TIMEOUT 15)
     if(FL_LIVE_BUILD_RENDERER)
+        add_executable(media-import-tests tests/media_import_tests.cpp)
+        target_link_libraries(media-import-tests PRIVATE fl_live_media fl_live_document_render)
+        add_test(NAME wav-import COMMAND media-import-tests)
+        set_tests_properties(wav-import PROPERTIES TIMEOUT 30)
         find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
         add_test(NAME render-roundtrip COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/render_roundtrip.py $<TARGET_FILE:fl-live-render>)
