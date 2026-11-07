@@ -103,12 +103,12 @@ QVariantList Session::trackIds() const {
     QVariantList result;for(const auto& track:identities_->tracks)result.append(identityText(track.id.value));return result;
 }
 QVariantList Session::clipIds() const {
-    QVariantList result;for(std::size_t i=0;i<identities_->tracks.size();++i)result.append(identityText(prepared_->mapped.clipId(i,0)->value));return result;
+    QVariantList result;for(std::size_t i=0;i<identities_->tracks.size();++i)result.append(identityText(prepared_->view().clipId(i,0)->value));return result;
 }
 QVariantList Session::clipNames() const {
     QVariantList result;
     for(std::size_t i=0;i<identities_->tracks.size();++i) {
-        const auto id=*prepared_->mapped.clipId(i,0);
+        const auto id=*prepared_->view().clipId(i,0);
         const auto found=std::find_if(identities_->clips.begin(),identities_->clips.end(),[id](const auto& clip){return clip.id==id;});
         result.append(QString::fromUtf8(found->name));
     }
@@ -116,7 +116,7 @@ QVariantList Session::clipNames() const {
 }
 QVariantList Session::activeClipIds() const {
     QVariantList result;for(std::size_t i=0;i<identities_->tracks.size();++i) {
-        const auto id=prepared_->mapped.clipId(i,status_.tracks[i].active_clip);
+        const auto id=prepared_->view().clipId(i,status_.tracks[i].active_clip);
         result.append(id ? identityText(id->value) : QString{});
     }return result;
 }
@@ -151,7 +151,7 @@ bool Session::copyScene(const QString& id) {
     catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }
 bool Session::addScene(std::optional<fl_live::SceneId> source) {
-    if(!editable())return false;
+    if(!changeable())return false;
     try {
         const auto previous=selected_scene_;
         const auto found=std::find_if(identities_->scenes.begin(),identities_->scenes.end(),[source](const auto& scene){return source && scene.id==*source;});
@@ -169,7 +169,7 @@ bool Session::addScene(std::optional<fl_live::SceneId> source) {
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }
 bool Session::moveScene(const QString& id,int direction) {
-    if(!editable())return false;
+    if(!changeable())return false;
     try {
         if(direction!=-1 && direction!=1)throw std::invalid_argument("Scene movement must be up or down");
         const fl_live::SceneId target{parseIdentity(id)};
@@ -188,7 +188,7 @@ bool Session::moveScene(const QString& id,int direction) {
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }
 bool Session::deleteScene(const QString& id) {
-    if(!editable())return false;
+    if(!changeable())return false;
     try {
         const fl_live::SceneId target{parseIdentity(id)};
         if(identities_->scenes.size()==1)throw std::invalid_argument("Keep at least one scene");
@@ -214,13 +214,13 @@ QVariantList Session::sceneIncluded() const {
     return result;
 }
 bool Session::setSceneIncluded(const QString& trackId,bool included) {
-    if(!editable())return false;
+    if(!changeable())return false;
     try {
         const fl_live::TrackId id{parseIdentity(trackId)};
-        const auto index=prepared_->mapped.trackIndex(id);
+        const auto index=prepared_->view().trackIndex(id);
         if(!index)throw std::invalid_argument("Unknown scene track");
         fl_live::SessionDocument candidate(*identities_);
-        if(included)candidate.setSlot(selectedScene().id,id,*prepared_->mapped.clipId(*index,0));
+        if(included)candidate.setSlot(selectedScene().id,id,*prepared_->view().clipId(*index,0));
         else candidate.clearSlot(selectedScene().id,id);
         if(candidate.snapshot()==*identities_)return true;
         auto identities=std::make_shared<const fl_live::DocumentSnapshot>(candidate.snapshot());
@@ -231,7 +231,7 @@ bool Session::setSceneIncluded(const QString& trackId,bool included) {
 QString Session::sceneState() const {
     if(requested_scene_==selected_scene_ && scene_serial_>status_.handled_serial)return scene_stop_ ? "Stop requested" : "Launch requested";
     bool active=true,stopped=true,queued=false;
-    const auto batch=*prepared_->mapped.scene(selectedScene().id,false);
+    const auto batch=*prepared_->view().scene(selectedScene().id,false);
     for(std::size_t i=0;i<batch.count;++i) {
         const auto& command=batch.commands[i];const auto& state=status_.tracks[command.track];
         const auto expected=command.kind==fl_live::CommandKind::launch ? static_cast<int>(command.clip) : -1;
@@ -247,7 +247,8 @@ bool Session::sceneAction(const QString& id,const QString& policy,bool stop) {
     if(failed_)return false;
     try {
         if(policy!="immediate" && policy!="one-bar")throw std::invalid_argument("Unknown scene timing policy");
-        const auto batch=prepared_->mapped.scene(fl_live::SceneId{parseIdentity(id)},stop);
+        if(!controlsReady())return false;
+        const auto batch=prepared_->mapped->scene(fl_live::SceneId{parseIdentity(id)},stop);
         if(!batch)throw std::invalid_argument("Unknown scene");
         const auto next=serial_+1;
         if(!prepared_->controller.submit({fl_live::ControlKind::scene,{},next,*batch,
@@ -267,7 +268,7 @@ bool Session::renameTrack(const QString& id,const QString& name){return rename(i
 bool Session::renameClip(const QString& id,const QString& name){return rename(id,name,NameKind::clip);}
 bool Session::renameScene(const QString& id,const QString& name){return rename(id,name,NameKind::scene);}
 bool Session::rename(const QString& id,const QString& name,NameKind kind) {
-    if(!editable())return false;
+    if(!changeable())return false;
     try {
         const auto value=parseIdentity(id);const auto bytes=name.toUtf8();
         if(QString::fromUtf8(bytes)!=name)throw std::invalid_argument("Name requires valid Unicode");
@@ -278,7 +279,7 @@ bool Session::rename(const QString& id,const QString& name,NameKind kind) {
         if(candidate.snapshot()==*identities_)return true;
         auto identities=std::make_shared<const fl_live::DocumentSnapshot>(candidate.snapshot());
         if(!replace(content_,identities))return false;
-        const auto index=kind==NameKind::scene ? 0 : kind==NameKind::track ? *prepared_->mapped.trackIndex(fl_live::TrackId{value}) : prepared_->mapped.launch(fl_live::ClipId{value},0)->track;
+        const auto index=kind==NameKind::scene ? 0 : kind==NameKind::track ? *prepared_->view().trackIndex(fl_live::TrackId{value}) : prepared_->view().launch(fl_live::ClipId{value},0)->track;
         pushHistory(kind==NameKind::scene ? EditKind::scene_name : kind==NameKind::track ? EditKind::track_name : EditKind::clip_name,static_cast<int>(index));
         emit changed();return true;
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
@@ -286,7 +287,8 @@ bool Session::rename(const QString& id,const QString& name,NameKind kind) {
 bool Session::launchClip(const QString& id) {
     if(failed_)return false;
     try {
-        const auto command=prepared_->mapped.launch(fl_live::ClipId{parseIdentity(id)},0);
+        if(!controlsReady())return false;
+        const auto command=prepared_->mapped->launch(fl_live::ClipId{parseIdentity(id)},0);
         if(!command)throw std::invalid_argument("Unknown clip");
         const auto before=serial_;send(fl_live::ControlKind::launch_next_bar,command->track,command->clip);return serial_!=before;
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
@@ -294,7 +296,8 @@ bool Session::launchClip(const QString& id) {
 bool Session::stopTrackId(const QString& id) {
     if(failed_)return false;
     try {
-        const auto command=prepared_->mapped.stop(fl_live::TrackId{parseIdentity(id)},0);
+        if(!controlsReady())return false;
+        const auto command=prepared_->mapped->stop(fl_live::TrackId{parseIdentity(id)},0);
         if(!command)throw std::invalid_argument("Unknown track");
         const auto before=serial_;send(fl_live::ControlKind::stop_next_bar,command->track);return serial_!=before;
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
@@ -333,10 +336,10 @@ bool Session::setPan(const QString& id,int value){return editMix(id,MixField::pa
 bool Session::setMute(const QString& id,bool value){return editMix(id,MixField::mute,value);}
 bool Session::setSolo(const QString& id,bool value){return editMix(id,MixField::solo,value);}
 bool Session::editMix(const QString& trackId,MixField field,int value) {
-    if(!editable())return false;
+    if(!changeable())return false;
     try {
         const fl_live::TrackId id{parseIdentity(trackId)};
-        const auto index=prepared_->mapped.trackIndex(id);
+        const auto index=prepared_->view().trackIndex(id);
         if(!index)throw std::invalid_argument("Unknown track");
         auto mix=identities_->tracks[*index].mix;
         if(field==MixField::pan)mix.pan=value;else if(field==MixField::mute)mix.mute=value!=0;else mix.solo=value!=0;
@@ -449,7 +452,7 @@ void Session::undo() {
     --history_cursor_;
     restoreSceneSelection(selection);
     selected_step_ = std::min(selected_step_, pattern().step_count - 1);
-    message_ = "Undid " + name + "; session returned to the start.";
+    message_ = live_ ? "Undid " + name + " while playing." : "Undid " + name + "; session returned to the start.";
     emit changed();
 }
 void Session::redo() {
@@ -459,7 +462,7 @@ void Session::redo() {
     ++history_cursor_;
     restoreSceneSelection(history_[history_cursor_].selection);
     selected_step_ = std::min(selected_step_, pattern().step_count - 1);
-    message_ = "Redid " + name + "; session returned to the start.";
+    message_ = live_ ? "Redid " + name + " while playing." : "Redid " + name + "; session returned to the start.";
     emit changed();
 }
 bool Session::editable() {
@@ -471,9 +474,81 @@ bool Session::editable() {
     }
     return true;
 }
+bool Session::changeable() {
+    status_ = prepared_->controller.status();
+    if (failed_) {
+        message_ = "Audio is stopped. Save your project or choose Retry audio before editing.";
+        emit changed();
+        return false;
+    }
+    return true;
+}
+Session::Plan Session::preparePlan(const SessionContent& content, const fl_live::DocumentSnapshot& identities) {
+    return std::make_shared<const fl_live::DocumentRenderPlan>(identities, contentSources(content, identities), 48000,
+        static_cast<std::uint32_t>(content.tempo) * 1000U, fl_live::PreparationBudget{}, contentGains(content, identities), contentAutomation(content, identities));
+}
+// Offers the newest prepared playback edit once the previous one has
+// activated and its retired plan was collected; retired plans are released
+// here, on the GUI thread.
+void Session::offerWaiting() {
+    auto& prepared = *prepared_;
+    while (prepared.controller.collect().acknowledged) {}
+    if (!prepared.waiting) return;
+    auto replacement = std::make_unique<fl_live::PlanReplacement>(fl_live::PlanReplacement{
+        std::shared_ptr<const fl_live::SessionPlan>(prepared.waiting, &prepared.waiting->plan()),
+        fl_live::planMapping(*prepared.mapped, *prepared.waiting), 0});
+    const auto result = prepared.controller.offer(std::move(replacement));
+    if (result == fl_live::OfferResult::accepted) prepared.mapped = std::move(prepared.waiting);
+    else if (result == fl_live::OfferResult::invalid) {
+        // replaceLive checks tempo and preparation first, so this is not expected.
+        prepared.waiting.reset();
+        message_ = "The engine refused a playback edit; stop transport to apply it.";
+    }
+}
+// Controls resolve against the last offered plan and queue behind it, so they
+// apply under the plan they were built for. An edit that could not be offered
+// yet must reach the controller first.
+bool Session::controlsReady() {
+    offerWaiting();
+    if (!prepared_->waiting) return true;
+    message_ = "Applying the last edit to playback. Try again in a moment.";
+    emit changed();
+    return false;
+}
+bool Session::replaceLive(Content content, Identities identities) {
+    if (content->tempo != content_->tempo) {
+        message_ = "Stop transport to change the tempo. Other edits apply while playing.";
+        emit changed();
+        return false;
+    }
+    try {
+        prepared_->waiting = preparePlan(*content, *identities); // a newer edit supersedes an unoffered one
+    } catch (const std::exception& error) {
+        message_ = QString::fromUtf8(error.what());
+        emit changed();
+        return false;
+    }
+    if (identities->tracks != identities_->tracks) track_serials_.fill(0); // per-track request feedback is index-based
+    content_ = std::move(content);
+    identities_ = std::move(identities);
+    restorePatternTarget();
+    next_identity_ = std::max(next_identity_, identities_->next_id);
+    restoreSceneSelection(selected_scene_, false);
+    emit documentChanged();
+    emit sceneSelectionChanged();
+    offerWaiting();
+    live_ = true;
+    message_ = "Edit applied while playing.";
+    return true;
+}
 bool Session::replace(Content content, Identities identities) {
     if (!identities) identities = identities_;
-    if (!editable()) return false;
+    if (failed_) return changeable();
+    status_ = prepared_->controller.status();
+    // Stopped edits rebuild a fresh runtime, which also discards any edit
+    // still on its way to the old one.
+    if (running() || pending()) return replaceLive(std::move(content), std::move(identities));
+    live_ = false;
     try {
         // Allocate and validate a candidate before interrupting the existing backend.
         auto candidate = std::make_unique<Prepared>(*content, *identities);
@@ -621,6 +696,7 @@ void Session::panic() {
 void Session::tick() {
     finishExport();
     pollImport();
+    if (!failed_) offerWaiting();
     if (preview_) {
         std::array<float, 960> discarded{};
         prepared_->controller.process(discarded, 2); // 480 stereo frames; simulated clock, no audio output
@@ -738,7 +814,7 @@ const StepPattern& Session::pattern() const {
 int Session::patternTrackIndex() const {
     const auto clip=std::find_if(identities_->clips.begin(),identities_->clips.end(),[&](const auto& c){return c.id==pattern_clip_;});
     if(!pattern_clip_.value || clip==identities_->clips.end())return -1;
-    const auto index=prepared_->mapped.trackIndex(clip->track);
+    const auto index=prepared_->view().trackIndex(clip->track);
     return index ? static_cast<int>(*index) : -1;
 }
 void Session::restorePatternTarget() {
@@ -776,7 +852,7 @@ bool Session::commitStructure(SessionContent next,const fl_live::DocumentSnapsho
     return true;
 }
 bool Session::addTrack(const QString& kind) {
-    if(!editable())return false;
+    if(!changeable())return false;
     try {
         if(kind!="audio" && kind!="midi")throw std::invalid_argument("Track kind must be audio or MIDI");
         const auto trackKind=kind=="audio" ? fl_live::TrackKind::audio : fl_live::TrackKind::midi;
@@ -798,7 +874,7 @@ bool Session::addTrack(const QString& kind) {
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }
 bool Session::duplicateTrack(const QString& id) {
-    if(!editable())return false;
+    if(!changeable())return false;
     try {
         const fl_live::TrackId source{parseIdentity(id)};
         auto snapshot=*identities_;snapshot.next_id=next_identity_;
@@ -824,7 +900,7 @@ bool Session::duplicateTrack(const QString& id) {
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }
 bool Session::deleteTrack(const QString& id) {
-    if(!editable())return false;
+    if(!changeable())return false;
     try {
         const fl_live::TrackId target{parseIdentity(id)};
         fl_live::SessionDocument candidate(*identities_);
@@ -949,10 +1025,10 @@ QVariantList Session::clipRanges() const {
     return result;
 }
 bool Session::setClipRange(const QString& trackId,double startFrame,double endFrame,bool loop) {
-    if(!editable())return false;
+    if(!changeable())return false;
     try {
         const fl_live::TrackId id{parseIdentity(trackId)};
-        const auto index=prepared_->mapped.trackIndex(id);
+        const auto index=prepared_->view().trackIndex(id);
         if(!index)throw std::invalid_argument("Unknown track");
         auto next=*content_;
         auto& clip=*std::find_if(next.clips.begin(),next.clips.end(),[&](const auto& c){return c.clip==firstClip(*identities_,id);});
@@ -1189,12 +1265,12 @@ QVariantList Session::automationPoints(int track, const QString& parameter) cons
     return result;
 }
 bool Session::setAutomationPoint(const QString& trackId, const QString& parameter, double at, double value) {
-    if (!editable()) return false;
+    if (!changeable()) return false;
     try {
         const auto kind = parameterNamed(parameter);
         if (!kind) throw std::invalid_argument("Automation parameter must be level or pan");
         const fl_live::TrackId id{parseIdentity(trackId)};
-        const auto index = prepared_->mapped.trackIndex(id);
+        const auto index = prepared_->view().trackIndex(id);
         if (!index) throw std::invalid_argument("Unknown track");
         if (!std::isfinite(at) || at != std::floor(at)) throw std::invalid_argument("Automation position must be whole hundredths of a beat");
         auto next = *content_;
@@ -1210,11 +1286,11 @@ bool Session::setAutomationPoint(const QString& trackId, const QString& paramete
     } catch (const std::exception& error) { message_ = QString::fromUtf8(error.what()); emit changed(); return false; }
 }
 bool Session::removeAutomationPoint(const QString& trackId, const QString& parameter, double at) {
-    if (!editable()) return false;
+    if (!changeable()) return false;
     try {
         const auto kind = parameterNamed(parameter);
         const fl_live::TrackId id{parseIdentity(trackId)};
-        const auto index = prepared_->mapped.trackIndex(id);
+        const auto index = prepared_->view().trackIndex(id);
         auto next = *content_;
         const auto lane = std::find_if(next.automation.begin(), next.automation.end(), [&](const auto& l) { return kind && l.track == id && l.parameter == *kind; });
         if (!index || lane == next.automation.end()) throw std::invalid_argument("No such automation lane");
@@ -1226,11 +1302,11 @@ bool Session::removeAutomationPoint(const QString& trackId, const QString& param
     } catch (const std::exception& error) { message_ = QString::fromUtf8(error.what()); emit changed(); return false; }
 }
 bool Session::clearAutomation(const QString& trackId, const QString& parameter) {
-    if (!editable()) return false;
+    if (!changeable()) return false;
     try {
         const auto kind = parameterNamed(parameter);
         const fl_live::TrackId id{parseIdentity(trackId)};
-        const auto index = prepared_->mapped.trackIndex(id);
+        const auto index = prepared_->view().trackIndex(id);
         if (!kind || !index) throw std::invalid_argument("Unknown track or parameter");
         auto next = *content_;
         std::erase_if(next.automation, [&](const auto& l) { return l.track == id && l.parameter == *kind; });
@@ -1246,7 +1322,7 @@ QVariantList Session::synth() const {
     return {value.waveform,value.attack_ms,value.decay_ms,value.sustain,value.release_ms};
 }
 bool Session::setSynth(const QString& field,int value) {
-    if(!editable())return false;
+    if(!changeable())return false;
     try {
         static const QStringList fields{"waveform","attack","decay","sustain","release"};
         const auto index=fields.indexOf(field);

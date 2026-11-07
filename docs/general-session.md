@@ -19,7 +19,7 @@ Audio media is never embedded. A `wav` clip stores the absolute path it was impo
 
 ## Track management
 
-**Add audio track** creates an empty audio track; **Add MIDI track** creates a MIDI track whose four steps start as rests. Both get level 70 percent and are not added to any scene. **Duplicate** copies the track's level, mixer settings, clip content and scene slots under fresh IDs, names it "NAME copy" and shares any imported audio. **Delete** removes the track, its clip and its scene slots. Each is a stopped edit and one Undo step; Undo restores the original IDs, and the ID high-water mark keeps retired IDs from being reused. Deleting every track leaves a valid empty project that can be saved, reopened and launched.
+**Add audio track** creates an empty audio track; **Add MIDI track** creates a MIDI track whose four steps start as rests. Both get level 70 percent and are not added to any scene. **Duplicate** copies the track's level, mixer settings, clip content and scene slots under fresh IDs, names it "NAME copy" and shares any imported audio. **Delete** removes the track, its clip and its scene slots. Each is one Undo step and also works while playing (see [playback edits](#playback-edits)); Undo restores the original IDs, and the ID high-water mark keeps retired IDs from being reused. Deleting every track leaves a valid empty project that can be saved, reopened and launched.
 
 Every track column shows its kind, clip source, level, pan, mute, solo, scene inclusion, launch/stop, and Duplicate/Delete. Columns sit in a horizontal strip that scrolls when they do not fit. The step editor below edits one MIDI clip at a time: **Edit pattern** on a MIDI track selects it. Choosing a pattern is view state, not an edit. When the edited track is deleted, the editor moves to the first remaining MIDI track, or shows a hint when there is none.
 
@@ -31,7 +31,18 @@ Enter a path under an audio track and choose **Import**. Decoding runs on a `Wav
 
 An audio track with an imported WAV shows its waveform: per-pixel minimum/maximum peaks of the whole source across all channels. Peaks are computed on the GUI thread when the view needs them and cached per decoded clip and width; the render callback never prepares view data. The canvas repaints only when the source, range or width changes.
 
-**Start ms**, **End** and **Loop** choose which source frames play. The range is in source frames at the session rate; the controls step in milliseconds (48 frames), and the last End step always reaches the true end of the file. Playback is source-rate with no warping: the selected frames are copied into the prepared clip, which loops or, with Loop off, plays once and then stops the track until it is launched again. A range must be nonempty and inside the file; invalid ranges, ranges on non-imported clips and edits while playing are refused without changing history. Each range edit is one Undo step. Importing a new file resets the range to the whole file. The shaded part of the waveform is the selected range (green looped, amber once).
+**Start ms**, **End** and **Loop** choose which source frames play. The range is in source frames at the session rate; the controls step in milliseconds (48 frames), and the last End step always reaches the true end of the file. Playback is source-rate with no warping: the selected frames are copied into the prepared clip, which loops or, with Loop off, plays once and then stops the track until it is launched again. A range must be nonempty and inside the file; invalid ranges and ranges on non-imported clips are refused without changing history. Each range edit is one Undo step. Importing a new file resets the range to the whole file. The shaded part of the waveform is the selected range (green looped, amber once).
+
+## Playback edits
+
+These edits apply while the transport runs or a control is unacknowledged: track add, duplicate and delete; level, pan, mute and solo; renames; scene create, copy, order, delete and slot inclusion; clip source ranges; MIDI steps, pattern length and synth settings; automation points; and Undo/Redo between such states. Each prepares the new document on the GUI thread and hands it to the running controller as a [plan replacement](plan-replacement.md). It activates at the next audio block without moving the playhead, and the status line reads "Edit applied while playing".
+
+- A playing clip keeps playing when its track and clip survive the edit, at the same position, with the edited content, level or pattern. Sounding notes finish under the new synth settings; notes already passed are not replayed.
+- Deleting a playing track stops its sound and its queued launches. Undo restores the track and its clip, not its playback.
+- Launches and stops queued before an edit still apply, and ones made after it use the edited document. If a newer edit has not been handed over yet, Launch, Stop and scene actions are refused with "Applying the last edit to playback. Try again in a moment."
+- A burst of edits keeps one replacement in flight. A newer edit supersedes one that has not been handed over yet, so the render thread sees the latest document, and every edit still gets its own Undo step.
+
+Tempo changes, Open, New, Restore, Collect audio, Export, WAV import and Relink still require stopped transport; the tempo field and those buttons are disabled while playing. A tempo change by Undo/Redo while playing is refused with "Stop transport to change the tempo. Other edits apply while playing." The document and history stay unchanged. Edits made while stopped still rebuild the session at the start, as before.
 
 ## Project files (version 4)
 

@@ -97,7 +97,9 @@ private slots:
         QCOMPARE(saved.identities.scenes[1].entries.size(),std::size_t(1));
         QVERIFY(session.loadProject(path));QCOMPARE(session.sceneId(),copy);
         QVERIFY(session.launchScene(first,"immediate"));session.play();
-        QVERIFY(!session.copyScene(first));QVERIFY(!session.moveScene(copy,1));session.tick();
+        // Scene edits apply while playing and leave playback running.
+        QVERIFY(session.copyScene(first));QCOMPARE(session.sceneIds().size(),qsizetype(3));QVERIFY(session.message().contains("while playing"));
+        session.undo();QCOMPARE(session.sceneIds().size(),qsizetype(2));session.tick();session.tick();QVERIFY(session.running());
         QCOMPARE(session.activeClipIds()[0].toString(),QString{});QCOMPARE(session.activeClipIds()[1],clips[1]);
         session.stop();session.tick();QVERIFY(session.selectScene(copy));QVERIFY(session.launchScene(copy,"immediate"));session.play();session.tick();
         QCOMPARE(session.activeClipIds(),clips);session.stop();session.tick();
@@ -126,7 +128,8 @@ private slots:
         const auto fresh=session.sceneId();session.undo();QVERIFY(session.createScene());QVERIFY(session.sceneId().toULongLong()>fresh.toULongLong());
         QVERIFY(!session.canRedo());
         const auto empty=session.sceneId();QVERIFY(session.launchScene(first,"immediate"));session.play();
-        QVERIFY(!session.createScene());QVERIFY(!session.deleteScene(empty));
+        const auto scenes=session.sceneIds().size();QVERIFY(session.createScene());QCOMPARE(session.sceneIds().size(),scenes+1);
+        session.undo();QCOMPARE(session.sceneIds().size(),scenes);QCOMPARE(session.sceneId(),empty);session.tick();session.tick();
         QVERIFY(session.selectScene(empty));QVERIFY(!session.sceneState().contains("requested"));session.tick();
         QVERIFY(session.launchScene(empty,"immediate"));session.tick();QCOMPARE(session.sceneState(),QString("Stopped"));
         session.stop();session.tick();
@@ -187,7 +190,9 @@ private slots:
         session.undo();QCOMPARE(session.sceneIncluded(),(QVariantList{true,true}));QVERIFY(session.dirty());
         session.redo();QCOMPARE(session.sceneIncluded(),(QVariantList{true,false}));QVERIFY(!session.dirty());
         QVERIFY(session.launchClip(clips[1].toString()));session.play();
-        QVERIFY(!session.setSceneIncluded(tracks[0].toString(),false));session.tick();
+        QVERIFY(session.setSceneIncluded(tracks[0].toString(),false));QCOMPARE(session.sceneIncluded(),(QVariantList{false,false}));
+        session.undo();QCOMPARE(session.sceneIncluded(),(QVariantList{true,false}));session.tick();session.tick();
+        QCOMPARE(session.activeClipIds()[1],clips[1]);
         QCOMPARE(session.sceneState(),QString("Partial"));
         QVERIFY(session.launchScene(id,"immediate"));session.tick();
         QCOMPARE(session.activeClipIds()[0],clips[0]);QCOMPARE(session.activeClipIds()[1].toString(),QString{});
@@ -203,6 +208,39 @@ private slots:
         QCOMPARE(session.activeClipIds()[1],clips[1]);QCOMPARE(session.activeClipIds()[0].toString(),QString{});
         QCOMPARE(session.sceneState(),QString("Active"));session.panic();session.tick();
     }
+    // Supported edits and Undo apply while playing without resetting the
+    // playhead; tempo is refused; deleted tracks stop and stay stopped.
+    void playbackEditsAndUndo() {
+        Session session;const auto tracks=session.trackIds();const auto clips=session.clipIds();
+        QVERIFY(session.launchClip(clips[0].toString()));QVERIFY(session.launchClip(clips[1].toString()));session.play();
+        for(int i=0;i<60;++i)session.tick(); // 28800 frames at 120 BPM
+        QVERIFY(session.running());QCOMPARE(session.activeClipIds(),clips);QCOMPARE(session.position(),QString("1.2"));
+        const auto applied=session.playbackEdits();
+        session.setLevel(0,40);QCOMPARE(session.levels()[0].toInt(),40);QVERIFY(session.message().contains("while playing"));
+        session.tick();QCOMPARE(session.playbackEdits(),applied+1);QVERIFY(session.running());
+        QCOMPARE(session.activeClipIds(),clips);QCOMPARE(session.position(),QString("1.2"));
+        // A burst supersedes edits that were not yet offered; the last one wins.
+        for(int level=41;level<=50;++level)session.setLevel(0,level);
+        for(int i=0;i<4;++i)session.tick();
+        QCOMPARE(session.levels()[0].toInt(),50);QVERIFY(session.playbackEdits()<=applied+3);QCOMPARE(session.undoText(),QString("Undo track 1 level"));
+        // Controls wait until a pending edit has been offered.
+        session.setLevel(0,61);session.setLevel(0,62);
+        QVERIFY(!session.launchClip(clips[0].toString()));QVERIFY(session.message().contains("Applying the last edit"));
+        session.tick();session.tick();QVERIFY(session.launchClip(clips[0].toString()));
+        // Tempo is not a playback edit.
+        const auto undo=session.undoText();session.setTempo(90);
+        QCOMPARE(session.tempo(),120);QCOMPARE(session.undoText(),undo);QVERIFY(session.message().contains("Stop transport to change the tempo"));
+        // Deleting a playing track stops its notes; Undo restores the track, not its playback.
+        QVERIFY(session.deleteTrack(tracks[1].toString()));session.tick();session.tick();
+        QCOMPARE(session.trackCount(),1);QCOMPARE(session.activeClipIds(),(QVariantList{clips[0]}));QVERIFY(session.running());
+        session.undo();QVERIFY(session.message().contains("while playing"));session.tick();session.tick();
+        QCOMPARE(session.trackCount(),2);QCOMPARE(session.activeClipIds(),(QVariantList{clips[0],QString{}}));
+        session.redo();session.tick();session.tick();QCOMPARE(session.trackCount(),1);session.undo();session.tick();session.tick();
+        // Stopped edits keep rebuilding at the start.
+        session.stop();session.tick();QVERIFY(!session.running());
+        session.setLevel(0,70);QVERIFY(session.message().contains("prepared at the start"));QCOMPARE(session.position(),QString("1.1"));
+        QCOMPARE(session.playbackEdits(),std::uint64_t(0));
+    }
     void sceneRequestsAndHistory() {
         Session session;const auto id=session.sceneId();const auto clips=session.clipIds();
         QCOMPARE(session.sceneState(),QString("Stopped"));
@@ -214,10 +252,11 @@ private slots:
         QTemporaryDir directory;const auto path=directory.filePath("scene.json");QVERIFY(session.saveProject(path));
         QCOMPARE(readAuthoredProject(path).identities.scenes[0].name,std::string("Verse"));
         QVERIFY(session.launchScene(id,"one-bar"));QCOMPARE(session.sceneState(),QString("Launch requested"));
-        QVERIFY(!session.renameScene(id,"Pending"));session.tick();
+        // An edit while the launch is queued keeps the queued launch.
+        QVERIFY(session.renameScene(id,"Pending"));session.undo();QCOMPARE(session.sceneName(),QString("Verse"));session.tick();session.tick();
         QCOMPARE(session.sceneState(),QString("Stopped · actions queued"));QVERIFY(!session.dirty());
         session.play();session.tick();QCOMPARE(session.sceneState(),QString("Active"));QCOMPARE(session.activeClipIds(),clips);
-        QVERIFY(!session.renameScene(id,"Playing"));
+        QVERIFY(session.renameScene(id,"Playing"));session.undo();session.tick();session.tick();QCOMPARE(session.activeClipIds(),clips);
         QVERIFY(session.stopScene(id,"immediate"));QCOMPARE(session.sceneState(),QString("Stop requested"));session.tick();
         QCOMPARE(session.sceneState(),QString("Stopped"));QVERIFY(session.running());
         QVERIFY(session.launchScene(id,"one-bar"));session.tick();QCOMPARE(session.sceneState(),QString("Stopped · actions queued"));
@@ -250,10 +289,11 @@ private slots:
         QVERIFY(!session.renameClip("03","Wrong ID"));
         QCOMPARE(session.undoText(),undo);QVERIFY(!session.dirty());
         QVERIFY(session.launchClip(clips[1].toString()));session.play();
-        QVERIFY(!session.renameClip(clips[1].toString(),"Pending"));
+        QVERIFY(session.renameClip(clips[1].toString(),"Pending"));QCOMPARE(session.clipNames()[1].toString(),QString("Pending"));
         session.tick();QVERIFY(session.running());QCOMPARE(session.activeClipIds()[1],clips[1]);
-        QVERIFY(!session.renameTrack(tracks[0].toString(),"Running"));
+        QVERIFY(session.renameTrack(tracks[0].toString(),"Running"));session.tick();QCOMPARE(session.activeClipIds()[1],clips[1]);
         session.panic();session.tick();QCOMPARE(session.activeClipIds()[1].toString(),QString{});
+        session.undo();session.undo();QCOMPARE(session.trackNames()[0].toString(),QString("Drums"));QVERIFY(!session.dirty());
         QVERIFY(session.loadProject(path));QCOMPARE(session.trackNames()[0].toString(),QString("Drums"));QVERIFY(!session.canUndo());
         // Test the actual desktop string-ID path above JavaScript's exact range.
         auto high=saved;constexpr std::uint64_t delta=9007199254740992ULL;
@@ -498,7 +538,8 @@ private slots:
         QVERIFY(!session.setPan(audio,101));QVERIFY(!session.setPan("999",0));QVERIFY(!session.setMute("x",true));
         QCOMPARE(session.pans(),(QVariantList{-100,40}));QCOMPARE(session.undoText(),undo);
         QVERIFY(session.setPan(audio,-100));QCOMPARE(session.undoText(),undo); // no-op edit adds no history
-        session.play();QVERIFY(!session.setSolo(audio,false));session.tick();QVERIFY(!session.setSolo(audio,false));
+        session.play();QVERIFY(session.setSolo(audio,false));QCOMPARE(session.solos(),(QVariantList{false,true}));session.tick();
+        QVERIFY(session.running());session.undo();QCOMPARE(session.solos(),(QVariantList{true,true}));
         session.stop();session.tick();
         // Undo walks back each mixer step; Save/Open retains IDs and values.
         session.undo();QCOMPARE(session.solos(),(QVariantList{true,false}));
@@ -730,7 +771,11 @@ private slots:
         // Launch the imported clip through its button and play.
         click("clip2");session.tick();click("playButton");session.tick();QVERIFY(session.running());
         QTRY_COMPARE(session.activeClips()[2].toInt(),0);
-        QVERIFY(!findItem(window->contentItem(),"deleteTrack2")->property("enabled").toBool());
+        // Track edits apply while playing; the playing clip follows its track.
+        QVERIFY(!findItem(window->contentItem(),"tempoSpin")->property("enabled").toBool());
+        click("deleteTrack0");QTRY_COMPARE(session.trackCount(),4);session.tick();session.tick();
+        QVERIFY(session.running());QCOMPARE(session.activeClips()[1].toInt(),0);
+        click("undoButton");QTRY_COMPARE(session.trackCount(),5);session.tick();session.tick();QCOMPARE(session.activeClips()[2].toInt(),0);
         click("stopButton");session.tick();QVERIFY(!session.running());
     }
     void clipRangeEditing() {
@@ -1513,9 +1558,9 @@ private slots:
         QVERIFY(!findItem(window->contentItem(),"solo0")->property("checked").toBool());
         click("undoButton");click("undoButton");QCOMPARE(session.mutes(),(QVariantList{false,false}));QCOMPARE(session.solos(),(QVariantList{false,false}));
         click("redoButton");QCOMPARE(session.mutes(),(QVariantList{true,false}));
-        session.play();session.tick();
-        QVERIFY(!findItem(window->contentItem(),"pan1")->property("enabled").toBool());
-        QVERIFY(!findItem(window->contentItem(),"mute0")->property("enabled").toBool());
+        session.play();session.tick(); // mixer edits stay available while playing
+        QVERIFY(findItem(window->contentItem(),"pan1")->property("enabled").toBool());
+        QVERIFY(findItem(window->contentItem(),"mute0")->property("enabled").toBool());
         session.stop();session.tick();
         QVERIFY(window->grabWindow().save("desktop-track-mixer.png"));
     }
@@ -1549,7 +1594,9 @@ private slots:
     }
     void historyFailureAndDocumentBoundary() {
         Session session;session.setTempo(120);session.setTempo(0);QVERIFY(!session.canUndo());
-        session.setTempo(121);session.play();QVERIFY(!session.canUndo());session.undo();QCOMPARE(session.tempo(),121);
+        // Undo of a tempo edit is not a playback edit: refused visibly, state kept.
+        session.setTempo(121);session.play();QVERIFY(session.canUndo());session.undo();QCOMPARE(session.tempo(),121);
+        QVERIFY(session.message().contains("Stop transport to change the tempo"));
         session.tick();session.undo();QCOMPARE(session.tempo(),121);QVERIFY(session.running());
         session.stop();session.tick();session.undo();QCOMPARE(session.tempo(),120);QVERIFY(!session.dirty());
         session.redo();QCOMPARE(session.tempo(),121);
@@ -1637,8 +1684,9 @@ private slots:
         session.setStepEnabled(15,true);session.setPitch(15,40);session.setVelocity(15,35);session.setGate(15,100);
         session.setStepCount(4);QCOMPARE(session.selectedStep(),3);QCOMPARE(session.pitches()[15].toInt(),40);
         session.setStepCount(16);QVERIFY(session.stepEnabled()[15].toBool());QCOMPARE(session.velocities()[15].toInt(),35);
-        session.play();session.setGate(15,1);QCOMPARE(session.gates()[15].toInt(),100);
-        session.tick();session.setStepCount(1);QCOMPARE(session.stepCount(),16);session.stop();session.tick();
+        session.play();session.setGate(15,1);QCOMPARE(session.gates()[15].toInt(),1); // pattern edits apply while playing
+        session.tick();session.setStepCount(1);QCOMPARE(session.stepCount(),1);
+        session.undo();session.undo();QCOMPARE(session.gates()[15].toInt(),100);QCOMPARE(session.stepCount(),16);session.stop();session.tick();
         QTemporaryDir directory;const auto good=directory.filePath("good.json");QVERIFY(session.saveProject(good));
         // Malformed legacy (v2) settings built from the saved pattern.
         const auto document=QJsonDocument::fromJson(encodeProjectSettings(readAuthoredSettings(good))).object();

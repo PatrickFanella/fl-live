@@ -33,7 +33,9 @@ private:
     alignas(64) std::atomic<std::size_t> tail_{0};
 };
 
-enum class ControlKind { start, stop, rewind, schedule, launch_next_bar, stop_next_bar, scene };
+// replace is internal: offer() queues it to order a plan replacement among
+// controls; submit() refuses it.
+enum class ControlKind { start, stop, rewind, schedule, launch_next_bar, stop_next_bar, scene, replace };
 enum class LaunchPolicy { immediate, next_bar };
 struct Control {
     ControlKind kind;
@@ -41,18 +43,20 @@ struct Control {
     std::uint64_t serial = 0;
     CommandBatch batch{};
     LaunchPolicy policy = LaunchPolicy::next_bar;
-    // Track and clip indexes refer to this plan generation (see
-    // RenderController::generation). A schedule, launch, stop or scene
-    // control for another generation is rejected; start, stop and rewind of
-    // the transport apply to any.
-    std::uint64_t generation = 0;
 };
-// A replacement plan prepared off the render thread. It owns its plan;
-// mapping indexes the plan it replaces. While the transport runs it
-// activates exactly before transport frame `at` (or at the next block when
-// `at` has passed); while stopped, at the next block.
+// A replacement plan prepared off the render thread. It shares ownership of
+// its plan (an aliasing pointer can keep a larger owner such as a prepared
+// document alive); the render thread never releases it. mapping indexes the
+// plan it replaces.
+//
+// It activates in control order: controls submitted before the offer use the
+// old plan's indexes and controls submitted after it use the new plan's.
+// When the render owner reaches it while the transport runs, it activates
+// exactly before transport frame `at` (immediately when `at` has passed),
+// and later controls wait for it; while stopped, it activates at once.
+// Panic activates it at once.
 struct PlanReplacement {
-    SessionPlan plan;
+    std::shared_ptr<const SessionPlan> plan;
     PlanMapping mapping;
     Frame at = 0;
 };
@@ -91,27 +95,31 @@ public:
         delete current_;
     }
     [[nodiscard]] std::uint32_t sample_rate() const noexcept { return sample_rate_; }
-    bool submit(Control control) noexcept { return queue_.push(control); }
-    // Control thread. The generation that new controls should carry: it
-    // counts accepted offers, so controls built for an offered plan are
-    // rejected until that plan is active.
-    [[nodiscard]] std::uint64_t generation() const noexcept { return offered_; }
+    bool submit(Control control) noexcept { return control.kind != ControlKind::replace && queue_.push(control); }
     // Control thread. Validates and hands one replacement to the render
-    // owner. busy while an earlier offer is unactivated or its retirement is
-    // uncollected; invalid (state unchanged) for a plan the engine refuses, a
+    // owner. busy (the offer is discarded) while an earlier offer is
+    // unactivated, its retirement is uncollected or the control queue is
+    // full; invalid (state unchanged) for a plan the engine refuses, a
     // mapping that does not fit the latest accepted plan, or another sample
     // rate or tempo.
     OfferResult offer(std::unique_ptr<PlanReplacement> next) {
-        if (!next) return OfferResult::invalid;
+        if (!next || !next->plan) return OfferResult::invalid;
         if (swaps_.load(std::memory_order_acquire) != offered_ || collected_ != offered_) return OfferResult::busy;
-        if (next->plan.sample_rate != sample_rate_ || next->plan.bpm_milli != bpm_milli_) return OfferResult::invalid;
+        if (next->plan->sample_rate != sample_rate_ || next->plan->bpm_milli != bpm_milli_) return OfferResult::invalid;
         try {
-            Engine::validate(next->plan);
-            Engine::validateMapping(*latest_, next->plan, next->mapping);
+            Engine::validate(*next->plan);
+            Engine::validateMapping(*latest_, *next->plan, next->mapping);
         } catch (const std::invalid_argument&) { return OfferResult::invalid; }
-        latest_ = &next->plan;
+        // The plan is published before its marker, so the render owner finds
+        // it when it reaches the marker; without a marker it never takes it.
+        auto* plan = next.release();
+        pending_.store(plan, std::memory_order_release);
+        if (!queue_.push(Control{ControlKind::replace})) {
+            delete pending_.exchange(nullptr, std::memory_order_acquire);
+            return OfferResult::busy;
+        }
+        latest_ = plan->plan.get();
         ++offered_;
-        pending_.store(next.release(), std::memory_order_release);
         return OfferResult::accepted;
     }
     // Control thread. After the render owner activates an offer, returns it
@@ -134,17 +142,24 @@ public:
         }
         if (panic_.exchange(false)) {
             engine_.stop();
-            adopt(); // nothing is playing; activate a pending plan now
-            for (std::size_t i = 0; i < Engine::command_capacity && queue_.pop(control); ++i)
-                handled_ = control.serial;
+            // Nothing is playing: a held or queued replacement activates now.
+            bool replace = held_;
+            for (std::size_t i = 0; i < Engine::command_capacity && queue_.pop(control); ++i) {
+                if (control.kind == ControlKind::replace) replace = true;
+                else handled_ = control.serial;
+            }
+            if (replace) adopt();
+            held_ = false;
             std::fill(output.begin(), output.end(), 0);
         } else {
-            if (const auto* next = pending_.load(std::memory_order_acquire);
-                next && (!engine_.running() || next->at <= engine_.position())) adopt();
+            if (held_ && due()) { adopt(); held_ = false; }
             // Bound work even if the producer continuously refills the queue.
-            for (std::size_t i = 0; i < Engine::command_capacity && queue_.pop(control); ++i) {
-                const bool indexed = control.kind != ControlKind::start && control.kind != ControlKind::stop && control.kind != ControlKind::rewind;
-                if (indexed && control.generation != generation_) { ++rejected_; handled_ = control.serial; continue; }
+            for (std::size_t i = 0; !held_ && i < Engine::command_capacity && queue_.pop(control); ++i) {
+                if (control.kind == ControlKind::replace) {
+                    if (due()) adopt();
+                    else if (pending_.load(std::memory_order_acquire)) held_ = true; // later controls wait
+                    continue;
+                }
                 switch (control.kind) {
                 case ControlKind::start: engine_.start(); break;
                 case ControlKind::stop: engine_.stop(); break;
@@ -228,24 +243,31 @@ private:
     PlanReplacement* current_ = nullptr; // null while the constructor's plan is active
     std::uint64_t generation_ = 0, dropped_ = 0;
     std::size_t track_count_;
+    bool held_ = false; // reached a replacement marker whose frame is ahead
+    [[nodiscard]] bool due() const noexcept {
+        const auto* next = pending_.load(std::memory_order_acquire);
+        return next && (!engine_.running() || next->at <= engine_.position());
+    }
     void adopt() noexcept {
         auto* next = pending_.exchange(nullptr, std::memory_order_acquire);
         if (!next) return;
-        dropped_ += engine_.replace(next->plan, next->mapping).dropped_commands;
-        track_count_ = next->plan.tracks.size();
+        dropped_ += engine_.replace(*next->plan, next->mapping).dropped_commands;
+        track_count_ = next->plan->tracks.size();
         retired_.store(current_, std::memory_order_relaxed);
         current_ = next;
         ++generation_;
         swaps_.fetch_add(1, std::memory_order_release);
     }
-    // Activates a pending plan at its frame inside this block, if any.
+    // Activates a held plan at its frame inside this block, if any. Controls
+    // queued behind it apply from the next block.
     void render(std::span<float> output, std::size_t channels) noexcept {
-        const auto* next = pending_.load(std::memory_order_acquire);
+        const auto* next = held_ ? pending_.load(std::memory_order_acquire) : nullptr;
         const auto frames = output.size() / channels;
         if (next && engine_.running() && next->at > engine_.position() && next->at - engine_.position() < frames) {
             const auto split = static_cast<std::size_t>(next->at - engine_.position()) * channels;
             (void)engine_.process(output.first(split), channels);
             adopt();
+            held_ = false;
             (void)engine_.process(output.subspan(split), channels);
         } else (void)engine_.process(output, channels);
     }

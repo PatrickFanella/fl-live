@@ -1,6 +1,6 @@
 {
-  "verified_at": "2026-11-07T09:47:56.838412+00:00",
-  "base": "PR #130 head (836516e0a)",
+  "verified_at": "2026-11-07T10:02:08.324414+00:00",
+  "base": "PR #131 head plus the queue-ordered handoff from the #54 branch",
   "issues": [
     53
   ],
@@ -30,13 +30,13 @@
     "thread-sanitizer": {
       "passed": 3,
       "total": 3,
-      "note": "Local build of plan-replacement-tests and engine.cpp with -fsanitize=thread, three runs; controller-tests also clean"
+      "note": "Local -fsanitize=thread build of plan-replacement-tests with engine.cpp, three runs, no reports"
     }
   },
   "verified_behaviors": [
     "Replacement due at frame 1000 gives identical output for blocks 1/64/257/512/3000; a queued launch on a deleted track is dropped and a queued stop is remapped",
     "Offers refused for null, changed rate or tempo, uncovered tracks or clips, shared or out-of-range targets and an invalid plan; one offer in flight; retirement must be collected first",
-    "Indexed controls for an unactivated generation are rejected; transport controls are generation-free",
+    "Controls submitted before an offer use the old plan; controls after it wait behind the queued marker and use the new plan; a full queue refuses the offer; a stopped transport activates at once",
     "Held MIDI voices continue under a new waveform with an exact saw value; passed notes do not retrigger and the next note starts; a removed clip stops its voices; a shortened release ends without dividing by zero",
     "2000 threaded replacements with 400 refused offers; each retired plan is overwritten with NaN and destroyed on the control thread with no NaN in output; shutdown with an unactivated offer is freed by the destructor (LeakSanitizer in sanitizer presets)",
     "Zero C++ allocations and deallocations intercepted on the render thread during replace and render",
@@ -46,10 +46,10 @@
   "source_sha256": {
     "include/fl_live/engine.hpp": "4045d99808647749635356e6b9cfd2827d0a80d8e8287de4a904533a40599c5d",
     "src/engine.cpp": "19cf16efa761f23ace007637eaa6e3444c0b1603aae67f94b9913ab88b38b741",
-    "include/fl_live/controller.hpp": "a950d90eff457d8375b58bcd988228b6a63803bcfd2f7aa4088c0d1686754fca",
+    "include/fl_live/controller.hpp": "7dedbd1f9adab218604cc1cc11ab826b3420c208f5f60e512f9e196bb60aed37",
     "include/fl_live/document_render.hpp": "3d125f44453e036a7b888315bf7ba63d0ccf1bfd64a677c017b84e3226a2f9c9",
     "src/document_render.cpp": "3d4adf02faa8c489c9be604d558c3c31e0ea9f9cb369ea62f15644a457f40f38",
-    "tests/plan_replacement_tests.cpp": "e996b2886d16b8fdd1e3b9f705c8decc768f022108ed7a4b876b286123a64ebb",
+    "tests/plan_replacement_tests.cpp": "1d54c6720b025b9fc72caa877bfd5d427ede62a869bd82b0dcd1255cc9fb47c2",
     "tests/document_render_tests.cpp": "76606b056d1aeb96f3184a29626e6297da7d32236c889a8dae2bda31aa72b37f"
   },
   "limits": "Offline and private test processes only; tempo and sample-rate changes are refused; no real-time deadline or physical-audio measurement; the desktop does not use replacement yet (#54)."

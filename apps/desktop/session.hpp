@@ -52,6 +52,7 @@ class Session final : public QObject {
     Q_PROPERTY(bool dirty READ dirty NOTIFY changed)
     Q_PROPERTY(QString projectPath READ projectPath NOTIFY projectPathChanged)
     Q_PROPERTY(bool canEdit READ canEdit NOTIFY changed)
+    Q_PROPERTY(bool canChange READ canChange NOTIFY changed)
     Q_PROPERTY(bool running READ running NOTIFY changed)
     Q_PROPERTY(bool pending READ pending NOTIFY changed)
     Q_PROPERTY(QString position READ position NOTIFY changed)
@@ -178,14 +179,18 @@ public:
     Q_INVOKABLE bool setSolo(const QString& trackId, bool value);
     bool dirty() const { return *content_ != *saved_content_ || identities_->tracks != saved_identities_->tracks ||
         identities_->clips != saved_identities_->clips || identities_->scenes != saved_identities_->scenes; }
-    bool canUndo() const { return canEdit() && history_cursor_ > 0; }
-    bool canRedo() const { return canEdit() && history_cursor_ + 1 < history_size_; }
+    bool canUndo() const { return canChange() && history_cursor_ > 0; }
+    bool canRedo() const { return canChange() && history_cursor_ + 1 < history_size_; }
     QString undoText() const;
     QString redoText() const;
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();
     QString projectPath() const { return project_path_; }
+    // canEdit: stopped-only operations (tempo, Open, New, Restore, Collect,
+    // Export). canChange: document edits, which also apply while playing
+    // through a plan replacement; see docs/general-session.md#playback-edits.
     bool canEdit() const { return !failed_ && !running() && !pending(); }
+    bool canChange() const { return !failed_; }
     Q_INVOKABLE void setTempo(int value);
     Q_INVOKABLE void setLevel(int track, int value);
     Q_INVOKABLE void setPitch(int note, int value);
@@ -205,6 +210,8 @@ public:
     // Refused while there are unsaved edits, like Open.
     Q_INVOKABLE bool newProject();
     bool running() const { return status_.running; }
+    // Plan replacements the render owner has activated in this runtime.
+    std::uint64_t playbackEdits() const { return status_.generation; }
     bool pending() const { return status_.handled_serial < serial_; }
     QString position() const;
     QString message() const { return message_; }
@@ -225,14 +232,22 @@ signals:
     void sceneSelectionChanged();
     void recoveryChanged();
 private:
+    using Plan = std::shared_ptr<const fl_live::DocumentRenderPlan>;
+    static Plan preparePlan(const SessionContent& content, const fl_live::DocumentSnapshot& identities);
     struct Prepared {
-        const fl_live::DocumentRenderPlan mapped;
+        // mapped: the latest plan the controller accepted; controls resolve
+        // against it and carry its generation. waiting: a newer playback edit
+        // prepared but not yet offered. Retired plans come back through
+        // collect() and are released on the GUI thread.
+        Plan mapped;
+        const Plan initial; // the controller's constructor plan
         fl_live::RenderController controller;
         std::unique_ptr<fl_live::PipeWireBackend> backend;
+        Plan waiting;
         Prepared(const SessionContent& content, const fl_live::DocumentSnapshot& identities)
-            : mapped(identities, contentSources(content, identities), 48000,
-                static_cast<std::uint32_t>(content.tempo)*1000U, {}, contentGains(content, identities), contentAutomation(content, identities)),
-              controller(mapped.plan()) {}
+            : mapped(preparePlan(content, identities)), initial(mapped), controller(initial->plan()) {}
+        // The plan matching the current document, for display and ID lookups.
+        const fl_live::DocumentRenderPlan& view() const { return waiting ? *waiting : *mapped; }
     };
     using Content = std::shared_ptr<const SessionContent>;
     Content content_ = std::make_shared<const SessionContent>(defaultProject().content);
@@ -293,7 +308,12 @@ private:
     void restoreSceneSelection(fl_live::SceneId id, bool notify = true);
     int selected_step_ = 0;
     bool replace(Content content, Identities identities = {});
+    bool replaceLive(Content content, Identities identities);
+    bool live_ = false; // the last replace() applied while playing
+    void offerWaiting();
+    bool controlsReady(); // no playback edit awaits its offer
     bool editable();
+    bool changeable();
     struct ExportJob {
         ExportProgress progress;
         std::atomic<int> state{0}; // 0 running, 1 completed, 2 cancelled, 3 failed

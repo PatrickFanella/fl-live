@@ -29,13 +29,13 @@ This page separates what has been measured from what is planned or unqualified. 
 | Real-time continuity | Fixed-quantum private-graph controls when the host is idle | Private graph: [reference quantum continuity](../validation/reference-quantum-continuity.json) | Live quantum changes (#23); under host load the private graph drops or slips quanta, which the content checks report rather than fail |
 | Input | Offscreen keyboard and pointer events on the production QML; [shortcuts, focus restoration and unique accessible names](keyboard.md) | Offscreen UI: [keyboard and accessibility](../validation/keyboard-accessibility.json) | Native Wayland input (#22), keyboard-only qualification journey (#83), screen-reader checks (#80) |
 | Recording | None | — | Audio/MIDI recording (#43–#50) |
-| Automation | [Level and pan lanes](automation.md) with stable IDs, linear interpolation, persistence and a pointer/keyboard lane editor | Offline and offscreen UI: [automation](../validation/parameter-automation.json) | Dragging points, playback edits (#54, #55; engine groundwork in [plan replacement](plan-replacement.md)), other parameters |
+| Automation | [Level and pan lanes](automation.md) with stable IDs, linear interpolation, persistence and a pointer/keyboard lane editor | Offline and offscreen UI: [automation](../validation/parameter-automation.json) | Dragging points, edit bursts under load (#55), other parameters |
 | Devices, plugins | None | — | Typed devices (#73–#78), plugin hosting (#66–#72) |
 | Platforms | Linux with Qt 6.12 and PipeWire 1.6.9 in the pinned container; a [development package](install.md) installs and launches in a clean runtime-only container | Hosted CI; [packaging](../validation/linux-packaging.json) | A licensed release (#84), other distributions, macOS (#96) |
 
 ## Known gaps that affect everyday use
 
-- Edits are made while stopped; changes during playback are #54.
+- Tempo, Open, New, import, relink and export need stopped transport; other edits [apply while playing](general-session.md#playback-edits). Burst and backpressure qualification under load is #55.
 - The built-in synth is basic: naive oscillators and a linear envelope, no filter.
 - Imported audio must already be at 48 kHz.
 - No license has been chosen, so nothing here is a release.

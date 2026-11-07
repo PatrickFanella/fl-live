@@ -1,0 +1,57 @@
+{
+  "verified_at": "2026-11-07T10:02:08.324414+00:00",
+  "base": "feat/plan-replacement (PR #131) head",
+  "issues": [
+    54
+  ],
+  "scope": "Desktop playback edits and Undo while running through plan replacement; unsupported operations refused visibly",
+  "environment": "Kvant, pinned CI image, docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 22,
+      "total": 22
+    },
+    "release": {
+      "passed": 8,
+      "total": 8
+    },
+    "engine-only": {
+      "passed": 6,
+      "total": 6
+    },
+    "pipewire-sanitize": {
+      "passed": 16,
+      "total": 16
+    },
+    "document-io-sanitize": {
+      "passed": 9,
+      "total": 9
+    }
+  },
+  "extra": {
+    "desktop-asan": {
+      "passed": 10,
+      "total": 10,
+      "note": "Local desktop build with FL_LIVE_SANITIZERS=ON (ASAN detect_leaks=0 for Qt) running playbackEditsAndUndo and the nine updated test functions"
+    }
+  },
+  "verified_behaviors": [
+    "Level edits while playing apply at the next block: playback edit count increments, the playhead stays at 1.2 instead of resetting, both clips keep playing",
+    "Ten rapid edits keep one replacement in flight; the last level wins and each edit keeps its own Undo step",
+    "Launch is refused with a visible message while a newer edit awaits its offer and succeeds once it is handed over",
+    "Tempo edits and tempo Undo while playing are refused with a message; tempo and history unchanged",
+    "Deleting a playing MIDI track stops it; Undo restores the track without its playback; redo/undo while playing",
+    "Queued scene launches survive edits made before they render; scene create/copy/delete/slot edits, renames, solo and pattern edits apply while playing",
+    "Offscreen QML: delete track while playing keeps the playing clip on its track; Undo button restores it; tempo field disabled while mixer controls stay enabled",
+    "Stopped edits still rebuild at the start"
+  ],
+  "source_sha256": {
+    "include/fl_live/controller.hpp": "7dedbd1f9adab218604cc1cc11ab826b3420c208f5f60e512f9e196bb60aed37",
+    "apps/desktop/session.hpp": "3f7daa230d630dc4b03a6dd968fcd0f6bcd7552862c1d5b94809d904cd5ee2c4",
+    "apps/desktop/session.cpp": "42c855b8446db65a405502da173ba8b72c57874bd04425d0aff8d68a3ef6d4fd",
+    "apps/desktop/Main.qml": "3af25dabd9ec126b8201d181d3b8cd093a96a9766c3def369329950881d25b6a",
+    "tests/desktop_tests.cpp": "3041eb6fcd61548275b2755f104f3f39de7d965d0752ecdcfeaa52f2e16ef24a",
+    "tests/plan_replacement_tests.cpp": "1d54c6720b025b9fc72caa877bfd5d427ede62a869bd82b0dcd1255cc9fb47c2"
+  },
+  "limits": "Silent preview and offscreen UI; the render result of a live edit is checked at engine level (plan-replacement), not by capturing desktop audio. Edit bursts under host load and backpressure are #55. No physical audio."
+}
