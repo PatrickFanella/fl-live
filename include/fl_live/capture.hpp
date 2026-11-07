@@ -9,6 +9,13 @@
 #include <vector>
 
 namespace fl_live {
+// Receives captured input on the audio thread; must not allocate, lock,
+// wait or touch files.
+class CaptureSink {
+public:
+    virtual ~CaptureSink() = default;
+    virtual void capture(std::span<const float> interleaved) noexcept = 0;
+};
 // Single-producer/single-consumer ring of interleaved float samples with a
 // fixed, preallocated capacity. push() is all or nothing: a block that does
 // not fit is refused whole, never split. Neither side allocates or locks.
@@ -48,14 +55,14 @@ struct CaptureStatus {
 // - The take never replaces a file: an existing <path> or <path>.part is
 //   refused at construction, and finish() keeps the .part name if <path>
 //   appeared meanwhile.
-class CaptureTake {
+class CaptureTake final : public CaptureSink {
 public:
     CaptureTake(std::filesystem::path path, std::uint32_t channels, std::uint32_t rate, std::size_t ring_frames = 48000 * 2);
     CaptureTake(const CaptureTake&) = delete;
     CaptureTake& operator=(const CaptureTake&) = delete;
     ~CaptureTake();
     // Callback side: no allocation, lock, file I/O or wait.
-    void capture(std::span<const float> interleaved) noexcept;
+    void capture(std::span<const float> interleaved) noexcept override;
     // Control side: stops accepting, writes what the ring holds, closes and
     // renames. Repeated calls return the same status.
     CaptureStatus finish();

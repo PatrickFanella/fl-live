@@ -1,0 +1,71 @@
+{
+  "verified_at": "2026-11-07T12:36:37.472373+00:00",
+  "base": "feat/capture-pipeline (PR #152) head",
+  "issues": [
+    43,
+    44
+  ],
+  "scope": "PipeWire audio input stream feeding a CaptureTake, checked against an independent reference on a private graph",
+  "environment": "Kvant, pinned CI image (PipeWire 1.6.9), docker --network none, owned private PipeWire server at quantum 256, no devices or session manager",
+  "gates": {
+    "desktop": {
+      "passed": 26,
+      "total": 26
+    },
+    "pipewire-sanitize": {
+      "passed": 20,
+      "total": 20
+    },
+    "pipewire-capture repeats": {
+      "passed": 6,
+      "total": 6
+    }
+  },
+  "runs": [
+    {
+      "captured_frames": 71936,
+      "matched_frames": 71936,
+      "jumps": 0
+    },
+    {
+      "captured_frames": 71936,
+      "matched_frames": 71936,
+      "jumps": 0
+    },
+    {
+      "captured_frames": 71936,
+      "matched_frames": 71936,
+      "jumps": 0
+    },
+    {
+      "captured_frames": 71936,
+      "matched_frames": 71936,
+      "jumps": 0
+    },
+    {
+      "captured_frames": 72192,
+      "matched_frames": 72192,
+      "jumps": 0
+    },
+    {
+      "captured_frames": 72192,
+      "matched_frames": 72192,
+      "jumps": 0,
+      "note": "AddressSanitizer build"
+    }
+  ],
+  "verified_behaviors": [
+    "fl-live-input connects to the explicit remote with FL/FR F32 ports and records only once linked",
+    "Every captured frame equals the next frame of an independently authored stereo reference (distinct left and right sequences), channels in place",
+    "No bad buffers, dropped blocks or stream errors; the take finishes to its final name",
+    "setSink(nullptr) returns only after the data thread left the previous sink, so the take is finished safely right after"
+  ],
+  "source_sha256": {
+    "include/fl_live/pipewire_backend.hpp": "a5a1ccda52e8a611899ad9a9eb13c9c20991d10992af72f1bdbe9867b9d26536",
+    "src/pipewire_backend.cpp": "732a4a90ea447706fbb926b0d9a78c0f6d0e56f4b72c3a230876181d1cfdc859",
+    "include/fl_live/capture.hpp": "5f7533b1efbc50b110293af4bcb5678a01521df4c961958a189e3ae5e32cab61",
+    "tests/capture_probe.cpp": "d55b23852478109e06cb143510a5f1254319518939b53150fa83ebab0a572ded",
+    "tests/pipewire_capture.py": "51f2e1d09f5029ef1d66a552aeddff55f9205a779db373d4d5b438f70f7992fa"
+  },
+  "limits": "Private software graph only; no physical input device, latency or timestamp measurement (#45); not yet wired into the desktop (#43)."
+}
