@@ -143,6 +143,7 @@ public:
         }
         if (panic_.exchange(false)) {
             engine_.stop();
+            engine_.silence_live();
             // Nothing is playing: a held or queued replacement activates now.
             bool replace = held_;
             for (std::size_t i = 0; i < Engine::command_capacity && queue_.pop(control); ++i) {
@@ -201,6 +202,10 @@ public:
         }
         publish();
     }
+    // Rendering thread only, before process(): live input notes and their
+    // silencing (Engine::live, Engine::silence_live).
+    void live(std::size_t track, std::uint8_t pitch, float velocity, bool on) noexcept { engine_.live(track, pitch, velocity, on); }
+    void silence_live() noexcept { engine_.silence_live(); }
     // Rendering thread only, after process(): the transport as that block
     // left it, without copying the whole status.
     [[nodiscard]] bool running() const noexcept { return running_.load(std::memory_order_relaxed); }

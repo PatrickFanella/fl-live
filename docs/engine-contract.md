@@ -26,6 +26,8 @@ The queue holds 64 commands. A full queue returns `full` and leaves existing com
 
 Audio loops repeat the complete source array with no join crossfade. MIDI loop boundaries reset note cursors and voices. One-shots stop at their exclusive end. Clip replacement clears old voices before starting the new clip. Stop clears active clips and voices and freezes the playhead. Start resumes that position; rewind changes it to zero only when stopped.
 
+Live input notes (MIDI monitoring, docs/recording.md) use separate voices, eight per track. `live()` starts or releases them on the rendering thread. They play the track's `live_instrument` at its gain and pan, with or without a clip, and keep sounding through transport stop; a stopped engine renders them alone, without moving the playhead. They follow their track through `replace()`, and `silence_live()` (called on panic) ends them.
+
 ## Ownership and rendering
 
 The caller owns the immutable plan. The engine holds a reference; the plan must outlive it, or its [replacement](plan-replacement.md), and must not be edited after validation. Construction allocates runtime state for 64 tracks and calculates pitch increments before playback. Render uses preallocated runtime/command/voice storage.

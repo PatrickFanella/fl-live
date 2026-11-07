@@ -409,6 +409,7 @@ private:
     std::string input_target_ = config_.input_target, midi_input_target_ = config_.midi_input_target;
     bool chooseInput(std::string& target, const QString& node, bool midi);
     fl_live::InputMonitor monitor_;
+    fl_live::LiveMidi live_notes_;
     std::set<std::uint64_t> monitored_;
     std::uint64_t monitor_version_ = 0;
     struct { const void* content = nullptr; const void* identities = nullptr; std::uint64_t version = ~std::uint64_t{0}; } monitor_key_;
@@ -438,7 +439,11 @@ private:
     struct MidiFanout final : fl_live::MidiSink {
         std::vector<fl_live::MidiTake*> takes;
         void cycle(std::uint64_t frame, std::uint32_t frames) noexcept override { for (auto* t : takes) t->cycle(frame, frames); }
-        void midi(std::uint64_t frame, std::span<const std::uint8_t> message) noexcept override { for (auto* t : takes) t->midi(frame, message); }
+        fl_live::LiveMidi* live = nullptr;
+        void midi(std::uint64_t frame, std::span<const std::uint8_t> message) noexcept override {
+            if (live) live->midi(frame, message);
+            for (auto* t : takes) t->midi(frame, message);
+        }
     } midi_fanout_;
     std::unique_ptr<fl_live::PipeWireMidiCapture> midi_input_;
     std::uint64_t preview_clock_ = 0; // frames rendered by the silent preview

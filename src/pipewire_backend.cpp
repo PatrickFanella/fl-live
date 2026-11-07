@@ -30,6 +30,7 @@ struct PipeWireBackend::Impl {
     // frame rendered first in it, published under a sequence counter.
     std::atomic<std::uint64_t> anchor_sequence{0}, anchor_graph{0}, anchor_transport{0};
     std::atomic<InputMonitor*> monitor{nullptr};
+    std::atomic<LiveMidi*> live{nullptr};
     std::atomic<int> monitor_inside{0};
     spa_io_position* position = nullptr; // data thread only, set through io_changed
     bool started = false, initialized = false;
@@ -103,8 +104,9 @@ struct PipeWireBackend::Impl {
             if (count && (!self.min_render_frames.load() || count < self.min_render_frames.load()))
                 self.min_render_frames.store(count);
             if (count > self.max_render_frames.load()) self.max_render_frames.store(count);
-            self.controller.process(output, channels);
             self.monitor_inside.fetch_add(1);
+            if (auto* notes = self.live.load()) notes->apply(self.controller);
+            self.controller.process(output, channels);
             if (auto* monitored = self.monitor.load()) monitored->mix(output, channels);
             self.monitor_inside.fetch_sub(1);
             // Controls apply at the block start, so a transport running after
@@ -181,6 +183,10 @@ struct PipeWireBackend::Impl {
 PipeWireBackend::PipeWireBackend(RenderController& controller, PipeWireConfig config)
     : impl_(std::make_unique<Impl>(controller, std::move(config))) { impl_->connect(); }
 PipeWireBackend::~PipeWireBackend() = default;
+void PipeWireBackend::setLive(LiveMidi* live) noexcept {
+    impl_->live.store(live);
+    while (impl_->monitor_inside.load() != 0) std::this_thread::yield();
+}
 void PipeWireBackend::setMonitor(InputMonitor* monitor) noexcept {
     impl_->monitor.store(monitor);
     while (impl_->monitor_inside.load() != 0) std::this_thread::yield();

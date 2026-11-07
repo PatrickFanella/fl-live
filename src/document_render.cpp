@@ -72,6 +72,9 @@ SessionPlan prepare(const DocumentSnapshot& document, std::span<const DocumentCl
         if (!SessionDocument::audible(document, track.id)) { prepared.gain = 0; prepared.gain_automation.clear(); }
         for (const auto& clip : document.clips) if (clip.track == track.id)
             prepared.clips.push_back(*content.at(clip.id.value));
+        // Live input notes use the synth of the track's first MIDI clip.
+        for (const auto& clip : prepared.clips)
+            if (const auto* midi = std::get_if<MidiClip>(&clip)) { prepared.live_instrument = midi->instrument; break; }
         plan.tracks.push_back(std::move(prepared));
     }
     // Reuse the engine's sample/note/voice validation on the control side.
