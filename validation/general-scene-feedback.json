@@ -1,0 +1,32 @@
+{
+  "verified_at": "2026-11-07T12:13:38.040687+00:00",
+  "base": "main after PR #148",
+  "issues": [
+    28,
+    29
+  ],
+  "scope": "Scene launch/stop timing and requested/queued/active feedback on a general session, including refused and rejected requests",
+  "environment": "Kvant, pinned CI image, docker --network none, silent preview clock",
+  "gates": {
+    "desktop": {
+      "passed": 24,
+      "total": 24
+    }
+  },
+  "verified_behaviors": [
+    "general-session-regressions: four tracks at 137 BPM (non-integral bars) with identical samples at blocks 1/64/128/257/512, Immediate sparse replacement releasing MIDI voices, scene stop at bar 3, saturation and panic recovery",
+    "One bar launch while playing: 'Launch requested' (all four tracks requested) until acknowledged, then 'Stopped \u00b7 actions queued' (every track 'Launch queued'), then 'Active' with all four clips",
+    "Immediate replacement by a two-track scene keeps tracks 1 and 4 and stops 2 and 3 in the same block",
+    "Full control queue: the scene request is refused with 'Control queue full' and no scene reads 'requested'",
+    "Engine action queue full (64 queued launches): a four-track scene is rejected as a whole; the request clears, the message reports the rejection, tracks 2-4 stay 'Stopped' and none is active",
+    "Panic recovers and the same scene launches; unknown scenes and policies are refused without requested state"
+  ],
+  "source_sha256": {
+    "apps/desktop/session.cpp": "ea4a7906e0fb1b6767b009be7a593f1619a7300713a6b391a9c5ba95ec1fdc8a",
+    "include/fl_live/controller.hpp": "7a5fe0867242b12b04a4315d33afab34dec6a8ea44764b120188d79beeb11265",
+    "src/engine.cpp": "b8295436bb739748908a4939da536605824dd0a42b7ebc8af7c259602d543293",
+    "tests/desktop_tests.cpp": "4a528460eee07b1d17402c0915aa68c35af901a430e82c87b82d70a7e15466e3",
+    "tests/general_session_tests.cpp": "b83abf2c9f2bb937dd996f7f7118889e170a35817bb5ce070150c1897d0c9db5"
+  },
+  "limits": "Silent preview clock and offscreen platform; the earlier private-graph capture is in scene-controls.json; no physical audio."
+}
