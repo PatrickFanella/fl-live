@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstring>
 #include <fstream>
+#include <optional>
 #include <stdexcept>
 #include <system_error>
 
@@ -126,6 +127,68 @@ CaptureStatus CaptureTake::finish() {
     std::lock_guard lock(mutex_);
     final_ = result;
     done_ = true;
+    return final_;
+}
+
+MidiTake::MidiTake(std::size_t capacity) : ring_(capacity + 1) {
+    if (!capacity) throw std::invalid_argument("MIDI take needs capacity");
+    events_.reserve(capacity);
+}
+void MidiTake::cycle(std::uint64_t frame, std::uint32_t frames) noexcept {
+    if (!accepting_.load(std::memory_order_acquire)) return;
+    auto expected = ~std::uint64_t{0};
+    origin_.compare_exchange_strong(expected, frame, std::memory_order_relaxed);
+    end_.store(frame + frames, std::memory_order_release);
+}
+void MidiTake::midi(std::uint64_t frame, std::span<const std::uint8_t> message) noexcept {
+    if (!accepting_.load(std::memory_order_acquire) || message.size() < 3) return;
+    const auto kind = message[0] & 0xF0;
+    if (kind != 0x80 && kind != 0x90) return;
+    const auto size = ring_.size();
+    const auto head = head_.load(std::memory_order_relaxed);
+    const auto next = (head + 1) % size;
+    if (next == tail_.load(std::memory_order_acquire)) { dropped_.fetch_add(1, std::memory_order_relaxed); return; }
+    ring_[head] = {frame, message[0], static_cast<std::uint8_t>(message[1] & 0x7F), static_cast<std::uint8_t>(message[2] & 0x7F)};
+    head_.store(next, std::memory_order_release);
+}
+void MidiTake::drain() {
+    const auto size = ring_.size();
+    auto tail = tail_.load(std::memory_order_relaxed);
+    const auto head = head_.load(std::memory_order_acquire);
+    while (tail != head) { events_.push_back(ring_[tail]); tail = (tail + 1) % size; }
+    tail_.store(tail, std::memory_order_release);
+}
+MidiTakeStatus MidiTake::finish() {
+    if (done_) return final_;
+    accepting_.store(false, std::memory_order_release);
+    drain();
+    done_ = true;
+    const auto origin = origin_.load();
+    if (origin == ~std::uint64_t{0}) { final_.dropped = dropped_.load(); return final_; } // never ran a cycle
+    const auto end = std::max(end_.load(), origin);
+    final_.frames = end - origin;
+    final_.dropped = dropped_.load();
+    final_.events = events_.size();
+    std::array<std::optional<RecordedNote>, 128> held{};
+    const auto close = [&](std::uint8_t pitch, std::uint64_t at) {
+        auto& note = held[pitch];
+        if (!note) return;
+        note->length = std::max<std::uint64_t>(at > note->start ? at - note->start : 0, 1);
+        final_.notes.push_back(*note);
+        note.reset();
+    };
+    // Events keep arrival order; frames from one clock never go back, but
+    // clamp into the take so a late cycle stamp cannot make a negative time.
+    for (const auto& e : events_) {
+        const auto at = std::min(std::max(e.frame, origin), end) - origin;
+        const bool on = (e.status & 0xF0) == 0x90 && e.data2 > 0;
+        close(e.data1, at);
+        if (on) held[e.data1] = RecordedNote{at, 0, e.data1, e.data2};
+    }
+    for (std::uint8_t pitch = 0; pitch < 128; ++pitch)
+        if (held[pitch]) { close(pitch, final_.frames); ++final_.closed_at_end; }
+    std::stable_sort(final_.notes.begin(), final_.notes.end(),
+        [](const RecordedNote& a, const RecordedNote& b) { return a.start != b.start ? a.start < b.start : a.pitch < b.pitch; });
     return final_;
 }
 

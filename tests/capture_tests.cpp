@@ -12,6 +12,7 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <cmath>
@@ -62,6 +63,13 @@ void* operator new(std::size_t size) {
 }
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+// The nothrow forms too (std::stable_sort's buffer), so every allocation
+// pairs with the free() above.
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept {
+    if (in_callback) callback_allocations.fetch_add(1);
+    return std::malloc(size ? size : 1);
+}
+void operator delete(void* p, const std::nothrow_t&) noexcept { std::free(p); }
 
 namespace {
 using namespace fl_live;
@@ -237,6 +245,46 @@ void interruptedRecovery(const std::filesystem::path& dir) {
     const auto failed = recoverTake(dir / "failed.wav.part", dir / "failed recovered.wav");
     require(failed.recovered && failed.frames >= 20 * 257 && failed.discarded_bytes == 0, "a finished .part file recovers");
 }
+
+// MIDI takes: the callback stores note events without allocating; finish()
+// pairs them and closes held notes, so no take leaves a note stuck.
+void midiTake() {
+    MidiTake take(64);
+    const auto send = [&](std::uint64_t frame, std::uint8_t a, std::uint8_t b, std::uint8_t c) { const std::array<std::uint8_t, 3> m{a, b, c}; take.midi(frame, m); };
+    in_callback = true;
+    take.cycle(1000, 256);           // the take starts at frame 1000
+    send(1010, 0x90, 60, 100);       // C4 on
+    send(1020, 0xB0, 7, 100);        // controller: ignored
+    send(1030, 0x91, 64, 90);        // E4 on, another channel
+    take.cycle(1256, 256);
+    send(1300, 0x80, 60, 0);         // C4 off
+    send(1310, 0x90, 64, 0);         // E4 off as velocity 0
+    send(1400, 0x90, 67, 80);        // G4 on
+    send(1450, 0x90, 67, 70);        // G4 again: the first closes
+    take.cycle(1512, 256);
+    send(1600, 0x90, 72, 60);        // C5 held to the end
+    in_callback = false;
+    take.drain();
+    in_callback = true;
+    send(1700, 0x80, 99, 0);         // off for a note never on: no note
+    take.cycle(1768, 32);
+    in_callback = false;
+    require(callback_allocations.load() == 0 && callback_io.load() == 0, "the MIDI callback neither allocates nor touches files");
+    const auto status = take.finish();
+    const std::vector<RecordedNote> expected{{10, 290, 60, 100}, {30, 280, 64, 90}, {400, 50, 67, 80}, {450, 350, 67, 70}, {600, 200, 72, 60}};
+    require(status.frames == 800 && status.events == 8 && status.dropped == 0 && status.closed_at_end == 2, "take length and counts");
+    require(status.notes == expected, "notes paired, a repeated note-on closes the held one, held notes close at the end");
+    send(1800, 0x90, 50, 50);
+    require(take.finish().notes == expected, "nothing is accepted after finish");
+    // A full ring refuses events and counts them; nothing is invented.
+    MidiTake small(4);
+    small.cycle(0, 64);
+    for (int i = 0; i < 10; ++i) { const std::array<std::uint8_t, 3> m{0x90, static_cast<std::uint8_t>(40 + i), 64}; small.midi(static_cast<std::uint64_t>(i), m); }
+    const auto full = small.finish();
+    require(full.events == 4 && full.dropped == 6 && full.notes.size() == 4 && full.closed_at_end == 4, "overflow refuses and counts events");
+    MidiTake idle;
+    require(idle.finish().notes.empty() && idle.finish().frames == 0, "a take that never ran is empty");
+}
 }
 
 int main() {
@@ -248,10 +296,11 @@ int main() {
         overflowAccounting(dir);
         writeFailure(dir);
         interruptedRecovery(dir);
+        midiTake();
         std::filesystem::remove_all(dir);
         std::cout << "PASS: all-or-nothing ring; 400 blocks written bit for bit with no allocation or file call in the capture thread; "
                      "overflow drops whole blocks with written + dropped = captured; a failed write keeps a readable .part file; "
-                     "a take killed mid-recording recovers bit for bit without changing the .part or replacing a file; truncated and invalid files handled\n";
+                     "MIDI takes pair notes and close held ones with no callback allocation; a take killed mid-recording recovers bit for bit without changing the .part or replacing a file; truncated and invalid files handled\n";
         return 0;
     } catch (const std::exception& error) {
         std::filesystem::remove_all(dir);

@@ -156,7 +156,10 @@ public:
     // stream is recorded.
     QVariantList armed() const;
     Q_INVOKABLE bool setArmed(const QString& trackId, bool armed);
-    bool recording() const { return !takes_.empty(); }
+    bool recording() const { return !takes_.empty() || !midi_takes_.empty(); }
+    // Preview only: feeds one MIDI message to the armed MIDI tracks' takes at
+    // the simulated clock, standing in for the MIDI input in tests.
+    Q_INVOKABLE bool previewMidi(int status, int data1, int data2);
     Q_INVOKABLE bool record();
     // Takes left as .part files by an interrupted recording, found when the
     // project opens: {file, track, journal} maps (docs/recording.md).
@@ -393,9 +396,22 @@ private:
     std::unique_ptr<fl_live::PipeWireCapture> input_;
     QString ack_report_; // shown instead of the generic acknowledgement once the stop renders
     QString finishRecording(); // returns the take report
-    int placeTakes(std::vector<std::pair<fl_live::TrackId,QString>> files,EditKind kind,bool numbered,QStringList& notes);
+    // A finished take waiting to become a clip: an audio file, or MIDI notes.
+    struct PendingTake { fl_live::TrackId track; QString file; std::optional<PianoRoll> piano; };
+    int placeTakes(std::vector<PendingTake> takes,EditKind kind,bool numbered,QStringList& notes);
+    struct MidiTakeEntry { fl_live::TrackId track; std::unique_ptr<fl_live::MidiTake> take; };
+    std::vector<MidiTakeEntry> midi_takes_;
+    struct MidiFanout final : fl_live::MidiSink {
+        std::vector<fl_live::MidiTake*> takes;
+        void cycle(std::uint64_t frame, std::uint32_t frames) noexcept override { for (auto* t : takes) t->cycle(frame, frames); }
+        void midi(std::uint64_t frame, std::span<const std::uint8_t> message) noexcept override { for (auto* t : takes) t->midi(frame, message); }
+    } midi_fanout_;
+    std::unique_ptr<fl_live::PipeWireMidiCapture> midi_input_;
+    std::uint64_t preview_clock_ = 0; // frames rendered by the silent preview
+    void openMidiInput(); // throws with actionable text
+    bool armedKind(fl_live::TrackKind kind) const;
     QString takeReport(int placed,const QString& verb,QStringList notes) const;
-    std::vector<std::pair<fl_live::TrackId,QString>> unplaced_; // finished while audio was stopped
+    std::vector<PendingTake> unplaced_; // finished while audio was stopped
     void openInput(); // throws with actionable text
     void scanInterrupted();
     QVariantList interrupted_;

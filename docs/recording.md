@@ -1,6 +1,6 @@
 # Recording
 
-Recording (epic #11) is being built from the inside out. This page covers what exists now: the capture pipeline that takes audio from the audio callback to a WAV file (#44), the PipeWire input stream that feeds it, audio recording in the desktop: arming, takes and recorded clips (parts of #43, #46 and #47), finishing takes when the server or input is lost (#46), and recovery of takes interrupted by a crash (#48). Not built yet: MIDI recording, input monitoring, choosing an input inside the app, and timestamps and latency compensation (#45).
+Recording (epic #11) is being built from the inside out. This page covers what exists now: the capture pipeline that takes audio from the audio callback to a WAV file (#44), the PipeWire audio and MIDI input streams, recording in the desktop: arming, audio takes and MIDI takes as clips (parts of #43, #44 and #47), finishing takes when the server or input is lost (#46), and recovery of audio takes interrupted by a crash (#48). Not built yet: input monitoring, choosing an input inside the app, crash recovery for MIDI takes, and timestamps and latency compensation (#45).
 
 ## Capture pipeline
 
@@ -20,13 +20,27 @@ Recording (epic #11) is being built from the inside out. This page covers what e
 
 ## Recording in the desktop
 
-- **Arm.** Each audio track has an **Arm** box. MIDI tracks have none; arming one through the API is refused because MIDI recording is not built. Arming the first track opens the input stream, so recording starts without setting up a stream. Disarming the last track closes it.
-- **Input.** `fl-live --remote NAME --input NODE` links the input stream to `NODE`. Without `--input` it waits for an external link, as the output does without `--target`.
-- **Record.** **Record** needs at least one armed track and a saved project. It creates one take per armed track in the project's `recordings/` folder, named `TRACK take N.wav`, and starts the transport if it is stopped. N never reuses an existing file or `.part` file. While recording, arming, deleting a track, a second Record, opening a project and starting a new project are refused.
+- **Arm.** Every track has an **Arm** box. Arming the first audio track opens the audio input stream, and arming the first MIDI track opens the MIDI input, so recording starts without setting up a stream. Disarming the last track of a kind closes its stream.
+- **Input.** `fl-live --remote NAME --input NODE` links the audio input to `NODE`, and `--midi-input NODE` links the MIDI input. Without them the inputs wait for an external link, as the output does without `--target`.
+- **Record.** **Record** needs at least one armed track, and a saved project when an audio track is armed. It creates one take per armed track in the project's `recordings/` folder, named `TRACK take N.wav`, and starts the transport if it is stopped. N never reuses an existing file or `.part` file. While recording, arming, deleting a track, a second Record, opening a project and starting a new project are refused.
 - **Stop.** Stop finishes every take, reads it back and adds it to its track as a new clip named `Take N`, which becomes the track's selected clip. All the takes of one recording are one Undo step ("recorded take"). An empty take is deleted. A take that fails to write, cannot be read back, belongs to a track removed meanwhile, or would exceed the eight clips a track holds keeps its file, and the status line says where it is. Dropped frames are reported with the file name.
 - **Media retention.** Undo and clip deletion never delete a take's file. The project refers to it by path, like imported audio, so Redo and reopening the project find it.
 - **Journal.** Before audio starts, each take gets a journal, `TRACK take N.wav.json`, naming its track ID, the project file, the channel count and the rate. It is removed when the take finishes, and kept while a `.part` file remains to recover.
 - **Preview.** With no remote, the silent preview records silence at the render clock (480 frames per tick), which lets the tests check takes without audio hardware.
+
+## MIDI takes
+
+`PipeWireMidiCapture` connects as node `fl-live-midi-input` with one control port and accepts raw MIDI and UMP; UMP is converted to MIDI 1.0 bytes on the data thread. Each message is stamped with the graph clock position of its cycle plus its offset in the cycle. `MidiTake` (`include/fl_live/capture.hpp`) keeps note-on and note-off messages on any channel in a fixed ring without allocating, and ignores other messages. While recording, the desktop drains the ring every tick. A full ring refuses events and counts them.
+
+When the take finishes, notes are paired. A note-on with velocity 0 is a note-off, a repeated note-on closes the held note first, and a note still held at the end closes there, so a take never leaves a note stuck. The desktop turns the take into a new piano-roll clip on its track:
+
+- Frames become ticks at the session tempo (96 per beat), rounded to the nearest tick. Lengths are at least one tick.
+- MIDI velocity 1–127 becomes 1–100 percent: `(v × 100 + 63) / 127`, rounded down.
+- The clip is the take rounded up to whole bars, from 1 to 16, and loops.
+- Notes starting past 16 bars, beyond 16 sounding at once or beyond 1,024 are left out, and notes crossing 16 bars are cut there. The message counts each case, and notes still held at the end.
+- A take with no notes adds no clip, and the message says so.
+
+Audio and MIDI takes from one recording are one Undo step. A MIDI take has no file, so it cannot be recovered after a crash.
 
 ## Loss while recording
 
@@ -74,3 +88,7 @@ For interrupted takes, `capture-pipeline` forks a process that records 100 known
 - **Input loss.** Audio stays available, the take is the selected clip at once, and the track is disarmed.
 
 In both, the take matches the reference frame by frame up to the loss. Each passed ten local runs in a row. The [loss receipt](../validation/recording-loss.json) records them.
+
+For MIDI, `capture-pipeline` checks pairing, a velocity-0 note-off, a repeated note-on, notes closed at the end, ignored controller messages, overflow counting and an empty take, with no allocation or file call in the callback. `desktop-session` (`midiRecording`) arms the MIDI track and records in preview, feeding note messages with `previewMidi()` at the simulated clock. The new clip holds the notes at the expected ticks and percentages, survives Undo/Redo and save/reopen, and plays when launched. A take without notes adds nothing, and an audio-plus-MIDI recording is one Undo step.
+
+`pipewire-midi-capture` plays an independently authored Standard MIDI File with `pw-midiplay` into `fl-live-midi-input` on the private graph. At 120 BPM and 96 ticks per quarter note one tick is 250 frames, so the expected timeline follows from the file. The file has a chord, overlapping and adjacent repeated notes, and velocities 1 and 127. Every note must arrive with its pitch, velocity and exact frame timing relative to the first note. `pipewire-desktop-midi-recording` plays the same file into the desktop `Session` through the probe's `--record-midi` mode, and the new piano-roll clip must hold every note at its exact tick, length, pitch and mapped velocity. In eight local runs each, every note matched with no offset. The [MIDI receipt](../validation/midi-recording.json) records them.

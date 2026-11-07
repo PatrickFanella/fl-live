@@ -84,6 +84,53 @@ private:
     std::thread worker_;
 };
 
+// Receives MIDI on the audio thread, under the same rules as CaptureSink.
+class MidiSink {
+public:
+    virtual ~MidiSink() = default;
+    // Once per cycle, before its events: the cycle's first frame and length
+    // on the capture clock.
+    virtual void cycle(std::uint64_t frame, std::uint32_t frames) noexcept = 0;
+    virtual void midi(std::uint64_t frame, std::span<const std::uint8_t> message) noexcept = 0;
+};
+// A note of a MIDI take; frames count from the take's first cycle.
+struct RecordedNote {
+    std::uint64_t start = 0, length = 0;
+    std::uint8_t pitch = 0, velocity = 0; // MIDI 0..127, velocity 1..127
+    bool operator==(const RecordedNote&) const = default;
+};
+struct MidiTakeStatus {
+    std::uint64_t frames = 0;         // take length: first cycle to the end of the last
+    std::uint64_t events = 0;         // note events accepted
+    std::uint64_t dropped = 0;        // note events refused by the full ring
+    std::uint32_t closed_at_end = 0;  // notes still held at the end, closed there
+    std::vector<RecordedNote> notes;  // ordered by start, then pitch
+};
+// One recorded MIDI take (docs/recording.md). The callback keeps note-on and
+// note-off messages, on any channel, in a fixed ring; other messages are
+// ignored. drain() moves them to the control side, where finish() pairs them:
+// a note-on with velocity 0 is a note-off, a repeated note-on closes the held
+// note first, and notes still held at the end close at the end of the take,
+// so a take never leaves a note stuck.
+class MidiTake final : public MidiSink {
+public:
+    explicit MidiTake(std::size_t capacity = 4096);
+    void cycle(std::uint64_t frame, std::uint32_t frames) noexcept override;
+    void midi(std::uint64_t frame, std::span<const std::uint8_t> message) noexcept override;
+    void drain();            // control side; call regularly so the ring does not fill
+    MidiTakeStatus finish(); // stops accepting; repeated calls return the same status
+private:
+    struct Event { std::uint64_t frame; std::uint8_t status, data1, data2; };
+    std::vector<Event> ring_;
+    alignas(64) std::atomic<std::size_t> head_{0};
+    alignas(64) std::atomic<std::size_t> tail_{0};
+    std::atomic<bool> accepting_{true};
+    std::atomic<std::uint64_t> origin_{~std::uint64_t{0}}, end_{0}, dropped_{0};
+    std::vector<Event> events_; // control side
+    bool done_ = false;
+    MidiTakeStatus final_;
+};
+
 // Result of recovering an interrupted take (docs/recording.md, #48).
 struct TakeRecovery {
     bool recovered = false;

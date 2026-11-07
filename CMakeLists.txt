@@ -116,6 +116,11 @@ if(BUILD_TESTING)
             add_test(NAME pipewire-capture COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_capture.py $<TARGET_FILE:capture-probe>)
             set_tests_properties(pipewire-capture PROPERTIES TIMEOUT 60)
+            add_executable(midi-capture-probe tests/midi_capture_probe.cpp)
+            target_link_libraries(midi-capture-probe PRIVATE fl_live_pipewire fl_live_media)
+            add_test(NAME pipewire-midi-capture COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_midi_capture.py $<TARGET_FILE:midi-capture-probe>)
+            set_tests_properties(pipewire-midi-capture PROPERTIES TIMEOUT 60)
         endif()
         add_test(NAME pipewire-frame-coded-control COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_integration.py $<TARGET_FILE:fl-live-play>
@@ -206,6 +211,9 @@ if(FL_LIVE_BUILD_DESKTOP)
             add_test(NAME pipewire-desktop-recording COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_capture.py --desktop $<TARGET_FILE:desktop-backend-probe>)
             set_tests_properties(pipewire-desktop-recording PROPERTIES TIMEOUT 60)
+            add_test(NAME pipewire-desktop-midi-recording COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_midi_capture.py --desktop $<TARGET_FILE:desktop-backend-probe>)
+            set_tests_properties(pipewire-desktop-midi-recording PROPERTIES TIMEOUT 60)
             foreach(loss server input)
                 add_test(NAME pipewire-recording-${loss}-loss COMMAND ${Python3_EXECUTABLE}
                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_capture.py --desktop --loss ${loss} $<TARGET_FILE:desktop-backend-probe>)

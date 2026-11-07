@@ -16,14 +16,16 @@ int main(int argc, char** argv) {
     parser.addOption({"remote", "Explicit PipeWire remote", "name"});
     parser.addOption({"target", "Explicit output target (requires remote)", "node"});
     parser.addOption({"input", "Explicit recording input node (requires remote)", "node"});
+    parser.addOption({"midi-input", "Explicit MIDI recording input node (requires remote)", "node"});
     parser.process(app);
-    if ((parser.isSet("target") || parser.isSet("input")) && !parser.isSet("remote")) parser.showHelp(1);
+    if ((parser.isSet("target") || parser.isSet("input") || parser.isSet("midi-input")) && !parser.isSet("remote")) parser.showHelp(1);
     try {
         fl_live::PipeWireConfig config;
         config.remote = parser.value("remote").toStdString();
         config.target = parser.value("target").toStdString();
         config.autoconnect = !config.target.empty();
         config.input_target = parser.value("input").toStdString();
+        config.midi_input_target = parser.value("midi-input").toStdString();
         Session session(config);
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty("session", &session);

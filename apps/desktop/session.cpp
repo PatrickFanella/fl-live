@@ -77,10 +77,11 @@ void Session::audioFailed(const QString& reason) {
     const auto where = QString("PipeWire remote %1%2").arg(QString::fromStdString(config_.remote),
         config_.target.empty() ? QString() : QString(", target %1").arg(QString::fromStdString(config_.target)));
     message_ = reason + " (" + where + "). Audio is stopped; your project and history are kept. Save your project or choose Retry audio after restoring the server/output.";
-    if (recording() || input_) {
-        // The input shares the server: finish what was captured and drop the stream.
+    if (recording() || input_ || midi_input_) {
+        // The inputs share the server: finish what was captured and drop the streams.
         const auto report = recording() ? finishRecording() : QString();
         input_.reset();
+        midi_input_.reset();
         if (!report.isEmpty()) message_ += " " + report;
     }
     emit changed();
@@ -106,7 +107,7 @@ bool Session::reconnectAudio() {
             message_ += " " + takeReport(placed, "Added", notes);
         }
         if (!armed_.empty()) {
-            try { openInput(); }
+            try { if (armedKind(fl_live::TrackKind::audio)) openInput(); if (armedKind(fl_live::TrackKind::midi)) openMidiInput(); }
             catch (const std::exception& error) { armed_.clear(); message_ += QString(" %1; arm a track again to retry.").arg(QString::fromUtf8(error.what())); }
         }
         emit changed();
@@ -768,14 +769,18 @@ void Session::tick() {
         prepared_->controller.process(discarded, 2); // 480 stereo frames; simulated clock, no audio output
         // Silent preview has no input: takes record silence at the same clock.
         static const std::array<float, 960> silence{};
-        if (recording()) fanout_.capture(silence);
+        if (!takes_.empty()) fanout_.capture(silence);
+        if (!midi_takes_.empty()) midi_fanout_.cycle(preview_clock_, 480);
+        preview_clock_ += 480;
     }
+    for (auto& take : midi_takes_) take.take->drain(); // keep the callback's ring from filling
     if (prepared_->backend && prepared_->backend->status().error) {
         audioFailed("Audio backend disconnected");
-    } else if (input_ && input_->status().error) {
+    } else if ((input_ && input_->status().error) || (midi_input_ && midi_input_->status().error)) {
         // Output still works: finish the takes as clips and close the input.
         const auto report = recording() ? finishRecording() : QString();
         input_.reset();
+        midi_input_.reset();
         message_ = QString("The recording input was lost (PipeWire remote %1). %2 Arm a track again to reopen it.")
             .arg(QString::fromStdString(config_.remote), report.isEmpty() ? QString("Nothing was recording.") : report);
         armed_.clear();
@@ -1115,18 +1120,22 @@ bool Session::duplicateTrack(const QString& id) {
 QVariantList Session::armed() const {
     QVariantList result;for(const auto& t:identities_->tracks)result.append(armed_.contains(t.id.value));return result;
 }
+bool Session::armedKind(fl_live::TrackKind kind) const {
+    return std::any_of(identities_->tracks.begin(),identities_->tracks.end(),[&](const auto& t){return t.kind==kind && armed_.contains(t.id.value);});
+}
 bool Session::setArmed(const QString& trackId,bool armed) {
     try {
         const fl_live::TrackId id{parseIdentity(trackId)};
         const auto track=std::find_if(identities_->tracks.begin(),identities_->tracks.end(),[&](const auto& t){return t.id==id;});
         if(track==identities_->tracks.end())throw std::invalid_argument("Unknown track");
-        if(track->kind!=fl_live::TrackKind::audio)throw std::invalid_argument("Only audio tracks record in this version; MIDI recording is not built yet");
         if(recording())throw std::invalid_argument("Stop recording before changing which tracks are armed");
-        // The input stream opens with the first armed track, so recording
-        // starts without stream setup, and closes when none is armed.
-        if(armed && armed_.empty())openInput();
+        // Each input stream opens with the first armed track of its kind, so
+        // recording starts without stream setup, and closes with the last.
+        const bool midi=track->kind==fl_live::TrackKind::midi;
+        if(armed && !armedKind(track->kind)){if(midi)openMidiInput();else openInput();}
         if(armed)armed_.insert(id.value);else armed_.erase(id.value);
-        if(armed_.empty())input_.reset();
+        if(!armedKind(fl_live::TrackKind::audio))input_.reset();
+        if(!armedKind(fl_live::TrackKind::midi))midi_input_.reset();
         emit changed();return true;
     }catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
 }
@@ -1156,7 +1165,7 @@ bool Session::recoverTakes() {
     if(recording()||running()){message_="Stop playback before recovering takes";emit changed();return false;}
     if(interrupted_.isEmpty()){message_="No interrupted takes to recover";emit changed();return false;}
     QStringList notes;
-    std::vector<std::pair<fl_live::TrackId,QString>> files;
+    std::vector<PendingTake> files;
     for(const auto& value:std::as_const(interrupted_)) {
         const auto take=value.toMap();
         const auto part=take["file"].toString();
@@ -1172,7 +1181,7 @@ bool Session::recoverTakes() {
         bool known=false;
         const auto track=take["journal"].toBool() ? take["track"].toString().toULongLong(&known) : 0;
         if(!known){notes.append(QString("%1 has no journal naming its track; the recovered take is kept as %2").arg(QFileInfo(part).fileName(),destination));continue;}
-        files.emplace_back(fl_live::TrackId{track},destination);
+        files.push_back({fl_live::TrackId{track},destination,std::nullopt});
     }
     scanInterrupted();
     const auto placed=placeTakes(std::move(files),EditKind::recover_takes,false,notes);
@@ -1180,16 +1189,32 @@ bool Session::recoverTakes() {
     emit changed();
     return placed>0;
 }
+void Session::openMidiInput() {
+    if(preview_ || midi_input_)return;
+    auto input=config_;input.target=config_.midi_input_target;input.autoconnect=!config_.midi_input_target.empty();
+    try{midi_input_=std::make_unique<fl_live::PipeWireMidiCapture>(input);}
+    catch(const std::exception& error){throw std::runtime_error(std::string("Cannot open the MIDI input: ")+error.what());}
+}
+bool Session::previewMidi(int status,int data1,int data2) {
+    if(!preview_ || midi_takes_.empty())return false;
+    const std::array<std::uint8_t,3> message{static_cast<std::uint8_t>(status),static_cast<std::uint8_t>(data1),static_cast<std::uint8_t>(data2)};
+    midi_fanout_.midi(preview_clock_,message);
+    return true;
+}
 bool Session::record() {
     try {
         if(recording())throw std::invalid_argument("Already recording");
         if(failed_)throw std::invalid_argument("Audio is stopped; choose Retry audio before recording");
-        std::vector<fl_live::TrackId> tracks;
-        for(const auto& t:identities_->tracks)if(armed_.contains(t.id.value))tracks.push_back(t.id);
-        if(tracks.empty())throw std::invalid_argument("Arm an audio track to record");
-        if(owned_path_.isEmpty() || !QFileInfo::exists(owned_path_))throw std::invalid_argument("Save the project first; takes are stored in its recordings folder");
-        const QDir folder(QFileInfo(owned_path_).absolutePath()+"/recordings");
-        if(!QDir().mkpath(folder.path()))throw std::runtime_error(("Cannot create "+folder.path()).toStdString());
+        std::vector<fl_live::TrackId> tracks,midi_tracks;
+        for(const auto& t:identities_->tracks)if(armed_.contains(t.id.value))(t.kind==fl_live::TrackKind::midi ? midi_tracks : tracks).push_back(t.id);
+        if(tracks.empty() && midi_tracks.empty())throw std::invalid_argument("Arm a track to record");
+        // Audio takes are files beside the project; MIDI takes become notes.
+        QDir folder;
+        if(!tracks.empty()) {
+            if(owned_path_.isEmpty() || !QFileInfo::exists(owned_path_))throw std::invalid_argument("Save the project first; audio takes are stored in its recordings folder");
+            folder=QDir(QFileInfo(owned_path_).absolutePath()+"/recordings");
+            if(!QDir().mkpath(folder.path()))throw std::runtime_error(("Cannot create "+folder.path()).toStdString());
+        }
         std::vector<Take> takes;
         std::vector<QString> paths;
         // A refusal part way leaves no file or journal behind.
@@ -1215,14 +1240,23 @@ bool Session::record() {
                 throw std::runtime_error(("Cannot write "+QFileInfo(path).fileName()+".json").toStdString());
             takes.push_back({id,std::make_unique<fl_live::CaptureTake>(path.toStdString(),2,48000)});
         }
-        openInput();
+        std::vector<MidiTakeEntry> midi_takes;
+        for(const auto& id:midi_tracks)midi_takes.push_back({id,std::make_unique<fl_live::MidiTake>()});
+        if(!tracks.empty())openInput();
+        if(!midi_tracks.empty())openMidiInput();
         cleanup.dismiss();
         takes_=std::move(takes);
+        midi_takes_=std::move(midi_takes);
         fanout_.takes.clear();
         for(auto& t:takes_)fanout_.takes.push_back(t.take.get());
-        if(input_)input_->setSink(&fanout_);
+        midi_fanout_.takes.clear();
+        for(auto& t:midi_takes_)midi_fanout_.takes.push_back(t.take.get());
+        if(input_ && !takes_.empty())input_->setSink(&fanout_);
+        if(midi_input_ && !midi_takes_.empty())midi_input_->setSink(&midi_fanout_);
         if(!running())play();
-        message_=QString("Recording %1 track%2 into %3").arg(takes_.size()).arg(takes_.size()==1 ? "" : "s").arg(folder.path());
+        const auto count=takes_.size()+midi_takes_.size();
+        message_=QString("Recording %1 track%2").arg(count).arg(count==1 ? "" : "s");
+        if(!takes_.empty())message_+=QString("; audio takes go into %1").arg(folder.path());
         emit changed();return true;
     }catch(const std::exception& error){
         message_=QString("Could not start recording: %1. Nothing was recorded.").arg(QString::fromUtf8(error.what()));
@@ -1233,27 +1267,37 @@ bool Session::record() {
 // step. A take that cannot be placed keeps its file and is reported. When the
 // edit cannot be committed because audio is stopped, the takes wait in
 // unplaced_ until Retry audio succeeds.
-int Session::placeTakes(std::vector<std::pair<fl_live::TrackId,QString>> files,EditKind kind,bool numbered,QStringList& notes) {
+int Session::placeTakes(std::vector<PendingTake> files,EditKind kind,bool numbered,QStringList& notes) {
     auto snapshot=*identities_;snapshot.next_id=next_identity_;
     fl_live::SessionDocument candidate(std::move(snapshot));
     auto next=*content_;
     std::vector<std::pair<fl_live::TrackId,fl_live::ClipId>> added;
-    std::vector<std::pair<fl_live::TrackId,QString>> placed;
-    for(const auto& [id,file]:files) {
-        const auto kept=QString("the take is kept as %1").arg(file);
+    std::vector<PendingTake> placed;
+    for(const auto& pending:files) {
+        const auto id=pending.track;const auto& file=pending.file;
+        const auto kept=pending.piano ? QString("its MIDI notes were not kept") : QString("the take is kept as %1").arg(file);
         const auto& tracks=candidate.snapshot().tracks;
         const auto owner=std::find_if(tracks.begin(),tracks.end(),[&](const auto& t){return t.id==id;});
         if(owner==tracks.end()){notes.append(QString("The take's track no longer exists; %1").arg(kept));continue;}
-        if(owner->kind!=fl_live::TrackKind::audio){notes.append(QString("The take belongs to a MIDI track; %1").arg(kept));continue;}
+        if((owner->kind==fl_live::TrackKind::midi)!=pending.piano.has_value()){notes.append(QString("The take does not match its track's kind; %1").arg(kept));continue;}
         const auto count=static_cast<std::size_t>(std::count_if(candidate.snapshot().clips.begin(),candidate.snapshot().clips.end(),[&](const auto& c){return c.track==id;}));
         if(count>=desktop_clips_per_track){notes.append(QString("The track already has 8 clips; %1").arg(kept));continue;}
+        if(pending.piano) {
+            const auto clip=candidate.createClip(id,"Take "+std::to_string(count+1));
+            ClipContent value{clip};
+            for(auto& step:value.pattern.steps)step.enabled=false;
+            value.piano=*pending.piano;
+            next.clips.push_back(std::move(value));
+            added.emplace_back(id,clip);placed.push_back(pending);
+            continue;
+        }
         auto decoded=fl_live::importWav(file.toStdString());
         if(!decoded){notes.append(QString("The take %1 could not be read back: %2").arg(file,QString::fromStdString(decoded.message)));continue;}
         const auto clip=candidate.createClip(id,numbered ? "Take "+std::to_string(count+1) : std::string("Recovered take"));
         ClipContent value{clip};
         value.audio=AudioSource::wav;value.asset=file;value.media=std::make_shared<const fl_live::AudioClip>(std::move(decoded.clip));
         next.clips.push_back(std::move(value));
-        added.emplace_back(id,clip);placed.emplace_back(id,file);
+        added.emplace_back(id,clip);placed.push_back(pending);
     }
     if(added.empty())return 0;
     if(failed_){unplaced_.insert(unplaced_.end(),placed.begin(),placed.end());return -1;}
@@ -1271,8 +1315,27 @@ QString Session::finishRecording() {
     if(input_)input_->setSink(nullptr);
     fanout_.takes.clear();
     auto takes=std::move(takes_);takes_.clear();
+    if(midi_input_)midi_input_->setSink(nullptr);
+    midi_fanout_.takes.clear();
+    auto midi_takes=std::move(midi_takes_);midi_takes_.clear();
     QStringList notes;
-    std::vector<std::pair<fl_live::TrackId,QString>> files;
+    std::vector<PendingTake> files;
+    const auto rate=preview_ ? 48000U : config_.sample_rate;
+    for(auto& take:midi_takes) {
+        const auto status=take.take->finish();
+        const auto name=[&]{const auto t=std::find_if(identities_->tracks.begin(),identities_->tracks.end(),[&](const auto& x){return x.id==take.track;});
+                            return t==identities_->tracks.end() ? QString("a removed track") : QString::fromUtf8(t->name);}();
+        if(status.dropped)notes.append(QString("%1 lost %2 MIDI events because they arrived faster than they were collected").arg(name).arg(status.dropped));
+        if(status.notes.empty()){notes.append(QString("No notes were played on %1").arg(name));continue;}
+        RecordedTakeNotes recorded{status.frames,{}};
+        for(const auto& n:status.notes)recorded.notes.push_back({n.start,n.length,n.pitch,n.velocity});
+        RecordingReport report;
+        files.push_back({take.track,QString(),pianoFromTake(recorded,tempo(),rate,report)});
+        if(status.closed_at_end)notes.append(QString("%1 note%2 still held on %3 ended with the take").arg(status.closed_at_end).arg(status.closed_at_end==1 ? "" : "s").arg(name));
+        if(report.beyond_limit||report.cut)notes.append(QString("%1 kept the first 16 bars: %2 notes left out, %3 cut").arg(name).arg(report.beyond_limit).arg(report.cut));
+        if(report.over_polyphony)notes.append(QString("%1 left out %2 notes beyond 16 sounding at once").arg(name).arg(report.over_polyphony));
+        if(report.over_count)notes.append(QString("%1 left out %2 notes beyond 1024").arg(name).arg(report.over_count));
+    }
     for(auto& take:takes) {
         const auto status=take.take->finish();
         const auto file=QString::fromStdString(status.file.string());
@@ -1281,7 +1344,7 @@ QString Session::finishRecording() {
         if(status.overflowed)notes.append(QString("%1 dropped %2 frames when the disk fell behind").arg(QFileInfo(file).fileName()).arg(status.frames_dropped));
         if(status.failed){notes.append(QString::fromStdString(status.error));continue;}
         if(!status.frames_written){std::error_code ignored;std::filesystem::remove(status.file,ignored);continue;}
-        files.emplace_back(take.track,file);
+        files.push_back({take.track,file,std::nullopt});
     }
     if(files.empty() && notes.isEmpty())return "Recording stopped; nothing was captured.";
     const auto placed=placeTakes(std::move(files),EditKind::record_take,true,notes);
