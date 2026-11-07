@@ -1,0 +1,56 @@
+{
+  "verified_at": "2026-11-07T13:21:37.339876+00:00",
+  "base": "main after PR #154 (4df3216)",
+  "issues": [
+    48
+  ],
+  "scope": "Recovery of takes interrupted by a process crash: core recoverTake() and the desktop's journal, interrupted-take listing and Recover takes",
+  "environment": "Kvant, pinned CI image (Qt 6.12, PipeWire 1.6.9, libsndfile 1.2.2), docker --network none, QT_QPA_PLATFORM=offscreen",
+  "gates": {
+    "ci/verify.sh": {
+      "desktop": "27/27",
+      "release": "11/11",
+      "engine-only": "8/8",
+      "pipewire-sanitize": "20/20",
+      "document-io-sanitize": "11/11"
+    },
+    "capture fixtures beside desktop-session (ctest -j3) repeats": {
+      "passed": 10,
+      "total": 10
+    }
+  },
+  "measurements": {
+    "killed take": {
+      "header_declared_data_bytes": 0,
+      "bytes_on_disk": 205600,
+      "recovered_frames": 25700,
+      "bit_identical": true
+    },
+    "desktop crash": {
+      "ticks": 50,
+      "recovered_frames": 24000,
+      "silent": true
+    }
+  },
+  "verified_behaviors": [
+    "A take whose process was SIGKILLed mid-recording recovers bit for bit against independently generated blocks",
+    "The .part file is byte-identical after recovery and an existing destination is never replaced",
+    "A copy cut mid-frame recovers its whole frames and reports the discarded bytes",
+    "Incomplete header, garbage, empty data and 16-bit PCM files are refused with reasons and left unchanged",
+    "After a real desktop crash while recording, opening the project lists the take with its journal and track",
+    "Recover takes adds a selected Recovered take clip in one Undo step; Undo keeps the file; the .part file and journal go only after full read-back",
+    "A take without a journal is recovered to a kept file and not placed; an unrecoverable file stays listed and unchanged"
+  ],
+  "source_sha256": {
+    "include/fl_live/capture.hpp": "ddd6554b50022e759b507f2e66f2ac2ed3961ff138cb54d301178ee0d230581c",
+    "src/capture.cpp": "8abeeb3ce9457dffec79ccc4603ba8d757afaedf1680142893318ddc7d3542c3",
+    "apps/desktop/session.hpp": "50c3fa2066a77f51591368270c60fe3c95c2d793e829a86cab63d6e7096fffb4",
+    "apps/desktop/session.cpp": "f8777fab91796e4bae0fe5fc046a5f484453f6afdf6c06d1d174a553278a29bd",
+    "apps/desktop/Main.qml": "7504de1b4a084c1f081729abfdbb915502f6b46fb2257c36e4eecb377b80eac3",
+    "tests/capture_tests.cpp": "947c5a06092ed1b28c7e8437ef9c3cce281b0cd21c2dfe3109ae34fac103455e",
+    "tests/desktop_tests.cpp": "087eafb296a868c174068f8d167305f2de432c23af2bd49cf55f71aabd3d6366",
+    "tests/save_fault_probe.cpp": "c62623dea53b5fb124f75a9530d8cedaf4c6a27402864f3d1658606a98459a36",
+    "tests/pipewire_capture.py": "0fbcc220a8e904218b4d09b99a40173d095b4d7ca102f2a76b918e31e5d20067"
+  },
+  "limits": "Recovery after process crashes only; power loss can leave unwritten extents zero-filled by the filesystem, which recovery keeps as silence and cannot detect. No device-loss finalization (#46). Offscreen QML and preview audio; the core test supplies non-silent content."
+}
