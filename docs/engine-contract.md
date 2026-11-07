@@ -28,9 +28,9 @@ Audio loops repeat the complete source array with no join crossfade. MIDI loop b
 
 ## Ownership and rendering
 
-The caller owns the immutable plan. The engine holds a reference; the plan must outlive it and must not be edited after validation. Construction allocates runtime state and calculates pitch increments before playback. Render uses preallocated runtime/command/voice storage.
+The caller owns the immutable plan. The engine holds a reference; the plan must outlive it, or its [replacement](plan-replacement.md), and must not be edited after validation. Construction allocates runtime state for 64 tracks and calculates pitch increments before playback. Render uses preallocated runtime/command/voice storage.
 
-All engine operations belong to one rendering owner and occur at block boundaries or inside that owner's processing loop. The engine itself is not a concurrent API. RenderController now adds a single-producer/single-consumer handoff around it; the PipeWire data callback owns processing until backend shutdown completes. UI code must use that handoff and must not access Engine directly. This does not support concurrent plan mutation or graph replacement.
+All engine operations belong to one rendering owner and occur at block boundaries or inside that owner's processing loop. The engine itself is not a concurrent API. RenderController now adds a single-producer/single-consumer handoff around it; the PipeWire data callback owns processing until backend shutdown completes. UI code must use that handoff and must not access Engine directly. Plans are never mutated; a prepared plan [replaces](plan-replacement.md) the active one through the controller, and the old one is destroyed after acknowledgement.
 
 `process()` performs no explicit allocation, locking, file I/O, logging or graph destruction. Tests intercept C++ new/new[] (including aligned allocation) over selected render paths and observe zero allocations. They do not detect every C-library allocator, prove all library internals lock-free or establish callback deadlines. Real-time qualification remains separate.
 

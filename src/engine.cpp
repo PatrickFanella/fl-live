@@ -23,7 +23,7 @@ std::optional<Frame> ceil_mul_div(Frame value, Frame multiplier, Frame divisor) 
     return base + tail;
 }
 
-void validate(const SessionPlan& plan) {
+void validatePlan(const SessionPlan& plan) {
     (void)TempoGrid(plan.sample_rate, plan.bpm_milli);
     if (plan.tracks.size() > Engine::track_capacity) throw std::invalid_argument("at most 64 tracks in engine slice");
     for (const auto& track : plan.tracks) {
@@ -102,10 +102,31 @@ std::optional<Frame> TempoGrid::try_next_bar(Frame at) const noexcept {
     return ceil_mul_div(k, numerator_, denominator_);
 }
 
-Engine::Engine(const SessionPlan& plan) : plan_(plan) {
-    validate(plan);
-    runtime_.resize(plan.tracks.size());
-    automation_cursor_.resize(plan.tracks.size());
+void Engine::validate(const SessionPlan& plan) { validatePlan(plan); }
+void Engine::validateMapping(const SessionPlan& from, const SessionPlan& to, const PlanMapping& mapping) {
+    if (from.sample_rate != to.sample_rate) throw std::invalid_argument("replacement must keep the sample rate");
+    if (mapping.track_from_old.size() != from.tracks.size() || mapping.clip_from_old.size() != from.tracks.size())
+        throw std::invalid_argument("mapping must cover every track of the replaced plan");
+    std::array<bool, track_capacity> used{};
+    for (std::size_t t = 0; t < from.tracks.size(); ++t) {
+        if (mapping.clip_from_old[t].size() != from.tracks[t].clips.size())
+            throw std::invalid_argument("mapping must cover every clip of the replaced plan");
+        const auto target = mapping.track_from_old[t];
+        if (target < 0) continue;
+        if (static_cast<std::size_t>(target) >= to.tracks.size() || used[static_cast<std::size_t>(target)])
+            throw std::invalid_argument("mapped track outside the new plan or shared");
+        used[static_cast<std::size_t>(target)] = true;
+        for (const auto clip : mapping.clip_from_old[t])
+            if (clip >= 0 && static_cast<std::size_t>(clip) >= to.tracks[static_cast<std::size_t>(target)].clips.size())
+                throw std::invalid_argument("mapped clip outside the new track");
+    }
+}
+
+Engine::Engine(const SessionPlan& plan) : plan_(&plan) {
+    validatePlan(plan);
+    runtime_.resize(track_capacity);
+    spare_.resize(track_capacity);
+    automation_cursor_.resize(track_capacity);
     for (std::size_t pitch = 0; pitch < steps_.size(); ++pitch)
         steps_[pitch] = 440.0 * std::exp2((static_cast<double>(pitch) - 69.0) / 12.0) / plan.sample_rate;
 }
@@ -114,15 +135,15 @@ void Engine::stop() noexcept {
     running_ = false;
     count_ = 0;
     head_ = 0;
-    for (auto& state : runtime_) state = Runtime{};
+    for (std::size_t i = 0; i < plan_->tracks.size(); ++i) runtime_[i] = Runtime{};
 }
 void Engine::rewind() noexcept { if (!running_) position_ = 0; }
 
 ScheduleResult Engine::schedule(Command command) noexcept {
     if (command.kind != CommandKind::launch && command.kind != CommandKind::stop_track)
         return ScheduleResult::invalid;
-    if (command.track >= plan_.tracks.size() ||
-        (command.kind == CommandKind::launch && command.clip >= plan_.tracks[command.track].clips.size()))
+    if (command.track >= plan_->tracks.size() ||
+        (command.kind == CommandKind::launch && command.clip >= plan_->tracks[command.track].clips.size()))
         return ScheduleResult::invalid;
     if (command.at < position_) return ScheduleResult::in_past;
     if (count_ == command_capacity) return ScheduleResult::full;
@@ -137,8 +158,8 @@ ScheduleResult Engine::scheduleTogether(std::span<const Command> commands) noexc
     const auto at = commands.front().at;
     for (const auto& command : commands) {
         if (command.at != at || (command.kind != CommandKind::launch && command.kind != CommandKind::stop_track) ||
-            command.track >= plan_.tracks.size() ||
-            (command.kind == CommandKind::launch && command.clip >= plan_.tracks[command.track].clips.size()))
+            command.track >= plan_->tracks.size() ||
+            (command.kind == CommandKind::launch && command.clip >= plan_->tracks[command.track].clips.size()))
             return ScheduleResult::invalid;
     }
     if (at < position_) return ScheduleResult::in_past;
@@ -159,6 +180,52 @@ void Engine::apply(const Command& command) noexcept {
         state.clip = command.clip;
         state.launched = position_;
     }
+}
+
+ReplaceResult Engine::replace(const SessionPlan& next, const PlanMapping& mapping) noexcept {
+    ReplaceResult result;
+    for (auto& state : spare_) state = Runtime{};
+    for (std::size_t old = 0; old < plan_->tracks.size(); ++old) {
+        const auto& state = runtime_[old];
+        if (!state.clip) continue;
+        const auto target = mapping.track_from_old[old];
+        const auto clip = target < 0 ? -1 : mapping.clip_from_old[old][*state.clip];
+        if (clip < 0) { ++result.stopped_tracks; continue; }
+        const auto& before = plan_->tracks[old].clips[*state.clip];
+        const auto& after = next.tracks[static_cast<std::size_t>(target)].clips[static_cast<std::size_t>(clip)];
+        if (before.index() != after.index()) { ++result.stopped_tracks; continue; }
+        auto& moved = spare_[static_cast<std::size_t>(target)];
+        moved = state;
+        moved.clip = static_cast<std::size_t>(clip);
+        if (const auto* midi = std::get_if<MidiClip>(&after)) {
+            const auto local = (position_ - moved.launched) % midi->length;
+            moved.next_note = static_cast<std::size_t>(std::lower_bound(midi->notes.begin(), midi->notes.end(), local,
+                [](const Note& note, Frame at) { return note.start < at; }) - midi->notes.begin());
+            // A release at or past the new release length ends now; this also
+            // keeps a zero-length release from dividing by zero.
+            for (auto& voice : moved.voices)
+                if (voice.active && voice.releasing && voice.released >= midi->instrument.release) voice.active = false;
+        }
+    }
+    std::size_t kept = 0;
+    for (std::size_t n = 0; n < count_; ++n) {
+        auto command = commands_[(head_ + n) % command_capacity];
+        const auto target = mapping.track_from_old[command.track];
+        if (target < 0) continue;
+        if (command.kind == CommandKind::launch) {
+            const auto clip = mapping.clip_from_old[command.track][command.clip];
+            if (clip < 0) continue;
+            command.clip = static_cast<std::size_t>(clip);
+        }
+        command.track = static_cast<std::size_t>(target);
+        commands_[(head_ + kept++) % command_capacity] = command;
+    }
+    result.dropped_commands = count_ - kept;
+    count_ = kept;
+    runtime_.swap(spare_);
+    for (auto& cursor : automation_cursor_) cursor = {0, 0};
+    plan_ = &next;
+    return result;
 }
 
 float Engine::automationValue(std::span<const AutomationPoint> points, Frame at, std::size_t& cursor) noexcept {
@@ -182,7 +249,7 @@ float Engine::heldEnvelope(const Instrument& in, Frame age) noexcept {
 Engine::StereoSample Engine::render_track(std::size_t index) noexcept {
     auto& state = runtime_[index];
     if (!state.clip) return {};
-    const auto& track = plan_.tracks[index];
+    const auto& track = plan_->tracks[index];
     const auto& clip = track.clips[*state.clip];
     const auto age = position_ - state.launched;
     auto& cursor = automation_cursor_[index];
@@ -262,7 +329,7 @@ bool Engine::process(std::span<float> output, std::size_t channels) noexcept {
             --count_;
         }
         StereoSample mix;
-        for (std::size_t track = 0; track < runtime_.size(); ++track) {
+        for (std::size_t track = 0; track < plan_->tracks.size(); ++track) {
             const auto value = render_track(track);
             mix.left += value.left;
             mix.right += value.right;
@@ -275,10 +342,10 @@ bool Engine::process(std::span<float> output, std::size_t channels) noexcept {
 }
 std::array<TrackStatus, Engine::track_capacity> Engine::track_statuses() const noexcept {
     std::array<TrackStatus, track_capacity> result{};
-    for (std::size_t i = 0; i < runtime_.size(); ++i) {
+    for (std::size_t i = 0; i < plan_->tracks.size(); ++i) {
         const auto& state = runtime_[i];
         if (!state.clip) continue;
-        const auto& clip = plan_.tracks[i].clips[*state.clip];
+        const auto& clip = plan_->tracks[i].clips[*state.clip];
         const auto age = position_ - state.launched;
         const bool active = std::visit([&](const auto& value) {
             if constexpr (std::is_same_v<std::decay_t<decltype(value)>, AudioClip>)

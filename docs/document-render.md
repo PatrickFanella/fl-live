@@ -14,7 +14,7 @@ The engine continues to use compact track/clip indices. `launch(ClipId, frame)` 
 
 `trackId(index)` and `clipId(trackIndex, clipIndex)` map feedback from the matching plan back to document IDs. A negative inactive/pending sentinel or invalid index returns no identity. Track order and per-track clip order may change on the next preparation, while the IDs remain stable. Resolve again against the current plan rather than reusing raw indices or interpreting an old snapshot through a new plan.
 
-Preparation does not submit controls, commit a document or replace a live graph. A future UI must stage both the candidate document and its prepared plan before committing them. Old plans/assets remain alive until their render owner has stopped or acknowledged retirement. Metadata deletion alone does not stop a currently playing note. [Scene batches](scene-controls.md) now resolve through this same immutable plan. Live replacement and acknowledged retirement remain separate work.
+Preparation does not submit controls, commit a document or replace a live graph. A future UI must stage both the candidate document and its prepared plan before committing them. Old plans/assets remain alive until their render owner has stopped or acknowledged retirement. Metadata deletion alone does not stop a currently playing note. [Scene batches](scene-controls.md) now resolve through this same immutable plan. `planMapping` maps one prepared plan onto the next by ID for [live replacement with acknowledged retirement](plan-replacement.md); the desktop does not use it yet (#54).
 
 ## Verification boundary
 

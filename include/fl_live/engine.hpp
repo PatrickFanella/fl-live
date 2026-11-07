@@ -81,6 +81,18 @@ struct SessionPlan {
     std::uint32_t bpm_milli = 120000;
     std::vector<Track> tracks;
 };
+// How engine state carries into a replacement plan. Both vectors index the
+// plan being replaced: track_from_old[t] is the new index of old track t, or
+// -1 when it was deleted; clip_from_old[t][c] is the new index of its clip c
+// within that new track, or -1. New tracks may not share an old source.
+struct PlanMapping {
+    std::vector<std::int32_t> track_from_old;
+    std::vector<std::vector<std::int32_t>> clip_from_old;
+};
+struct ReplaceResult {
+    std::size_t dropped_commands = 0; // queued commands whose track or clip was removed
+    std::size_t stopped_tracks = 0;   // playing tracks whose clip was removed or changed kind
+};
 
 enum class CommandKind { launch, stop_track };
 struct Command {
@@ -100,7 +112,8 @@ struct TrackStatus {
 
 // Single-owner engine: transport, scheduling and process are called on one
 // rendering owner, at block boundaries. This is NOT a concurrent UI queue.
-// The validated plan must remain alive and immutable for the engine lifetime.
+// The validated plan must remain alive and immutable until the engine is
+// destroyed or has replaced it.
 class Engine {
 public:
     static constexpr std::size_t command_capacity = 64;
@@ -113,8 +126,24 @@ public:
     static constexpr Frame envelope_frame_limit = 480000; // each segment, 10 s at 48 kHz
     // Declared interpolation, shared by rendering and tests.
     [[nodiscard]] static float automationValue(std::span<const AutomationPoint> points, Frame at, std::size_t& cursor) noexcept;
+    // Throws std::invalid_argument for a plan the engine cannot render.
+    static void validate(const SessionPlan& plan);
+    // Throws std::invalid_argument unless mapping fits from -> to and both
+    // share a sample rate. Call on the preparing thread, never while rendering.
+    static void validateMapping(const SessionPlan& from, const SessionPlan& to, const PlanMapping& mapping);
     explicit Engine(const SessionPlan& plan);
     Engine(SessionPlan&&) = delete;
+    // Render owner, between frames. next and mapping were validated against
+    // the current plan and next outlives its use here. A playing clip that
+    // maps to a clip of the same kind keeps its launch time, so audio
+    // continues at the same position and sounding MIDI voices keep their
+    // pitch and remaining duration under the new instrument; the note cursor
+    // moves to the first note at or after the current clip position. Other
+    // playing tracks stop. Queued commands are remapped in order or dropped.
+    // Automation restarts its cursors. No allocation, locking or destruction;
+    // the previous plan is no longer referenced on return.
+    ReplaceResult replace(const SessionPlan& next, const PlanMapping& mapping) noexcept;
+    [[nodiscard]] const SessionPlan& plan() const noexcept { return *plan_; }
     void start() noexcept;
     void stop() noexcept; // freezes playhead, clears queue and all voices
     void rewind() noexcept; // stopped only; otherwise no operation
@@ -151,8 +180,11 @@ private:
         std::size_t next_note = 0;
         std::array<Voice, voices_per_track> voices{};
     };
-    const SessionPlan& plan_;
+    const SessionPlan* plan_;
+    // Sized for track_capacity at construction so replacement never allocates;
+    // entries past the plan's track count stay idle.
     std::vector<Runtime> runtime_;
+    std::vector<Runtime> spare_;
     std::vector<std::array<std::size_t, 2>> automation_cursor_; // per track: gain, pan
     std::array<double, 128> steps_{};
     std::array<Command, command_capacity> commands_{};
