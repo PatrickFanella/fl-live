@@ -181,6 +181,6 @@ if(FL_LIVE_BUILD_DESKTOP)
         qt_add_resources(desktop-tests "ui" PREFIX "/ui" BASE apps/desktop FILES apps/desktop/Main.qml)
         add_test(NAME desktop-session COMMAND desktop-tests)
         set_tests_properties(desktop-session PROPERTIES ENVIRONMENT
-            "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;FL_LIVE_SAVE_PROBE=$<TARGET_FILE:save-fault-probe>" TIMEOUT 60)
+            "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;FL_LIVE_SAVE_PROBE=$<TARGET_FILE:save-fault-probe>;FL_LIVE_EXAMPLES_DIR=${CMAKE_CURRENT_SOURCE_DIR}/examples" TIMEOUT 60)
     endif()
 endif()

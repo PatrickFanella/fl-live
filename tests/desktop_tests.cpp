@@ -1180,6 +1180,29 @@ private slots:
         QCOMPARE(ui.channels,1);QCOMPARE(ui.bits,24);
         QCOMPARE(ui.samples.size(),static_cast<std::size_t>(exportFrames(300,2)-exportFrames(300,1))+4800); // bar 2, 1 bar, 100 ms
     }
+    void bundledExamplesOpen() {
+        // Every shipped example opens cleanly (no missing audio, no
+        // relocation), launches each scene and exports audible stereo.
+        const QDir examples(qEnvironmentVariable("FL_LIVE_EXAMPLES_DIR"));
+        QVERIFY2(examples.exists(),"FL_LIVE_EXAMPLES_DIR not set");
+        const auto files=examples.entryList({"*.json"},QDir::Files);QVERIFY(files.size()>=2);
+        QTemporaryDir out;
+        for(const auto& name:files) {
+            Session session;QVERIFY2(session.loadProject(examples.filePath(name)),qPrintable(name+": "+session.message()));
+            QCOMPARE(session.message(),QString("Project opened. Launch clips, then press Play."));QVERIFY(!session.dirty());
+            for(const auto& source:session.trackSources())QVERIFY(!source.toString().startsWith("Missing"));
+            session.play();
+            for(const auto& scene:session.sceneIds()) {
+                QVERIFY(session.selectScene(scene.toString()));QVERIFY(session.launchScene(scene.toString(),"immediate"));
+                QTRY_COMPARE(session.sceneState(),QString("Active"));
+            }
+            session.stop();QTRY_VERIFY(session.canEdit());
+            QVERIFY(session.exportWav(out.filePath(name+".wav"),2));QTRY_VERIFY(!session.exporting());
+            const auto frames=readStereo(out.filePath(name+".wav"));
+            QVERIFY2(std::any_of(frames.begin(),frames.end(),[](const auto& f){return f[0]!=0 || f[1]!=0;}),qPrintable(name+" exported silence"));
+            QVERIFY(!session.dirty());
+        }
+    }
     void qmlMixerInput() {
         Session session;
         QQmlApplicationEngine engine;

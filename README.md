@@ -4,6 +4,8 @@ Original source for a Linux-first open-source music workstation, working toward 
 
 The private reference-product research remains in a separate workspace. No captured executable code, factory assets or research binaries are part of this source tree. Project licensing is still undecided; no release has been published. The canonical product repository is [subculture-collective/fl-live](https://git.subcult.tv/subculture-collective/fl-live), initially private.
 
+See [support and limitations](docs/limitations.md) for what is measured and what is not, and [examples](examples/README.md) for two original example projects.
+
 ## Build and test
 
 Requires a C++20 compiler, CMake 3.25 or newer and Ninja. The WAV example additionally requires pkg-config and the initial libsndfile 1.2.2 baseline. Tests for its output use Python 3.11 or newer. Qt is not required by these targets.

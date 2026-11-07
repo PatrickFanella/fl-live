@@ -1,0 +1,187 @@
+{
+    "clips": [
+        {
+            "audio": "pulse",
+            "id": "3"
+        },
+        {
+            "id": "4",
+            "pattern": {
+                "length": 6,
+                "steps": [
+                    {
+                        "enabled": true,
+                        "gate": 90,
+                        "pitch": 60,
+                        "velocity": 70
+                    },
+                    {
+                        "enabled": true,
+                        "gate": 90,
+                        "pitch": 62,
+                        "velocity": 70
+                    },
+                    {
+                        "enabled": true,
+                        "gate": 90,
+                        "pitch": 64,
+                        "velocity": 70
+                    },
+                    {
+                        "enabled": true,
+                        "gate": 90,
+                        "pitch": 67,
+                        "velocity": 70
+                    },
+                    {
+                        "enabled": true,
+                        "gate": 90,
+                        "pitch": 69,
+                        "velocity": 70
+                    },
+                    {
+                        "enabled": true,
+                        "gate": 90,
+                        "pitch": 72,
+                        "velocity": 70
+                    },
+                    {
+                        "enabled": false,
+                        "gate": 75,
+                        "pitch": 60,
+                        "velocity": 70
+                    },
+                    {
+                        "enabled": false,
+                        "gate": 75,
+                        "pitch": 60,
+                        "velocity": 70
+                    },
+                    {
+                        "enabled": false,
+                        "gate": 75,
+                        "pitch": 60,
+                        "velocity": 70
+                    },
+                    {
+                        "enabled": false,
+                        "gate": 75,
+                        "pitch": 60,
+                        "velocity": 70
+                    },
+                    {
+                        "enabled": false,
+                        "gate": 75,
+                        "pitch": 60,
+                        "velocity": 70
+                    },
+                    {
+                        "enabled": false,
+                        "gate": 75,
+                        "pitch": 60,
+                        "velocity": 70
+                    },
+                    {
+                        "enabled": false,
+                        "gate": 75,
+                        "pitch": 60,
+                        "velocity": 70
+                    },
+                    {
+                        "enabled": false,
+                        "gate": 75,
+                        "pitch": 60,
+                        "velocity": 70
+                    },
+                    {
+                        "enabled": false,
+                        "gate": 75,
+                        "pitch": 60,
+                        "velocity": 70
+                    },
+                    {
+                        "enabled": false,
+                        "gate": 75,
+                        "pitch": 60,
+                        "velocity": 70
+                    }
+                ]
+            }
+        }
+    ],
+    "format": "fl-live-project",
+    "required_features": [
+        "general-session-v1"
+    ],
+    "session": {
+        "clips": [
+            {
+                "id": "3",
+                "name": "Low pulse",
+                "track": "1"
+            },
+            {
+                "id": "4",
+                "name": "Six steps",
+                "track": "2"
+            }
+        ],
+        "format": "fl-live-session-metadata",
+        "next_id": "6",
+        "required_features": [
+            "session-identities-v1",
+            "track-mixer-v1"
+        ],
+        "scenes": [
+            {
+                "id": "5",
+                "name": "Scene 1",
+                "slots": [
+                    {
+                        "clip": "3",
+                        "track": "1"
+                    },
+                    {
+                        "clip": "4",
+                        "track": "2"
+                    }
+                ]
+            }
+        ],
+        "tracks": [
+            {
+                "id": "1",
+                "kind": "audio",
+                "mix": {
+                    "mute": true,
+                    "pan": 0,
+                    "solo": false
+                },
+                "name": "Pulse / Audio"
+            },
+            {
+                "id": "2",
+                "kind": "midi",
+                "mix": {
+                    "mute": false,
+                    "pan": 0,
+                    "solo": false
+                },
+                "name": "Pentatonic"
+            }
+        ],
+        "version": 1
+    },
+    "tempo": 96,
+    "tracks": [
+        {
+            "id": "1",
+            "level": 0
+        },
+        {
+            "id": "2",
+            "level": 25
+        }
+    ],
+    "version": 4
+}
