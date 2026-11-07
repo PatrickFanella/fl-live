@@ -1,0 +1,38 @@
+{
+  "verified_at": "2026-11-07T14:25:34.365240+00:00",
+  "base": "feat/recording-placement (PR #159) head",
+  "issues": [
+    50
+  ],
+  "scope": "Audio and MIDI record, edit, save, reopen and play journey through the production QML, with links to the recording receipts",
+  "environment": "Kvant, pinned CI image (Qt 6.12), docker --network none, QT_QPA_PLATFORM=offscreen, synthetic QTest pointer and keyboard input, silent preview audio, previewMidi() standing in for a MIDI device",
+  "journey": [
+    "Save through the project field and Save button",
+    "Click Arm on the audio and MIDI tracks",
+    "Click Record, play two MIDI notes, click Stop: two takes become selected clips",
+    "Piano roll: click note 1, Right moves it a sixteenth (48 to 72 ticks), Up raises it to 61",
+    "Type 25 ms into the audio take's range start (1,200 frames)",
+    "Ctrl+S saves",
+    "A fresh window opens the project through the project field and Open: notes [[72,48,61],[144,48,64]] and range 1,200 frames intact",
+    "Click both clip buttons and Play: both takes active, the moved note sounding"
+  ],
+  "linked_receipts": {
+    "capture pipeline and write failure": "validation/capture-pipeline.json",
+    "live audio input": "validation/pipewire-capture.json",
+    "desktop audio recording and stop": "validation/desktop-recording.json",
+    "MIDI recording": "validation/midi-recording.json",
+    "server and input loss": "validation/recording-loss.json",
+    "interrupted capture and recovery": "validation/take-recovery.json",
+    "overflow, route change, panic": "validation/recording-cleanup.json",
+    "placement": "validation/recording-placement.json"
+  },
+  "gates": {
+    "desktop-session qmlRecordingJourney": "passed"
+  },
+  "source_sha256": {
+    "tests/desktop_tests.cpp": "b2c14661539f8857dd0fc1425b879bf94602f5291141bada13ff4dc26804cf71",
+    "apps/desktop/Main.qml": "c8733d51389cc896d3faeebbffd11335b87a88e3c663370e54caad4711882ece",
+    "apps/desktop/session.cpp": "8c3d162a3aa57fa76aed43ea781faea6834401a655cd51a3c85361490f385004"
+  },
+  "limits": "Synthetic input offscreen, not native Wayland input (#22); preview audio is silent and MIDI comes from previewMidi(), not a physical interface or controller (#19). The live input paths are covered by the private-graph receipts linked above."
+}
