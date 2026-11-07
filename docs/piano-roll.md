@@ -80,4 +80,19 @@ For #38:
 
 The [length and loop receipt](../validation/piano-roll-length.json) records the run.
 
-For #39, `pianoRollHistoryAndPersistence` applies every operation in turn: conversion, add, a two-note move, resize, velocity, delete, length, loop off and an add at pitch 127 and velocity 1. After each one it saves and reopens in a fresh session, checking notes, IDs, length, loop flag and mode. It then undoes back to the start and redoes forward, matching the recorded state, including the Undo label, at every step. Six refused files change nothing: the open document, its redo branch, path and saved state stay as they were. The files are an out-of-range pitch, an ID above the counter, an unknown note field, `"loop": true`, notes without `piano-roll-v1`, and an unknown `piano-roll-v2` feature. The [history receipt](../validation/piano-roll-history.json) records the run. The [receipt](../validation/piano-roll-notes.json) records the run.
+For #39, `pianoRollHistoryAndPersistence` applies every operation in turn: conversion, add, a two-note move, resize, velocity, delete, length, loop off and an add at pitch 127 and velocity 1. After each one it saves and reopens in a fresh session, checking notes, IDs, length, loop flag and mode. It then undoes back to the start and redoes forward, matching the recorded state, including the Undo label, at every step. Six refused files change nothing: the open document, its redo branch, path and saved state stay as they were. The files are an out-of-range pitch, an ID above the counter, an unknown note field, `"loop": true`, notes without `piano-roll-v1`, and an unknown `piano-roll-v2` feature. The [history receipt](../validation/piano-roll-history.json) records the run.
+
+For #42, `qmlPianoRollPlaybackJourney` builds a clip in the QML. It deletes the converted notes with Shift-click and Delete, picks the square wave, types three notes (one at beat 2, two overlapping from beat 3 on one pitch), drags the first one a sixteenth later and exports.
+
+- Every onset, end and amplitude in the float export matches the edited tick, velocity and voice sum: frames are ticks × 250 at 120 BPM, and the amplitude is 0.25 × velocity × 0.1.
+- Zero-crossing counts match 440 Hz and 220 Hz within two crossings.
+- Undo moves the onset back to frame 24,000 and Redo restores it. After Save and reopening in a fresh window, the export is sample-identical.
+- Each termination path leaves no voice sounding, with `RenderStatus::active_voices` read from render acknowledgements on the preview clock:
+  - Silence now;
+  - deleting every note while playing (the sounding notes finish, then two and a half seconds stay silent);
+  - Undo, which plays them again;
+  - shortening the clip while playing;
+  - Loop off, after which the clip ends and the track stops;
+  - Stop.
+
+The [playback receipt](../validation/piano-roll-playback.json) records the runs. The [receipt](../validation/piano-roll-notes.json) records the run.
