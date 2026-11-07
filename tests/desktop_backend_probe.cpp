@@ -8,6 +8,9 @@
 #include <functional>
 #include <QElapsedTimer>
 #include <QTemporaryDir>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
 #include <QDir>
 #include <QFileInfo>
 #include <string>
@@ -20,11 +23,39 @@ static ProjectSettings readAuthoredSettings(const QString& path) { const auto p 
 // output in the parent fixture. This is not native input or hardware QA.
 int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
-    if (argc != 2 && argc != 3 && !(argc == 4 && std::string_view(argv[2]) == "--record")) return 2;
+    if (argc != 2 && argc != 3 && !(argc == 4 && (std::string_view(argv[2]) == "--record" || std::string_view(argv[2]) == "--record-loss"))) return 2;
     try {
         fl_live::PipeWireConfig config;
         config.remote = argv[1]; config.node_group = "pipewire.test";
         Session session(config);
+        if (argc == 4 && std::string_view(argv[2]) == "--record-loss") {
+            // Loss while recording (#46): records until the fixture kills the
+            // server or destroys the input node, reports, and on "retry"
+            // reconnects so takes held during the outage become clips.
+            const auto track = session.trackIds()[0].toString();
+            const QDir project(argv[3]), takes(project.filePath("recordings"));
+            if (!session.saveProject(project.filePath("recorded.json")) || !session.setArmed(track, true)) return 1;
+            const auto clips = [&] { return static_cast<int>(session.trackClips()[0].toList().size()); };
+            const auto report = [&](QJsonObject extra) {
+                extra["clips"] = clips(); extra["audio"] = session.audioAvailable(); extra["recording"] = session.recording();
+                extra["message"] = session.message(); extra["armed"] = session.armed()[0].toBool();
+                QJsonArray files; for (const auto& f : takes.entryList({"*.wav"}, QDir::Files)) files.append(takes.filePath(f));
+                extra["files"] = files; extra["selected_last"] = session.selectedClips()[0] == session.trackClips()[0].toList().last().toMap()["id"];
+                std::cout << QJsonDocument(extra).toJson(QJsonDocument::Compact).toStdString() << std::endl;
+            };
+            report({{"ready", true}});
+            std::string line;
+            while (std::getline(std::cin, line) && line != "record") {}
+            if (!session.record()) { std::cerr << session.message().toStdString() << '\n'; return 1; }
+            QElapsedTimer deadline; deadline.start();
+            while (session.recording() && deadline.elapsed() < 10000) { session.tick(); QTest::qWait(5); }
+            report({{"lost", !session.recording()}});
+            if (session.audioAvailable()) return 0;
+            while (std::getline(std::cin, line) && line != "retry") {}
+            report({{"reconnected", session.reconnectAudio()}});
+            while (std::getline(std::cin, line) && line != "done") {} // the fixture inspects the graph meanwhile
+            return 0;
+        }
         if (argc == 4) {
             // Desktop recording through the live input stream (#46/#47):
             // arming track 1 of a saved project opens fl-live-input, which

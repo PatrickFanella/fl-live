@@ -77,6 +77,12 @@ void Session::audioFailed(const QString& reason) {
     const auto where = QString("PipeWire remote %1%2").arg(QString::fromStdString(config_.remote),
         config_.target.empty() ? QString() : QString(", target %1").arg(QString::fromStdString(config_.target)));
     message_ = reason + " (" + where + "). Audio is stopped; your project and history are kept. Save your project or choose Retry audio after restoring the server/output.";
+    if (recording() || input_) {
+        // The input shares the server: finish what was captured and drop the stream.
+        const auto report = recording() ? finishRecording() : QString();
+        input_.reset();
+        if (!report.isEmpty()) message_ += " " + report;
+    }
     emit changed();
 }
 bool Session::reconnectAudio() {
@@ -93,6 +99,16 @@ bool Session::reconnectAudio() {
         track_serials_.fill(0);
         status_ = prepared_->controller.status();
         message_ = "Audio reconnected and stopped. Launch clips, then press Play.";
+        if (!unplaced_.empty()) {
+            auto files = std::move(unplaced_); unplaced_.clear();
+            QStringList notes;
+            const auto placed = placeTakes(std::move(files), EditKind::record_take, true, notes);
+            message_ += " " + takeReport(placed, "Added", notes);
+        }
+        if (!armed_.empty()) {
+            try { openInput(); }
+            catch (const std::exception& error) { armed_.clear(); message_ += QString(" %1; arm a track again to retry.").arg(QString::fromUtf8(error.what())); }
+        }
         emit changed();
         return true;
     } catch (const std::exception& error) {
@@ -679,6 +695,10 @@ bool Session::loadProject(const QString& path) {
         if (!report.relocated.isEmpty()) notes.append("Found moved audio inside the project folder: " + report.relocated.join("; ") + ". Save to keep the new locations.");
         if (!missing.isEmpty()) notes.append("Missing audio plays as silence; relink or import it: " + missing.join("; "));
         message_ = notes.isEmpty() ? QStringLiteral("Project opened. Launch clips, then press Play.") : "Project opened. " + notes.join(" ");
+        if(!unplaced_.empty()){
+            message_+=QString(" %1 recorded take%2 from the previous project were not added as clips; the files stay in its recordings folder.").arg(unplaced_.size()).arg(unplaced_.size()==1 ? "" : "s");
+            unplaced_.clear();
+        }
         scanInterrupted();
         if(!interrupted_.isEmpty())
             message_ += QString(" %1 interrupted take%2 found in recordings; choose Recover takes to add %3 as clips.")
@@ -716,8 +736,8 @@ void Session::send(fl_live::ControlKind kind, std::size_t track, std::size_t cli
 void Session::play() { send(fl_live::ControlKind::start); }
 void Session::stop() {
     if (!recording()) { send(fl_live::ControlKind::stop); return; }
-    finishRecording();
-    const auto report = message_; // the take report outranks the acknowledgement notice
+    const auto report = finishRecording(); // the take report outranks the acknowledgement notice
+    message_ = report;
     send(fl_live::ControlKind::stop);
     if (message_ == "Awaiting render acknowledgement") { message_ = report; ack_report_ = report; emit changed(); }
 }
@@ -752,6 +772,15 @@ void Session::tick() {
     }
     if (prepared_->backend && prepared_->backend->status().error) {
         audioFailed("Audio backend disconnected");
+    } else if (input_ && input_->status().error) {
+        // Output still works: finish the takes as clips and close the input.
+        const auto report = recording() ? finishRecording() : QString();
+        input_.reset();
+        message_ = QString("The recording input was lost (PipeWire remote %1). %2 Arm a track again to reopen it.")
+            .arg(QString::fromStdString(config_.remote), report.isEmpty() ? QString("Nothing was recording.") : report);
+        armed_.clear();
+        emit changed();
+        return;
     }
     const auto before = status_;
     status_ = prepared_->controller.status();
@@ -1126,11 +1155,8 @@ bool Session::recoverTakes() {
     if(!changeable())return false;
     if(recording()||running()){message_="Stop playback before recovering takes";emit changed();return false;}
     if(interrupted_.isEmpty()){message_="No interrupted takes to recover";emit changed();return false;}
-    auto snapshot=*identities_;snapshot.next_id=next_identity_;
-    fl_live::SessionDocument candidate(std::move(snapshot));
-    auto next=*content_;
     QStringList notes;
-    std::vector<std::pair<fl_live::TrackId,fl_live::ClipId>> added;
+    std::vector<std::pair<fl_live::TrackId,QString>> files;
     for(const auto& value:std::as_const(interrupted_)) {
         const auto take=value.toMap();
         const auto part=take["file"].toString();
@@ -1142,34 +1168,17 @@ bool Session::recoverTakes() {
         if(!result.recovered){notes.append(QString::fromStdString(result.message));continue;}
         // The recovered file was read back in full; the interrupted copy can go.
         QFile::remove(part);QFile::remove(stem+".json");
-        const auto kept=QString("the recovered take is kept as %1").arg(destination);
-        bool known=false;std::uint64_t track=0;
-        if(take["journal"].toBool())track=take["track"].toString().toULongLong(&known);
-        const auto& tracks=candidate.snapshot().tracks;
-        const auto owner=std::find_if(tracks.begin(),tracks.end(),[&](const auto& t){return known && t.id.value==track;});
-        if(owner==tracks.end()){notes.append(QString("%1 has no journal naming an existing track; %2").arg(QFileInfo(part).fileName(),kept));continue;}
-        if(owner->kind!=fl_live::TrackKind::audio){notes.append(QString("%1 belongs to a MIDI track; %2").arg(QFileInfo(part).fileName(),kept));continue;}
-        const auto count=static_cast<std::size_t>(std::count_if(candidate.snapshot().clips.begin(),candidate.snapshot().clips.end(),[&](const auto& c){return c.track==owner->id;}));
-        if(count>=desktop_clips_per_track){notes.append(QString("The track already has 8 clips; %1").arg(kept));continue;}
-        auto decoded=fl_live::importWav(destination.toStdString());
-        if(!decoded){notes.append(QString("%1 could not be read: %2; %3").arg(QFileInfo(destination).fileName(),QString::fromStdString(decoded.message),kept));continue;}
-        const auto id=owner->id;
-        const auto clip=candidate.createClip(id,"Recovered take");
-        ClipContent content{clip};
-        content.audio=AudioSource::wav;content.asset=destination;content.media=std::make_shared<const fl_live::AudioClip>(std::move(decoded.clip));
-        next.clips.push_back(std::move(content));
-        added.emplace_back(id,clip);
         if(result.discarded_bytes)notes.append(QString("%1 ended mid-frame; %2 trailing bytes were left out").arg(QFileInfo(part).fileName()).arg(result.discarded_bytes));
+        bool known=false;
+        const auto track=take["journal"].toBool() ? take["track"].toString().toULongLong(&known) : 0;
+        if(!known){notes.append(QString("%1 has no journal naming its track; the recovered take is kept as %2").arg(QFileInfo(part).fileName(),destination));continue;}
+        files.emplace_back(fl_live::TrackId{track},destination);
     }
     scanInterrupted();
-    const bool committed=!added.empty() && commitStructure(std::move(next),candidate.snapshot(),EditKind::recover_takes,static_cast<int>(added.size()));
-    if(committed){
-        for(const auto& [track,clip]:added)selected_clip_[track.value]=clip.value;
-        notes.prepend(QString("Recovered %1 take%2 as new clips").arg(added.size()).arg(added.size()==1 ? "" : "s"));
-    }
-    message_=notes.join(". ")+".";
+    const auto placed=placeTakes(std::move(files),EditKind::recover_takes,false,notes);
+    message_=takeReport(placed,"Recovered",notes);
     emit changed();
-    return committed;
+    return placed>0;
 }
 bool Session::record() {
     try {
@@ -1220,16 +1229,50 @@ bool Session::record() {
         emit changed();return false;
     }
 }
-void Session::finishRecording() {
+// Adds finished take files to their tracks as selected clips in one Undo
+// step. A take that cannot be placed keeps its file and is reported. When the
+// edit cannot be committed because audio is stopped, the takes wait in
+// unplaced_ until Retry audio succeeds.
+int Session::placeTakes(std::vector<std::pair<fl_live::TrackId,QString>> files,EditKind kind,bool numbered,QStringList& notes) {
+    auto snapshot=*identities_;snapshot.next_id=next_identity_;
+    fl_live::SessionDocument candidate(std::move(snapshot));
+    auto next=*content_;
+    std::vector<std::pair<fl_live::TrackId,fl_live::ClipId>> added;
+    std::vector<std::pair<fl_live::TrackId,QString>> placed;
+    for(const auto& [id,file]:files) {
+        const auto kept=QString("the take is kept as %1").arg(file);
+        const auto& tracks=candidate.snapshot().tracks;
+        const auto owner=std::find_if(tracks.begin(),tracks.end(),[&](const auto& t){return t.id==id;});
+        if(owner==tracks.end()){notes.append(QString("The take's track no longer exists; %1").arg(kept));continue;}
+        if(owner->kind!=fl_live::TrackKind::audio){notes.append(QString("The take belongs to a MIDI track; %1").arg(kept));continue;}
+        const auto count=static_cast<std::size_t>(std::count_if(candidate.snapshot().clips.begin(),candidate.snapshot().clips.end(),[&](const auto& c){return c.track==id;}));
+        if(count>=desktop_clips_per_track){notes.append(QString("The track already has 8 clips; %1").arg(kept));continue;}
+        auto decoded=fl_live::importWav(file.toStdString());
+        if(!decoded){notes.append(QString("The take %1 could not be read back: %2").arg(file,QString::fromStdString(decoded.message)));continue;}
+        const auto clip=candidate.createClip(id,numbered ? "Take "+std::to_string(count+1) : std::string("Recovered take"));
+        ClipContent value{clip};
+        value.audio=AudioSource::wav;value.asset=file;value.media=std::make_shared<const fl_live::AudioClip>(std::move(decoded.clip));
+        next.clips.push_back(std::move(value));
+        added.emplace_back(id,clip);placed.emplace_back(id,file);
+    }
+    if(added.empty())return 0;
+    if(failed_){unplaced_.insert(unplaced_.end(),placed.begin(),placed.end());return -1;}
+    if(!commitStructure(std::move(next),candidate.snapshot(),kind,static_cast<int>(added.size())))return -1;
+    for(const auto& [track,clip]:added)selected_clip_[track.value]=clip.value;
+    return static_cast<int>(added.size());
+}
+QString Session::takeReport(int placed,const QString& verb,QStringList notes) const {
+    if(placed>0)notes.prepend(QString("%1 %2 take%3 as new clips").arg(verb).arg(placed).arg(placed==1 ? "" : "s"));
+    if(!unplaced_.empty())notes.append(QString("%1 take%2 will be added as clips after Retry audio").arg(unplaced_.size()).arg(unplaced_.size()==1 ? "" : "s"));
+    return notes.join(". ")+(notes.isEmpty() ? "" : ".");
+}
+QString Session::finishRecording() {
     // Detach first: after this the data thread no longer touches any take.
     if(input_)input_->setSink(nullptr);
     fanout_.takes.clear();
     auto takes=std::move(takes_);takes_.clear();
     QStringList notes;
-    auto snapshot=*identities_;snapshot.next_id=next_identity_;
-    fl_live::SessionDocument candidate(std::move(snapshot));
-    auto next=*content_;
-    std::vector<std::pair<fl_live::TrackId,fl_live::ClipId>> added;
+    std::vector<std::pair<fl_live::TrackId,QString>> files;
     for(auto& take:takes) {
         const auto status=take.take->finish();
         const auto file=QString::fromStdString(status.file.string());
@@ -1238,25 +1281,11 @@ void Session::finishRecording() {
         if(status.overflowed)notes.append(QString("%1 dropped %2 frames when the disk fell behind").arg(QFileInfo(file).fileName()).arg(status.frames_dropped));
         if(status.failed){notes.append(QString::fromStdString(status.error));continue;}
         if(!status.frames_written){std::error_code ignored;std::filesystem::remove(status.file,ignored);continue;}
-        // An Undo during the take may have removed its track; the file stays.
-        if(std::none_of(candidate.snapshot().tracks.begin(),candidate.snapshot().tracks.end(),[&](const auto& t){return t.id==take.track;}))
-            {notes.append(QString("The take's track no longer exists; the take is kept as %1").arg(file));continue;}
-        const auto count=static_cast<std::size_t>(std::count_if(candidate.snapshot().clips.begin(),candidate.snapshot().clips.end(),[&](const auto& c){return c.track==take.track;}));
-        if(count>=desktop_clips_per_track){notes.append(QString("The track already has 8 clips; the take is kept as %1").arg(file));continue;}
-        auto decoded=fl_live::importWav(status.file);
-        if(!decoded){notes.append(QString("The take %1 could not be read back: %2").arg(file,QString::fromStdString(decoded.message)));continue;}
-        const auto clip=candidate.createClip(take.track,"Take "+std::to_string(count+1));
-        ClipContent value{clip};
-        value.audio=AudioSource::wav;value.asset=file;value.media=std::make_shared<const fl_live::AudioClip>(std::move(decoded.clip));
-        next.clips.push_back(std::move(value));
-        added.emplace_back(take.track,clip);
+        files.emplace_back(take.track,file);
     }
-    if(!added.empty() && commitStructure(std::move(next),candidate.snapshot(),EditKind::record_take,static_cast<int>(added.size()))) {
-        for(const auto& [track,clip]:added)selected_clip_[track.value]=clip.value;
-        notes.prepend(QString("Recorded %1 take%2 as new clips").arg(added.size()).arg(added.size()==1 ? "" : "s"));
-    } else if(added.empty() && notes.isEmpty()) notes.append("Recording stopped; nothing was captured");
-    message_=notes.join(". ")+".";
-    emit changed();
+    if(files.empty() && notes.isEmpty())return "Recording stopped; nothing was captured.";
+    const auto placed=placeTakes(std::move(files),EditKind::record_take,true,notes);
+    return takeReport(placed,"Recorded",notes);
 }
 bool Session::deleteTrack(const QString& id) {
     if(!changeable())return false;
@@ -1607,6 +1636,10 @@ bool Session::newProject() {
         history_[0] = {content_, identities_, EditKind::none, -1, selected_scene_};
         history_cursor_ = 0; history_size_ = 1;
         message_ = "New project. Launch clips, then press Play.";
+        if (!unplaced_.empty()) {
+            message_ += QString(" %1 recorded take%2 from the previous project were not added as clips; the files stay in its recordings folder.").arg(unplaced_.size()).arg(unplaced_.size()==1 ? "" : "s");
+            unplaced_.clear();
+        }
         emit projectPathChanged();
         emit changed();
         return true;
