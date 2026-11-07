@@ -4,6 +4,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QFileInfo>
+#include <fcntl.h>
+#include <unistd.h>
 #include <charconv>
 #include <stdexcept>
 
@@ -112,8 +115,24 @@ void writeDocumentMetadata(const QString& path, const DocumentSnapshot& state) {
     const auto bytes = encodeDocumentMetadata(state);
     QSaveFile file(path);
     file.setDirectWriteFallback(false);
-    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit())
+    if (!file.open(QIODevice::WriteOnly) || !commitDurably(file, bytes))
         throw std::runtime_error("Cannot save metadata atomically; previous file was preserved");
+}
+bool commitDurably(QSaveFile& file, const QByteArray& bytes) {
+    if (file.write(bytes) != bytes.size() || !file.flush() || ::fdatasync(file.handle()) != 0) {
+        file.cancelWriting();
+        file.commit(); // discards the temporary; the destination is untouched
+        return false;
+    }
+    const auto directory = QFileInfo(file.fileName()).absolutePath().toLocal8Bit();
+    if (!file.commit()) return false;
+    // Make the rename itself durable. A failure here leaves the new, complete
+    // file in place but is still reported so the caller does not mark it saved.
+    const int fd = ::open(directory.constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd < 0) return false;
+    const bool synced = ::fsync(fd) == 0;
+    ::close(fd);
+    return synced;
 }
 void loadDocumentMetadata(const QString& path, SessionDocument& document) {
     auto candidate = readDocumentMetadata(path);

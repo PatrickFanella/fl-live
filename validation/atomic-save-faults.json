@@ -1,0 +1,66 @@
+{
+  "verified_at": "2026-11-07T07:16:13.072592+00:00",
+  "base": "673ee1e73aa2416cb934dd2933ab3f6d9dbfa120",
+  "issues": [
+    61
+  ],
+  "scope": "Durable project/metadata saves and fault-injected or interrupted save qualification",
+  "environment": "Kvant, pinned CI image (Qt 6.12.0, glibc via archlinux 2026-10-20 snapshot), overlay filesystem in docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 16,
+      "total": 16
+    },
+    "release": {
+      "passed": 6,
+      "total": 6
+    },
+    "engine-only": {
+      "passed": 5,
+      "total": 5
+    },
+    "pipewire-sanitize": {
+      "passed": 11,
+      "total": 12,
+      "note": "pipewire-private-graph failed on the known dropped-cycle capture flake handled by PR #111; unrelated to saves"
+    },
+    "document-io-sanitize": {
+      "passed": 7,
+      "total": 7
+    }
+  },
+  "finding": "QSaveFile::commit() does not call fsync/fdatasync (the injected sync fault never fired before the fix). Saves now flush, fdatasync the temporary, publish, then fsync the directory.",
+  "observation": {
+    "passed": true,
+    "scope": "LD_PRELOAD write/sync/rename faults and SIGKILL during saves; no power loss",
+    "injected_faults": [
+      "write",
+      "sync",
+      "rename"
+    ],
+    "kills": 40,
+    "destination_complete": {
+      "a": 9,
+      "b": 31
+    },
+    "max_stray_temporaries": 0,
+    "reopened_after_kills": true,
+    "project_bytes": 129413
+  },
+  "verified_behaviors": [
+    "write (ENOSPC after 512 bytes), sync (EIO) and publish (rename/renameat/renameat2/linkat, EIO) faults make Session::saveProject fail for both overwrite and Save As",
+    "After each fault: destination bytes, an unrelated neighbor file and the directory listing are unchanged; tempo/pitch edits, project path, unsaved state and Undo/Redo are kept; the destination still opens",
+    "Undo, Redo and a subsequent save work after the faults",
+    "40 SIGKILLs at random points during alternating saves of two 129 KB projects always leave a complete copy of one of them; no stray temporaries were observed; the project reopens through Session::loadProject"
+  ],
+  "source_sha256": {
+    "include/fl_live/document_io.hpp": "d931f2effeb6af01e727f10c3138cb036efab12a7d1f5c793977672da5f6b832",
+    "src/document_io.cpp": "83dd437a5a5f7de5d3901247196180b024adc289fc2a0c5235b9ea766120b060",
+    "apps/desktop/authored_project.cpp": "97d06b498f7e2e1b2340cb0d0f7bef14f7deca4b9fc38b382580f5c75a0f61b6",
+    "apps/desktop/project.cpp": "e2816560192a07d59bc9b912e02ae49bc8f3748862fe2d76a12ab0bbf2b8a89a",
+    "tests/fault_inject.cpp": "11aa4f4cf9e959c92273b3843512113742f70a5a4dbaac043b434208ea7bf7fb",
+    "tests/save_fault_probe.cpp": "fa82935e8253fb2ad14524078f4f95c9063503d7a8d44a7530b0917c47025136",
+    "tests/atomic_save_faults.py": "347c611c5d8a2a480dc64096dd370ec40cc7ed32f783c43d1d6b36d0531cf0cb"
+  },
+  "limits": "No power-loss, real full-disk, network-filesystem or concurrent-writer testing. LD_PRELOAD interposition covers Qt's libc calls on this platform only."
+}
