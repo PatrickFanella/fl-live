@@ -59,3 +59,18 @@ Copy uses the same 256-scene limit, stopped preparation, history and ID high-wat
 **Move up** and **Move down** swap a scene with its neighbor in the stored scene list. They preserve scene IDs, names, slot choices and clip/source IDs. The moved scene stays selected, and Undo/Redo restore order and selection context. End-of-list moves and directions other than -1/+1 are refused without an edit. Save/Open preserve the order; Open selects its first scene as before. These operations use the existing multiple-scene feature declarations, with no format or engine change.
 
 Desktop tests copy a MIDI-only scene, change only the copy's slot choices, reorder and reopen it, then launch both arrangements and check the intended active clips. They also cover history, limits and ID preservation through a redo fork and Save/Open. Actual QML input clicks Copy arrangement, reorders by pointer and keyboard, and exercises Undo, deletion and persistence. The private PipeWire workflow copies and reorders its MIDI-only scene before independently captured A4 playback, and the server-loss fixture retains an arrangement copy. See [the copy/order receipt](../validation/scene-copy-order.json). These are offscreen/private-software checks; native input and physical output remain unqualified.
+
+## General sessions
+
+The scene policy, timing and feedback above apply unchanged to general sessions with any number of tracks and scenes. `general-session-regressions` checks sample timing with four tracks at 137 BPM, where bar boundaries are not integral, at blocks 1, 64, 128, 257 and 512. It also covers an Immediate sparse replacement that releases MIDI voices, a scene stop, and controller saturation with panic.
+
+`generalSceneFeedback` (`desktop-session`) follows the feedback on four tracks and three scenes:
+
+- A One bar launch reads "Launch requested" until the render owner acknowledges it, then "Stopped · actions queued" with every track "Launch queued", then "Active" at the boundary.
+- An Immediate replacement keeps two tracks and stops the other two in one block.
+- With the control queue full, the request is refused with "Control queue full" and no scene reads "requested".
+- With the engine's 64 action slots already taken by queued launches, a four-track scene is rejected as a whole. The request clears, the message says it was rejected, and no track shows a partial or false active state.
+- After panic, the same scene launches.
+- Unknown scenes and policies are refused without any requested state.
+
+The [receipt](../validation/general-scene-feedback.json) records the run.

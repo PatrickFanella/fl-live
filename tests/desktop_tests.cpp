@@ -1904,6 +1904,47 @@ private slots:
         QVERIFY(reached.size()>=25);
         QVERIFY(ui.window->grabWindow().save("desktop-keyboard-journey.png"));
     }
+    // #28/#29 on a general session: four tracks and three scenes. Requested,
+    // queued and active feedback follows render acknowledgements; refused and
+    // engine-rejected scene requests leave no false requested or active state.
+    void generalSceneFeedback() {
+        Session session;session.setTempo(137);QVERIFY(session.addTrack("audio"));QVERIFY(session.addTrack("midi"));
+        const auto tracks=session.trackIds();const auto clips=session.clipIds();const auto full=session.sceneId();
+        QVERIFY(session.setSceneIncluded(tracks[2].toString(),true));QVERIFY(session.setSceneIncluded(tracks[3].toString(),true));
+        QVERIFY(session.createScene());const auto pair=session.sceneId();
+        QVERIFY(session.setSceneIncluded(tracks[0].toString(),true));QVERIFY(session.setSceneIncluded(tracks[3].toString(),true));
+        QVERIFY(session.createScene());const auto none=session.sceneId(); // no slots: launching stops every track
+        const auto launchedAll=QVariantList{clips[0],clips[1],clips[2],clips[3]};
+        // One bar while playing: requested until acknowledged, queued until the boundary, then active.
+        QVERIFY(session.selectScene(full));session.play();for(int i=0;i<5;++i)session.tick();QVERIFY(session.running());
+        QVERIFY(session.launchScene(full,"one-bar"));
+        QCOMPARE(session.sceneState(),QString("Launch requested"));for(const auto& s:session.clipStates())QCOMPARE(s.toString(),QString("Launch requested"));
+        session.tick();QCOMPARE(session.sceneState(),QString("Stopped · actions queued"));
+        for(const auto& s:session.clipStates())QCOMPARE(s.toString(),QString("Launch queued"));
+        QTRY_COMPARE_WITH_TIMEOUT(session.sceneState(),QString("Active"),5000);QCOMPARE(session.activeClipIds(),launchedAll);
+        // Immediate replacement: the pair keeps tracks 1 and 4 and stops 2 and 3 in the same block.
+        QVERIFY(session.selectScene(pair));QVERIFY(session.launchScene(pair,"immediate"));session.tick();
+        QCOMPARE(session.sceneState(),QString("Active"));QCOMPARE(session.activeClipIds(),(QVariantList{clips[0],QString{},QString{},clips[3]}));
+        // A full control queue refuses the scene request; nothing claims it was requested.
+        session.panic();session.tick();QVERIFY(!session.running());
+        int queued=0;while(session.launchClip(clips[0].toString()))++queued;QCOMPARE(queued,int(fl_live::Engine::command_capacity));
+        QVERIFY(!session.launchScene(none,"immediate"));QVERIFY(session.message().contains("Control queue full"));
+        QVERIFY(session.selectScene(none));QVERIFY(!session.sceneState().contains("requested"));
+        // The 64 queued launches fill the engine's action queue; a scene needing four more is rejected as a whole.
+        session.tick();QCOMPARE(session.clipStates()[0].toString(),QString("Launch queued"));
+        QVERIFY(session.selectScene(full));QVERIFY(session.launchScene(full,"immediate"));QCOMPARE(session.sceneState(),QString("Launch requested"));
+        session.tick();
+        QVERIFY(session.message().contains("rejected"));
+        QVERIFY(!session.sceneState().contains("requested"));QVERIFY(!session.sceneState().startsWith("Active"));
+        for(int t=1;t<4;++t)QCOMPARE(session.clipStates()[t].toString(),QString("Stopped")); // no partial admission, no false indicator
+        QCOMPARE(session.activeClipIds(),(QVariantList{QString{},QString{},QString{},QString{}}));
+        // Recovery: panic clears the engine queue and the same scene launches.
+        session.panic();session.tick();QVERIFY(session.launchScene(full,"immediate"));session.play();session.tick();session.tick();
+        QCOMPARE(session.sceneState(),QString("Active"));QCOMPARE(session.activeClipIds(),launchedAll);
+        // Unknown scenes and policies are refused without any requested state.
+        QVERIFY(!session.launchScene("999","immediate"));QVERIFY(!session.launchScene(full,"later"));QCOMPARE(session.sceneState(),QString("Active"));
+        session.stop();session.tick();
+    }
     void qmlRelinkMissingAudio() {
         QTemporaryDir root;const auto audio=root.filePath("a.wav"),project=root.filePath("p.json");
         std::vector<qint16> tone(4800);for(std::size_t i=0;i<tone.size();++i)tone[i]=static_cast<qint16>(i%300*50);
