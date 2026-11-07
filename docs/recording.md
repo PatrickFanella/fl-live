@@ -1,6 +1,6 @@
 # Recording
 
-Recording (epic #11) is being built from the inside out. This page covers what exists now: the capture pipeline that takes audio from the audio callback to a WAV file (#44), the PipeWire audio and MIDI input streams, recording in the desktop: arming, audio takes and MIDI takes as clips (parts of #43, #44 and #47), finishing takes when the server or input is lost (#46), and recovery of audio takes interrupted by a crash (#48). Not built yet: input monitoring, choosing an input inside the app, crash recovery for MIDI takes, and timestamps and latency compensation (#45).
+Recording (epic #11) is being built from the inside out. This page covers what exists now: the capture pipeline that takes audio from the audio callback to a WAV file (#44), the PipeWire audio and MIDI input streams, recording in the desktop: arming, audio takes and MIDI takes as clips (parts of #43, #44 and #47), timestamps and placement on the transport's bar lines (#45), finishing takes when the server or input is lost (#46), and recovery of audio takes interrupted by a crash (#48). Not built yet: input monitoring, choosing an input inside the app, crash recovery for MIDI takes, and latency compensation for physical devices.
 
 ## Capture pipeline
 
@@ -22,11 +22,23 @@ Recording (epic #11) is being built from the inside out. This page covers what e
 
 - **Arm.** Every track has an **Arm** box. Arming the first audio track opens the audio input stream, and arming the first MIDI track opens the MIDI input, so recording starts without setting up a stream. Disarming the last track of a kind closes its stream.
 - **Input.** `fl-live --remote NAME --input NODE` links the audio input to `NODE`, and `--midi-input NODE` links the MIDI input. Without them the inputs wait for an external link, as the output does without `--target`.
-- **Record.** **Record** needs at least one armed track, and a saved project when an audio track is armed. It creates one take per armed track in the project's `recordings/` folder, named `TRACK take N.wav`, and starts the transport if it is stopped. N never reuses an existing file or `.part` file. While recording, arming, deleting a track, a second Record, opening a project and starting a new project are refused.
+- **Record.** **Record** needs at least one armed track, and a saved project when an audio track is armed. It creates one take per armed track in the project's `recordings/` folder, named `TRACK take N.wav`. From a stopped transport it returns to the start and plays, so takes begin on bar 1; while the transport runs, takes are placed from the next bar line (see Placement). N never reuses an existing file or `.part` file. While recording, arming, deleting a track, a second Record, opening a project and starting a new project are refused.
 - **Stop.** Stop finishes every take, reads it back and adds it to its track as a new clip named `Take N`, which becomes the track's selected clip. All the takes of one recording are one Undo step ("recorded take"). An empty take is deleted. A take that fails to write, cannot be read back, belongs to a track removed meanwhile, or would exceed the eight clips a track holds keeps its file, and the status line says where it is. Dropped frames are reported with the file name.
 - **Media retention.** Undo and clip deletion never delete a take's file. The project refers to it by path, like imported audio, so Redo and reopening the project find it.
 - **Journal.** Before audio starts, each take gets a journal, `TRACK take N.wav.json`, naming its track ID, the project file, the channel count and the rate. It is removed when the take finishes, and kept while a `.part` file remains to recover.
 - **Preview.** With no remote, the silent preview records silence at the render clock (480 frames per tick), which lets the tests check takes without audio hardware.
+
+## Placement and timestamps
+
+**Timestamps.** All streams of one fl-live session share the graph clock: the output, the audio input and the MIDI input are in the same driver group. Each output cycle publishes a transport anchor, which pairs the graph-clock frame of the cycle with the transport frame rendered first in it. A take records the graph-clock frame of its first cycle. MIDI events carry their cycle's frame plus their offset in it. While recording, the desktop converts a take's first frame to a transport frame with the latest anchor, read within one tick. The silent preview uses its simulated clock the same way.
+
+**Placement policy.** A recorded clip starts at the first bar line at or after the take's first frame. With 4/4 at the session tempo, that is the transport's bar grid.
+- Audio: the clip's range starts that many frames into the take, and the file keeps everything. A take that ends before reaching a bar line adds no clip and keeps its file.
+- MIDI: notes count from the bar line. Notes that start before it are left out, and the message counts them.
+- Record from a stopped transport returns to the start, so the take starts on bar 1 and nothing is cut.
+- A take whose first frame could not be placed, because the transport never ran, is added unaligned and the message says so.
+
+**Compensation policy.** No input or output latency is compensated. Placement uses the graph clock alone. On the private software graph the measured offset is zero (see Verification). Physical devices add converter and buffer latency that is not measured here (#19) and not subtracted.
 
 ## MIDI takes
 
@@ -101,3 +113,12 @@ For MIDI, `capture-pipeline` checks pairing, a velocity-0 note-off, a repeated n
 `pipewire-midi-capture` plays an independently authored Standard MIDI File with `pw-midiplay` into `fl-live-midi-input` on the private graph. At 120 BPM and 96 ticks per quarter note one tick is 250 frames, so the expected timeline follows from the file. The file has a chord, overlapping and adjacent repeated notes, and velocities 1 and 127. Every note must arrive with its pitch, velocity and exact frame timing relative to the first note. `pipewire-desktop-midi-recording` plays the same file into the desktop `Session` through the probe's `--record-midi` mode, and the new piano-roll clip must hold every note with its pitch and mapped velocity, at its tick and length within one tick. Quantizing can flip one tick when a note falls within a frame of a half-tick boundary, which CI showed once. In eight local runs each, every note matched with no offset. The [MIDI receipt](../validation/midi-recording.json) records them.
 
 For #49, `recording-overflow` runs `save-fault-probe record-overflow` with the fault injector making every write into `recordings/` sleep 100 ms. 400 preview ticks (192,000 frames) took about 4 ms. The status line reported the dropped frames, all whole 480-frame blocks, and frames on disk plus dropped frames equal 192,000. The take still became a clip. `desktop-session` (`recordingThroughPanicAndEdits`) deletes the playing clip on the armed track while running and recording. A panic then stops playback with no voice left while the audio and MIDI takes continue, and Stop adds both takes with the held note closed. Playing the recorded note and panicking leaves no voice, and Undo removes both takes in one step. `pipewire-recording-route-change` unlinks the live input 0.6 s into a take and relinks it 0.3 s later. Every non-silent frame is still a reference frame in order, the silence and the jump past it are counted, and the take becomes the selected clip. Each passed eight local runs in a row. The [cleanup receipt](../validation/recording-cleanup.json) records them.
+
+For placement (#45), `desktop-session` (`recordingPlacement`) records while the transport runs. The take starts at transport frame 14,400, in bar 1 at 120 BPM. The audio clip's range starts 81,600 frames into the file, at bar 2, which survives save. MIDI notes played on bar 2 beats 1 and 2 land on ticks 0 and 96, and a note played before the bar line is left out and reported. A Record from a stopped transport away from the start returns to bar 1 and cuts nothing.
+
+Two private-graph tests measure placement at 48 kHz, quantum 256, 120 BPM:
+
+- `pipewire-recording-placement` uses `graph-source`, a fixture program that emits clicks and MIDI notes at exact graph-clock frames. The frames are chosen from the desktop's transport anchor so that the events fall on bar 2–4 downbeats and on four beat positions.
+- `pipewire-recording-loopback` does not depend on the anchor for scheduling. The audio track plays a one-bar clip with a click on frame 0, so fl-live's own output clicks on every transport bar line, and that output is linked back into `fl-live-input`. Any anchor error or graph delay would show as an offset.
+
+The tolerance is one quantum for audio and none for MIDI. In eight runs of each, clicks landed 0 frames from the recorded clip's bar lines in both tests, and every MIDI note landed on its exact tick. The [placement receipt](../validation/recording-placement.json) records the runs, rate, quantum and policy.

@@ -160,6 +160,8 @@ public:
     // Preview only: feeds one MIDI message to the armed MIDI tracks' takes at
     // the simulated clock, standing in for the MIDI input in tests.
     Q_INVOKABLE bool previewMidi(int status, int data1, int data2);
+    // Diagnostics: {valid, graph, transport} of the latest transport anchor.
+    Q_INVOKABLE QVariantMap transportAnchor() const;
     Q_INVOKABLE bool record();
     // Takes left as .part files by an interrupted recording, found when the
     // project opens: {file, track, journal} maps (docs/recording.md).
@@ -386,20 +388,28 @@ private:
     fl_live::ClipId trackClip(fl_live::TrackId track) const; // selected, else first
     fl_live::ClipId import_clip_{};
     std::set<std::uint64_t> armed_;
-    struct Take { fl_live::TrackId track; std::unique_ptr<fl_live::CaptureTake> take; };
+    // transport_origin: the transport frame of the take's first cycle, once
+    // both the take's graph origin and a transport anchor are known.
+    struct Take { fl_live::TrackId track; std::unique_ptr<fl_live::CaptureTake> take; std::optional<std::int64_t> transport_origin; };
     std::vector<Take> takes_;
     // Fans one input block out to every take; fixed for a recording's life.
     struct Fanout final : fl_live::CaptureSink {
         std::vector<fl_live::CaptureTake*> takes;
+        void cycle(std::uint64_t frame, std::uint32_t frames) noexcept override { for (auto* t : takes) t->cycle(frame, frames); }
         void capture(std::span<const float> interleaved) noexcept override { for (auto* t : takes) t->capture(interleaved); }
     } fanout_;
     std::unique_ptr<fl_live::PipeWireCapture> input_;
     QString ack_report_; // shown instead of the generic acknowledgement once the stop renders
     QString finishRecording(); // returns the take report
     // A finished take waiting to become a clip: an audio file, or MIDI notes.
-    struct PendingTake { fl_live::TrackId track; QString file; std::optional<PianoRoll> piano; };
+    struct PendingTake { fl_live::TrackId track; QString file; std::optional<PianoRoll> piano; std::uint64_t range_start = 0; };
     int placeTakes(std::vector<PendingTake> takes,EditKind kind,bool numbered,QStringList& notes);
-    struct MidiTakeEntry { fl_live::TrackId track; std::unique_ptr<fl_live::MidiTake> take; };
+    struct MidiTakeEntry { fl_live::TrackId track; std::unique_ptr<fl_live::MidiTake> take; std::optional<std::int64_t> transport_origin; };
+    struct Anchor { bool valid = false; std::uint64_t graph = 0, transport = 0; } preview_anchor_;
+    void resolveOrigins();
+    // Frames from a take's start to the first bar line at or after it, or
+    // none when the take was never placed on the transport.
+    std::optional<std::uint64_t> barOffset(const std::optional<std::int64_t>& origin) const;
     std::vector<MidiTakeEntry> midi_takes_;
     struct MidiFanout final : fl_live::MidiSink {
         std::vector<fl_live::MidiTake*> takes;

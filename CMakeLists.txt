@@ -214,6 +214,14 @@ if(FL_LIVE_BUILD_DESKTOP)
             add_test(NAME pipewire-desktop-midi-recording COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_midi_capture.py --desktop $<TARGET_FILE:desktop-backend-probe>)
             set_tests_properties(pipewire-desktop-midi-recording PROPERTIES TIMEOUT 60)
+            add_executable(graph-source tests/graph_source.cpp)
+            target_link_libraries(graph-source PRIVATE PkgConfig::PIPEWIRE)
+            add_test(NAME pipewire-recording-placement COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_placement.py $<TARGET_FILE:desktop-backend-probe> $<TARGET_FILE:graph-source>)
+            set_tests_properties(pipewire-recording-placement PROPERTIES TIMEOUT 60)
+            add_test(NAME pipewire-recording-loopback COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_placement.py --loopback $<TARGET_FILE:desktop-backend-probe> $<TARGET_FILE:graph-source>)
+            set_tests_properties(pipewire-recording-loopback PROPERTIES TIMEOUT 60)
             add_test(NAME pipewire-recording-route-change COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_capture.py --desktop --route-change $<TARGET_FILE:desktop-backend-probe>)
             set_tests_properties(pipewire-recording-route-change PROPERTIES TIMEOUT 60)

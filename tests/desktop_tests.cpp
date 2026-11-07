@@ -2072,6 +2072,49 @@ private slots:
         QCOMPARE(clips(1).size(),after.size()+1);
         session.undo();QCOMPARE(clips(1),after);
     }
+    // #45: placement. Recording while the transport runs places each take
+    // on the first bar line at or after its first frame: the audio clip's
+    // range starts there (the file keeps everything) and MIDI notes count
+    // from there. At 120 BPM a bar is 96,000 frames, 200 preview ticks.
+    void recordingPlacement() {
+        QTemporaryDir directory;Session session;
+        const auto audio=session.trackIds()[0].toString(),midi=session.trackIds()[1].toString();
+        QVERIFY(session.saveProject(directory.filePath("placed.json")));
+        QVERIFY(session.setArmed(audio,true));QVERIFY(session.setArmed(midi,true));
+        const auto wait=[&](int ticks){for(int i=0;i<ticks;++i)session.tick();};
+        session.play();wait(30); // transport at frame 14,400, in bar 1
+        QVERIFY(session.record());
+        wait(70);QVERIFY(session.previewMidi(0x90,59,90)); // transport 48,000: before the bar line
+        wait(1);QVERIFY(session.previewMidi(0x80,59,0));
+        wait(99);QVERIFY(session.previewMidi(0x90,60,100)); // transport 96,000: bar 2, beat 1
+        wait(25);QVERIFY(session.previewMidi(0x80,60,0));   // 108,000: an eighth note later
+        wait(25);QVERIFY(session.previewMidi(0x90,64,100)); // 120,000: bar 2, beat 2
+        wait(25);QVERIFY(session.previewMidi(0x80,64,0));
+        wait(25);session.stop();session.tick();             // transport 144,000
+        QVERIFY(session.message().startsWith("Recorded 2 takes as new clips"));
+        QVERIFY(session.message().contains("left out 1 note played before the first bar line"));
+        // MIDI: notes counted from bar 2 at 96 ticks per beat.
+        const auto midiTake=session.selectedClips()[1].toString();
+        QVERIFY(session.selectClip(midiTake));
+        QList<QList<int>> notes;for(const auto& n:session.pianoNotes()){const auto m=n.toMap();notes.append({m["start"].toInt(),m["length"].toInt(),m["pitch"].toInt()});}
+        QCOMPARE(notes,(QList<QList<int>>{{0,48,60},{96,48,64}}));
+        // Audio: the take began at transport frame 14,400, so the clip starts
+        // 81,600 frames into the file, at bar 2.
+        QCOMPARE(session.clipRanges()[0].toList()[0].toDouble(),81600.0);
+        QVERIFY(session.saveProject(directory.filePath("placed.json")));
+        const auto saved=readAuthoredProject(directory.filePath("placed.json"));
+        const auto clip=std::find_if(saved.content.clips.begin(),saved.content.clips.end(),[](const auto& c){return c.asset.endsWith(" take 1.wav");});
+        QVERIFY(clip!=saved.content.clips.end());QCOMPARE(clip->range_start,std::uint64_t(81600));
+        // From a stopped transport away from the start, Record returns to the
+        // start, so the take is aligned from its first frame.
+        session.play();wait(7);session.stop();session.tick();
+        QVERIFY(session.record());session.tick();QVERIFY(session.previewMidi(0x90,72,100));wait(25);QVERIFY(session.previewMidi(0x80,72,0));
+        wait(5);session.stop();session.tick();
+        QVERIFY(session.message().startsWith("Recorded 2 takes as new clips"));QVERIFY(!session.message().contains("before the first bar line"));
+        QCOMPARE(session.clipRanges()[0].toList()[0].toDouble(),0.0);
+        QVERIFY(session.selectClip(session.selectedClips()[1].toString()));
+        QCOMPARE(session.pianoNotes()[0].toMap()["start"].toInt(),2); // one tick of 480 frames after bar 1 is 1.92 ticks
+    }
     // #49: panic and clip edits while recording. Panic silences playback at
     // once but keeps recording; deleting the playing clip on an armed track
     // is an ordinary edit; Stop still finishes every take and a note held

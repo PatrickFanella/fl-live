@@ -767,6 +767,10 @@ void Session::tick() {
     if (preview_) {
         std::array<float, 960> discarded{};
         prepared_->controller.process(discarded, 2); // 480 stereo frames; simulated clock, no audio output
+        // The simulated clock stands in for the graph clock (docs/recording.md).
+        if (const auto rendered = prepared_->controller.status(); rendered.running)
+            preview_anchor_ = {true, preview_clock_, static_cast<std::uint64_t>(rendered.position) - 480};
+        if (!takes_.empty()) fanout_.cycle(preview_clock_, 480);
         // Silent preview has no input: takes record silence at the same clock.
         static const std::array<float, 960> silence{};
         if (!takes_.empty()) fanout_.capture(silence);
@@ -774,6 +778,7 @@ void Session::tick() {
         preview_clock_ += 480;
     }
     for (auto& take : midi_takes_) take.take->drain(); // keep the callback's ring from filling
+    resolveOrigins();
     if (prepared_->backend && prepared_->backend->status().error) {
         audioFailed("Audio backend disconnected");
     } else if ((input_ && input_->status().error) || (midi_input_ && midi_input_->status().error)) {
@@ -1201,6 +1206,36 @@ bool Session::previewMidi(int status,int data1,int data2) {
     midi_fanout_.midi(preview_clock_,message);
     return true;
 }
+QVariantMap Session::transportAnchor() const {
+    Anchor anchor = preview_anchor_;
+    if (!preview_ && prepared_->backend) {
+        const auto status = prepared_->backend->status();
+        anchor = {status.anchor_valid, status.anchor_graph, status.anchor_transport};
+    }
+    return {{"valid", anchor.valid}, {"graph", static_cast<double>(anchor.graph)}, {"transport", static_cast<double>(anchor.transport)}};
+}
+void Session::resolveOrigins() {
+    Anchor anchor = preview_anchor_;
+    if (!preview_ && prepared_->backend) {
+        const auto status = prepared_->backend->status();
+        anchor = {status.anchor_valid, status.anchor_graph, status.anchor_transport};
+    }
+    if (!anchor.valid) return;
+    // The transport ran without a stop between the take's first cycle and
+    // this anchor (read within one tick), so the mapping is linear.
+    const auto place = [&](std::uint64_t origin, std::optional<std::int64_t>& transport) {
+        if (transport || origin == fl_live::no_origin) return;
+        transport = static_cast<std::int64_t>(anchor.transport) + (static_cast<std::int64_t>(origin) - static_cast<std::int64_t>(anchor.graph));
+    };
+    for (auto& take : takes_) place(take.take->origin(), take.transport_origin);
+    for (auto& take : midi_takes_) place(take.take->origin(), take.transport_origin);
+}
+std::optional<std::uint64_t> Session::barOffset(const std::optional<std::int64_t>& origin) const {
+    if (!origin) return std::nullopt;
+    if (*origin <= 0) return static_cast<std::uint64_t>(-*origin); // started at or before bar 1
+    const fl_live::TempoGrid grid(preview_ ? 48000U : config_.sample_rate, static_cast<std::uint32_t>(tempo()) * 1000U);
+    return static_cast<std::uint64_t>(grid.next_bar(static_cast<fl_live::Frame>(*origin)) - static_cast<fl_live::Frame>(*origin));
+}
 bool Session::record() {
     try {
         if(recording())throw std::invalid_argument("Already recording");
@@ -1238,10 +1273,10 @@ bool Session::record() {
                                     {"project",QFileInfo(owned_path_).fileName()},{"channels",2},{"rate",48000}};
             if(!journal.open(QIODevice::WriteOnly) || journal.write(QJsonDocument(entry).toJson(QJsonDocument::Compact))<0 || !journal.commit())
                 throw std::runtime_error(("Cannot write "+QFileInfo(path).fileName()+".json").toStdString());
-            takes.push_back({id,std::make_unique<fl_live::CaptureTake>(path.toStdString(),2,48000)});
+            takes.push_back({id,std::make_unique<fl_live::CaptureTake>(path.toStdString(),2,48000),std::nullopt});
         }
         std::vector<MidiTakeEntry> midi_takes;
-        for(const auto& id:midi_tracks)midi_takes.push_back({id,std::make_unique<fl_live::MidiTake>()});
+        for(const auto& id:midi_tracks)midi_takes.push_back({id,std::make_unique<fl_live::MidiTake>(),std::nullopt});
         if(!tracks.empty())openInput();
         if(!midi_tracks.empty())openMidiInput();
         cleanup.dismiss();
@@ -1253,7 +1288,9 @@ bool Session::record() {
         for(auto& t:midi_takes_)midi_fanout_.takes.push_back(t.take.get());
         if(input_ && !takes_.empty())input_->setSink(&fanout_);
         if(midi_input_ && !midi_takes_.empty())midi_input_->setSink(&midi_fanout_);
-        if(!running())play();
+        // From a stopped transport the take starts at bar 1, so it is aligned
+        // from its first frame; while running it starts at the next bar line.
+        if(!running()){if(status_.position!=0 && !pending())send(fl_live::ControlKind::rewind);play();}
         const auto count=takes_.size()+midi_takes_.size();
         message_=QString("Recording %1 track%2").arg(count).arg(count==1 ? "" : "s");
         if(!takes_.empty())message_+=QString("; audio takes go into %1").arg(folder.path());
@@ -1296,6 +1333,7 @@ int Session::placeTakes(std::vector<PendingTake> files,EditKind kind,bool number
         const auto clip=candidate.createClip(id,numbered ? "Take "+std::to_string(count+1) : std::string("Recovered take"));
         ClipContent value{clip};
         value.audio=AudioSource::wav;value.asset=file;value.media=std::make_shared<const fl_live::AudioClip>(std::move(decoded.clip));
+        value.range_start=pending.range_start; // the clip starts at the first bar line; the file keeps everything
         next.clips.push_back(std::move(value));
         added.emplace_back(id,clip);placed.push_back(pending);
     }
@@ -1311,6 +1349,7 @@ QString Session::takeReport(int placed,const QString& verb,QStringList notes) co
     return notes.join(". ")+(notes.isEmpty() ? "" : ".");
 }
 QString Session::finishRecording() {
+    resolveOrigins();
     // Detach first: after this the data thread no longer touches any take.
     if(input_)input_->setSink(nullptr);
     fanout_.takes.clear();
@@ -1327,8 +1366,15 @@ QString Session::finishRecording() {
                             return t==identities_->tracks.end() ? QString("a removed track") : QString::fromUtf8(t->name);}();
         if(status.dropped)notes.append(QString("%1 lost %2 MIDI events because they arrived faster than they were collected").arg(name).arg(status.dropped));
         if(status.notes.empty()){notes.append(QString("No notes were played on %1").arg(name));continue;}
-        RecordedTakeNotes recorded{status.frames,{}};
-        for(const auto& n:status.notes)recorded.notes.push_back({n.start,n.length,n.pitch,n.velocity});
+        // The clip starts at the first bar line in the take; earlier notes are left out.
+        const auto offset=barOffset(take.transport_origin);
+        if(!offset)notes.append(QString("The take on %1 is not aligned to bars because the transport did not run").arg(name));
+        const auto skip=offset.value_or(0);
+        RecordedTakeNotes recorded{status.frames>skip ? status.frames-skip : 0,{}};
+        int early=0;
+        for(const auto& n:status.notes){if(n.start<skip){++early;continue;}recorded.notes.push_back({n.start-skip,n.length,n.pitch,n.velocity});}
+        if(early)notes.append(QString("%1 left out %2 note%3 played before the first bar line").arg(name).arg(early).arg(early==1 ? "" : "s"));
+        if(recorded.notes.empty()){notes.append(QString("No notes were played on %1 from the first bar line").arg(name));continue;}
         RecordingReport report;
         files.push_back({take.track,QString(),pianoFromTake(recorded,tempo(),rate,report)});
         if(status.closed_at_end)notes.append(QString("%1 note%2 still held on %3 ended with the take").arg(status.closed_at_end).arg(status.closed_at_end==1 ? "" : "s").arg(name));
@@ -1344,7 +1390,10 @@ QString Session::finishRecording() {
         if(status.overflowed)notes.append(QString("%1 dropped %2 frames when the disk fell behind").arg(QFileInfo(file).fileName()).arg(status.frames_dropped));
         if(status.failed){notes.append(QString::fromStdString(status.error));continue;}
         if(!status.frames_written){std::error_code ignored;std::filesystem::remove(status.file,ignored);continue;}
-        files.push_back({take.track,file,std::nullopt});
+        const auto offset=barOffset(take.transport_origin);
+        if(!offset)notes.append(QString("%1 is not aligned to bars because the transport did not run").arg(QFileInfo(file).fileName()));
+        else if(*offset>=status.frames_written){notes.append(QString("%1 ended before the first bar line; it is kept as %2").arg(QFileInfo(file).fileName(),file));continue;}
+        files.push_back({take.track,file,std::nullopt,offset.value_or(0)});
     }
     if(files.empty() && notes.isEmpty())return "Recording stopped; nothing was captured.";
     const auto placed=placeTakes(std::move(files),EditKind::record_take,true,notes);

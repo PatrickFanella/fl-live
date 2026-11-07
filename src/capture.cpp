@@ -55,6 +55,11 @@ CaptureTake::CaptureTake(std::filesystem::path path, std::uint32_t channels, std
 }
 CaptureTake::~CaptureTake() { (void)finish(); }
 
+void CaptureTake::cycle(std::uint64_t frame, std::uint32_t) noexcept {
+    if (!accepting_.load(std::memory_order_acquire)) return;
+    auto expected = no_origin;
+    origin_.compare_exchange_strong(expected, frame, std::memory_order_release, std::memory_order_relaxed);
+}
 void CaptureTake::capture(std::span<const float> interleaved) noexcept {
     if (!accepting_.load(std::memory_order_acquire) || interleaved.empty()) return;
     if (!ring_.push(interleaved)) {
@@ -136,8 +141,8 @@ MidiTake::MidiTake(std::size_t capacity) : ring_(capacity + 1) {
 }
 void MidiTake::cycle(std::uint64_t frame, std::uint32_t frames) noexcept {
     if (!accepting_.load(std::memory_order_acquire)) return;
-    auto expected = ~std::uint64_t{0};
-    origin_.compare_exchange_strong(expected, frame, std::memory_order_relaxed);
+    auto expected = no_origin;
+    origin_.compare_exchange_strong(expected, frame, std::memory_order_release, std::memory_order_relaxed);
     end_.store(frame + frames, std::memory_order_release);
 }
 void MidiTake::midi(std::uint64_t frame, std::span<const std::uint8_t> message) noexcept {
