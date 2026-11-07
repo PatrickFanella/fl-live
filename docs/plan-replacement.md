@@ -40,6 +40,18 @@ The desktop uses `at = 0`, so each playback edit activates at the next block bou
 
 `RenderStatus::generation` counts activated replacements and `RenderStatus::dropped_commands` counts queued commands they removed. `track_count` and the per-track status follow the active plan.
 
+## Saturation and panic
+
+The control queue holds 64 controls, and a replacement marker takes one of them. When it is full, `submit` returns false and `offer` returns `busy`; nothing is dropped silently, and the caller retries. Panic does not use the queue. It is a separate flag that the render owner checks before draining. It stops the transport, discards queued controls, activates a held or queued replacement, and renders silence in that block, even when the queue is full or a replacement with a future frame is holding later controls. Per block, the render owner drains at most 64 controls and performs at most one replacement.
+
+`edit-bursts` checks:
+
+- a saturated queue refuses both controls and an offer, and panic still silences in the next block;
+- recovery: a replacement and fresh controls are accepted afterward;
+- panic passes a replacement that holds a Stop behind a far-future frame.
+
+A threaded run floods bursts of up to 72 controls and a replacement offer every round, for 3,000 rounds, with a panic every 50. All 60 panics produced a silent, stopped block within two render blocks of the request: one in flight plus the panic block. The render thread intercepted no allocation or release. The test prints the longest 64-frame block under bursts and the time of a worst-case replacement (64 MIDI tracks × 1,024 notes with sounding voices and a full command queue); these are host measurements, not a deadline qualification. The [receipt](../validation/edit-bursts.json) records one run.
+
 ## Retirement
 
 On activation the render owner stores the plan it stopped using in a retirement slot and then counts the swap. `collect()` on the control thread returns an acknowledged `Retirement` holding that plan, which the render thread no longer references; the caller destroys it there. The first retirement holds no plan, because the constructor's plan belongs to its caller. Destroying the controller after the render thread is joined frees the active replacement and any offer that never activated.

@@ -42,6 +42,8 @@ These edits apply while the transport runs or a control is unacknowledged: track
 - Launches and stops queued before an edit still apply, and ones made after it use the edited document. If a newer edit has not been handed over yet, Launch, Stop and scene actions are refused with "Applying the last edit to playback. Try again in a moment."
 - A burst of edits keeps one replacement in flight. A newer edit supersedes one that has not been handed over yet, so the render thread sees the latest document, and every edit still gets its own Undo step.
 
+When the control queue is full, Launch, Stop and scene actions report "Control queue full. Try again, or use Silence now." An edit made then is kept and handed over once there is room. **Silence now** never waits for the queue.
+
 Tempo changes, Open, New, Restore, Collect audio, Export, WAV import and Relink still require stopped transport; the tempo field and those buttons are disabled while playing. A tempo change by Undo/Redo while playing is refused with "Stop transport to change the tempo. Other edits apply while playing." The document and history stay unchanged. Edits made while stopped still rebuild the session at the start, as before.
 
 ## Project files (version 4)
