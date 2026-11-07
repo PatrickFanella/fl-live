@@ -1081,6 +1081,83 @@ private slots:
         QVERIFY(session.collectAssets());QVERIFY2(session.message().contains("0 copied, 1 already there"),qPrintable(session.message()));
         Session unsaved;QVERIFY(!unsaved.collectAssets());QVERIFY(unsaved.message().contains("Save the project first"));
     }
+    // #65: create, save, move, reopen, repair, export and cancel, all through
+    // the QML. Every export is decoded independently and compared with the
+    // first one; refused exports leave existing files and the document alone.
+    void qmlRecoveryExportJourney() {
+        QTemporaryDir root;const auto bytesOf=[](const QString& path){QFile f(path);return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();};
+        const auto folder=root.filePath("song"),moved=root.filePath("moved");QVERIFY(QDir().mkpath(folder));
+        std::vector<qint16> loop(4800*2);
+        for(std::size_t i=0;i<4800;++i){loop[2*i]=static_cast<qint16>(9000*std::sin(static_cast<double>(i)/23));loop[2*i+1]=static_cast<qint16>(-7000*std::sin(static_cast<double>(i)/31));}
+        writeWav(folder+"/loop.wav",2,48000,loop);
+        struct Ui {
+            QQmlApplicationEngine engine;QQuickWindow* window=nullptr;
+            explicit Ui(Session& session){engine.rootContext()->setContextProperty("session",&session);engine.load(QUrl("qrc:/ui/Main.qml"));
+                window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());}
+            QQuickItem* find(QQuickItem* r,const QString& name){if(r->objectName()==name && r->isVisible())return r;
+                for(auto* c:r->childItems())if(auto* m=find(c,name))return m;return nullptr;}
+            QQuickItem* item(const QString& name){auto* i=find(window->contentItem(),name);if(!i)throw std::runtime_error(name.toStdString());return i;}
+            void click(const QString& name){auto* i=item(name);QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,i->mapToScene(QPointF(i->width()/2,i->height()/2)).toPoint());}
+            void type(const QString& name,const QString& text,bool enter=false){item(name)->forceActiveFocus();QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier);
+                for(const QChar c:text)QTest::keyClick(window,c.toLatin1());if(enter)QTest::keyClick(window,Qt::Key_Return);}
+            void keys(const QString& name,Qt::Key key,int times){item(name)->forceActiveFocus();for(int i=0;i<times;++i)QTest::keyClick(window,key);}
+            QString status(){return item("statusMessage")->property("text").toString();}
+            void exportTo(Session& session,const QString& path,const QString& bars){type("exportFile",path);type("exportBars",bars,true);click("exportWavButton");}
+        };
+        const auto first=root.filePath("first.wav");QByteArray firstBytes;
+        {
+            Session session;Ui ui(session);QVERIFY(ui.window && QTest::qWaitForWindowExposed(ui.window));
+            ui.type("audioPath0",folder+"/loop.wav");ui.click("importAudio0");QTRY_VERIFY(!session.importing());
+            QCOMPARE(session.trackSources()[0].toString(),QString("loop.wav · 0.10 s · stereo"));
+            ui.keys("level0",Qt::Key_Down,20);ui.keys("level1",Qt::Key_Up,5);
+            ui.type("projectFile",folder+"/song.json");ui.click("saveProjectButton");QVERIFY2(!session.dirty(),qPrintable(session.message()));
+            ui.keys("exportFormat",Qt::Key_Down,2);QCOMPARE(ui.item("exportFormat")->property("currentIndex").toInt(),2);
+            ui.exportTo(session,first,"2");QTRY_VERIFY(!session.exporting());QVERIFY2(QFile::exists(first),qPrintable(ui.status()));
+            firstBytes=bytesOf(first);QVERIFY(ui.window->close());
+        }
+        const auto reference=readWav(first);QCOMPARE(reference.format,3);QCOMPARE(reference.channels,2);
+        QVERIFY(std::any_of(reference.samples.begin(),reference.samples.end(),[](float v){return v!=0;}));
+        // Move the whole project folder: the relative reference finds the audio.
+        QVERIFY(QDir().rename(folder,moved));
+        Session session;Ui ui(session);QVERIFY(ui.window && QTest::qWaitForWindowExposed(ui.window));
+        ui.type("projectFile",moved+"/song.json");ui.click("openProjectButton");
+        QTRY_VERIFY(ui.status().contains("Found moved audio"));QCOMPARE(session.trackSources()[0].toString(),QString("loop.wav · 0.10 s · stereo"));
+        ui.keys("exportFormat",Qt::Key_Down,2);
+        ui.exportTo(session,root.filePath("relocated.wav"),"2");QTRY_VERIFY(!session.exporting());
+        QVERIFY(readWav(root.filePath("relocated.wav")).samples==reference.samples);
+        // The new location is an unsaved change, so Open refuses until it is saved.
+        QVERIFY(session.dirty());ui.click("openProjectButton");QTRY_VERIFY(ui.status().contains("Save your changes"));
+        ui.click("saveProjectButton");QVERIFY(!session.dirty());
+        // Remove the audio: the reopened clip is missing until explicitly relinked.
+        const auto copy=root.filePath("elsewhere/loop-copy.wav");QVERIFY(QDir().mkpath(root.filePath("elsewhere")));
+        QVERIFY(QFile::copy(moved+"/loop.wav",copy));QVERIFY(QFile::remove(moved+"/loop.wav"));
+        ui.click("openProjectButton");QTRY_VERIFY2(ui.status().contains("Missing audio plays as silence"),qPrintable(ui.status()));
+        QCOMPARE(session.trackSources()[0].toString(),QString("Missing: loop.wav"));QVERIFY(!session.dirty());
+        ui.type("audioPath0",copy);ui.click("relinkAudio0");
+        QTRY_COMPARE(session.trackSources()[0].toString(),QString("loop-copy.wav · 0.10 s · stereo"));QVERIFY(session.dirty());
+        ui.exportTo(session,root.filePath("relinked.wav"),"2");QTRY_VERIFY(!session.exporting());
+        QVERIFY(readWav(root.filePath("relinked.wav")).samples==reference.samples);
+        // Refused exports: an existing file is never replaced; a missing folder fails. The document stays as it was.
+        const auto undo=session.undoText();
+        ui.exportTo(session,first,"2");QTRY_VERIFY(!session.exporting());
+        QCOMPARE(bytesOf(first),firstBytes);QVERIFY(session.dirty());QCOMPARE(session.undoText(),undo);
+        const auto refusedExisting=ui.status();QVERIFY(!refusedExisting.isEmpty());
+        ui.exportTo(session,root.filePath("no-such-folder/x.wav"),"2");QTRY_VERIFY(!session.exporting());
+        QVERIFY(!QFile::exists(root.filePath("no-such-folder/x.wav")));QVERIFY(session.dirty());QCOMPARE(session.undoText(),undo);
+        // Cancel a long export through its button: no file or partial file remains.
+        const auto longPath=root.filePath("long.wav");
+        ui.exportTo(session,longPath,"64");QVERIFY(session.exporting());ui.click("cancelExportButton");QTRY_VERIFY(!session.exporting());
+        QVERIFY(!QFile::exists(longPath));QVERIFY(!QFile::exists(longPath+".part"));QVERIFY(ui.status().contains("cancel",Qt::CaseInsensitive));
+        // Save the repair and reopen in a fresh session: the same render.
+        ui.click("saveProjectButton");QVERIFY(!session.dirty());QVERIFY(ui.window->close());
+        Session reopened;Ui again(reopened);QVERIFY(again.window && QTest::qWaitForWindowExposed(again.window));
+        again.type("projectFile",moved+"/song.json");again.click("openProjectButton");
+        QTRY_COMPARE(reopened.trackSources()[0].toString(),QString("loop-copy.wav · 0.10 s · stereo"));QCOMPARE(reopened.levels(),session.levels());
+        again.keys("exportFormat",Qt::Key_Down,2);
+        again.exportTo(reopened,root.filePath("reopened.wav"),"2");QTRY_VERIFY(!reopened.exporting());
+        QVERIFY(readWav(root.filePath("reopened.wav")).samples==reference.samples);
+        QVERIFY(again.window->grabWindow().save("desktop-recovery-journey.png"));
+    }
     void qmlRelinkMissingAudio() {
         QTemporaryDir root;const auto audio=root.filePath("a.wav"),project=root.filePath("p.json");
         std::vector<qint16> tone(4800);for(std::size_t i=0;i<tone.size();++i)tone[i]=static_cast<qint16>(i%300*50);
