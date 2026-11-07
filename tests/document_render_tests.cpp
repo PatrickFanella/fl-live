@@ -227,9 +227,33 @@ void stoppedDeletionAndOwnership() {
     CHECK(restarted.active_voices()==0);
     CHECK(std::all_of(block.begin(),block.end(),[](float v){return v==0;}));
 }
+// planMapping follows identity across a deletion: surviving tracks and clips
+// keep their state, removed ones map to -1.
+void replacementMapping() {
+    Fixture f;
+    const DocumentRenderPlan before(f.document.snapshot(),f.sources);
+    f.document.deleteTrack(f.m); f.document.deleteClip(f.replacement);
+    std::vector<DocumentClipSource> sources;
+    std::copy_if(f.sources.begin(),f.sources.end(),std::back_inserter(sources),[&](const auto& s){return s.id!=f.cm && s.id!=f.replacement;});
+    const DocumentRenderPlan after(f.document.snapshot(),sources);
+    const auto mapping=planMapping(before,after);
+    CHECK((mapping.track_from_old==std::vector<std::int32_t>{0,-1,1,2}));
+    CHECK((mapping.clip_from_old==std::vector<std::vector<std::int32_t>>{{0,-1},{-1},{0},{0}}));
+    Engine::validateMapping(before.plan(),after.plan(),mapping);
+    Engine engine(before.plan());
+    CHECK(engine.schedule(*before.launch(f.cb,0))==ScheduleResult::accepted);
+    CHECK(engine.schedule(*before.launch(f.cm,0))==ScheduleResult::accepted);
+    engine.start();
+    std::vector<float> out(8);
+    engine.process(out);
+    const auto result=engine.replace(after.plan(),mapping);
+    CHECK(result.stopped_tracks==1 && engine.track_statuses()[1].active_clip==0 && engine.track_statuses()[0].active_clip<0);
+    engine.process(out);
+    CHECK(out[0]==0.0625F && out[1]==-0.0625F); // Audio B continues at frame 8
+}
 int main() {
     try {
-        fourTracksAndReordering();mixerPolicy();quantizedFeedback();rejectionAndBudgets();stoppedDeletionAndOwnership();
-        std::cout<<"PASS: stable document/render mapping, four-track audio, mixer pan/mute/solo, budgets and stopped cleanup\n";return 0;
+        fourTracksAndReordering();mixerPolicy();quantizedFeedback();rejectionAndBudgets();stoppedDeletionAndOwnership();replacementMapping();
+        std::cout<<"PASS: stable document/render mapping, four-track audio, mixer pan/mute/solo, budgets, stopped cleanup and replacement mapping\n";return 0;
     } catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}
 }

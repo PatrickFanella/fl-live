@@ -122,4 +122,20 @@ std::optional<CommandBatch> DocumentRenderPlan::scene(SceneId id, bool stop, Fra
     }
     return result;
 }
+PlanMapping planMapping(const DocumentRenderPlan& from, const DocumentRenderPlan& to) {
+    PlanMapping mapping;
+    const auto& tracks = from.plan().tracks;
+    for (std::size_t track = 0; track < tracks.size(); ++track) {
+        const auto id = from.trackId(track);
+        const auto target = id ? to.trackIndex(*id) : std::nullopt;
+        mapping.track_from_old.push_back(target ? static_cast<std::int32_t>(*target) : -1);
+        auto& clips = mapping.clip_from_old.emplace_back();
+        for (std::size_t clip = 0; clip < tracks[track].clips.size(); ++clip) {
+            const auto clipId = from.clipId(track, static_cast<int>(clip));
+            const auto command = clipId && target ? to.launch(*clipId, 0) : std::nullopt;
+            clips.push_back(command && command->track == *target ? static_cast<std::int32_t>(command->clip) : -1);
+        }
+    }
+    return mapping;
+}
 } // namespace fl_live

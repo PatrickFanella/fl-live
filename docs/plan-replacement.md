@@ -1,0 +1,52 @@
+# Plan replacement and retirement
+
+This is the engine and controller contract for #53: a prepared plan replaces the one being rendered without stopping the transport, and the old plan is destroyed only after the render owner acknowledges it. Playback edits in the desktop are #54; this page covers the groundwork they build on.
+
+## Preparing a replacement
+
+A `PlanReplacement` owns a complete `SessionPlan`, a `PlanMapping` and an activation frame `at`. Build it on a worker or the control thread, never in the callback. The mapping indexes the plan it replaces: `track_from_old[t]` is the new index of old track `t` or `-1`, and `clip_from_old[t][c]` is the new index of that track's clip `c` within the new track, or `-1`. `planMapping(from, to)` builds one from two `DocumentRenderPlan`s by track and clip ID, so a renamed or reordered track keeps its state and a deleted one maps to `-1`.
+
+`RenderController::offer` validates on the calling thread and returns:
+
+- `accepted`: the replacement is handed to the render owner.
+- `busy`: an earlier offer has not activated yet, or its retirement has not been collected. One replacement is in flight at a time.
+- `invalid`: the engine refuses the plan, the mapping does not cover every old track and clip, two old tracks map to one new track, an index is out of range, or the sample rate or tempo differs. Nothing changes.
+
+The mapping is checked against the latest accepted plan, so offers apply in the order they were accepted.
+
+## When it activates
+
+While the transport runs, the replacement activates exactly before transport frame `at`: the controller splits the block at that frame, so output is the same for every block size. When `at` has already passed it activates at the start of the next block. While stopped, or on panic, it activates at the next block, since nothing is sounding.
+
+## What carries over
+
+`Engine::replace` moves runtime state from each old track to its mapped new track:
+
+- A playing clip that maps to a clip of the same kind keeps its launch frame. Audio continues at the same position in the new content, and a different length takes effect at once.
+- A playing MIDI clip keeps its sounding voices, with their pitch and remaining duration, and renders them with the new instrument. A voice already releasing past the new release length ends. The note cursor moves to the first note at or after the current clip position, so passed notes do not retrigger and later ones still start.
+- A playing clip mapped to `-1`, or to a clip of the other kind, stops along with its voices.
+- Queued commands keep their order; their track and clip indexes are remapped, and those referring to removed tracks or clips are dropped and counted in `RenderStatus::dropped_commands`.
+- Automation cursors restart against the new lanes.
+
+## Generations
+
+Every accepted offer increments `RenderController::generation()`. A `Control` carries the generation its track and clip indexes refer to. Schedule, launch, stop-track and scene controls for any other generation are rejected and counted, because their indexes would name the wrong tracks. Transport start, stop and rewind apply under any generation. `RenderStatus::generation` reports how many replacements are active.
+
+## Retirement
+
+On activation the render owner stores the plan it stopped using in a retirement slot and then counts the swap. `collect()` on the control thread returns an acknowledged `Retirement` holding that plan, which the render thread no longer references; the caller destroys it there. The first retirement holds no plan, because the constructor's plan belongs to its caller. Destroying the controller after the render thread is joined frees the active replacement and any offer that never activated.
+
+`Engine::replace` and the activation path do not allocate, free, lock, log or perform I/O. The engine sizes its runtime storage for 64 tracks at construction so replacement can reorder tracks into a preallocated spare.
+
+## Evidence and limits
+
+`plan-replacement` checks:
+
+- activation at frame 1000 with identical output for blocks 1, 64, 257, 512 and 3000, with one queued command dropped and one remapped;
+- refusals for each mapping fault, an invalid plan, and a changed rate or tempo;
+- generation rejection, MIDI voice continuity under a new waveform, cursor placement and a shortened release;
+- 2,000 threaded replacements with 400 refused offers. Each retired plan is overwritten with NaN before it is destroyed, so a stale render-side read would show in the output. The run ends with an unactivated offer left for the destructor.
+
+The render thread intercepts C++ allocation and deallocation and observes none. `document-render-preparation` checks `planMapping` across a track and clip deletion. The test runs under AddressSanitizer in CI; a local ThreadSanitizer run is recorded in the [receipt](../validation/plan-replacement.json).
+
+Tempo and sample-rate changes are refused rather than replaced. Replacement keeps the earlier allocation-interception limits of the [engine contract](engine-contract.md#ownership-and-rendering). It has not been measured against a real-time deadline or on physical audio.

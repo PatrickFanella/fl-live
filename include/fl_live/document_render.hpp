@@ -28,7 +28,8 @@ struct PreparationBudget {
 // pan and the mute/solo policy (an inaudible track prepares with zero gain).
 // Owns independent
 // copies of metadata and source-rate mono clip content. Must outlive every
-// Engine/RenderController constructed from plan(). No live replacement API.
+// Engine/RenderController constructed from plan(), and every use of plan()
+// in a PlanReplacement; see planMapping.
 class DocumentRenderPlan final {
 public:
     DocumentRenderPlan(DocumentSnapshot document, std::span<const DocumentClipSource> sources,
@@ -53,4 +54,8 @@ private:
     const DocumentSnapshot document_;
     const SessionPlan plan_;
 };
+// Engine mapping from one prepared document to the next by track and clip
+// identity: a track or clip that keeps its ID keeps its playback state; a
+// deleted one, or a clip that moved to another track, stops.
+PlanMapping planMapping(const DocumentRenderPlan& from, const DocumentRenderPlan& to);
 } // namespace fl_live
