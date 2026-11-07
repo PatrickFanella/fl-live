@@ -425,6 +425,8 @@ QString Session::editName(const HistoryEntry& entry) {
     case EditKind::note_move: return entry.index == 1 ? "move note" : "move notes";
     case EditKind::note_resize: return entry.index == 1 ? "resize note" : "resize notes";
     case EditKind::note_velocity: return "note velocity";
+    case EditKind::piano_length: return "clip length";
+    case EditKind::piano_loop: return "clip loop";
     case EditKind::synth: return "synth "+QString::fromLatin1(entry.index==0 ? "waveform" : entry.index==1 ? "attack" : entry.index==2 ? "decay" : entry.index==3 ? "sustain" : "release");
     default: return {};
     }
@@ -1338,12 +1340,14 @@ const PianoRoll* Session::piano() const {
     return pattern_clip_.value && found!=content_->clips.end() && found->piano ? &*found->piano : nullptr;
 }
 bool Session::pianoMode() const { return piano()!=nullptr; }
+bool Session::pianoLoop() const { return piano() ? piano()->loop : true; }
 int Session::pianoLength() const { return piano() ? piano()->length : 0; }
 QVariantList Session::pianoNotes() const {
     QVariantList result;
     if(const auto* roll=piano())
         for(const auto& note:roll->notes)
-            result.append(QVariantMap{{"id",identityText(note.id)},{"start",note.start},{"length",note.length},{"pitch",note.pitch},{"velocity",note.velocity}});
+            result.append(QVariantMap{{"id",identityText(note.id)},{"start",note.start},{"length",note.length},{"pitch",note.pitch},{"velocity",note.velocity},
+                {"sounding",note.start<roll->length}});
     return result;
 }
 QVariantList Session::selectedNotes() const {
@@ -1389,7 +1393,7 @@ bool Session::usePianoRoll(bool on) {
         if(on) {
             // One note per sounding step: a quarter-note step is 96 ticks and
             // the gate is a percentage of it (at least one tick).
-            PianoRoll roll{clip.pattern.step_count*piano_ticks_per_beat,1,{}};
+            PianoRoll roll{clip.pattern.step_count*piano_ticks_per_beat,true,1,{}};
             for(int n=0;n<clip.pattern.step_count;++n) {
                 const auto& step=clip.pattern.steps[static_cast<std::size_t>(n)];
                 if(!step.enabled)continue;
@@ -1406,6 +1410,7 @@ bool Session::addNote(int start,int length,int pitch,int velocity) {
     std::uint64_t id=0;
     history_index_hint_=-1;
     const bool done=editPiano(EditKind::note_add,[&](PianoRoll& roll) {
+        if(start<0 || length<1 || start>=roll.length || length>roll.length-start)throw std::invalid_argument("A note must lie inside the clip");
         id=roll.next_id++;
         roll.notes.push_back({id,start,length,pitch,velocity});
     });
@@ -1439,6 +1444,17 @@ bool Session::editNotes(EditKind kind,const QVariantList& ids,const std::functio
             change(*note);
         }
     });
+}
+bool Session::setPianoLength(int ticks) {
+    history_index_hint_=-1;
+    return editPiano(EditKind::piano_length,[&](PianoRoll& roll) {
+        if(ticks<1 || ticks>piano_length_limit)throw std::invalid_argument("Clip length must be 1 tick to 16 bars");
+        roll.length=ticks;
+    });
+}
+bool Session::setPianoLoop(bool loop) {
+    history_index_hint_=-1;
+    return editPiano(EditKind::piano_loop,[&](PianoRoll& roll){roll.loop=loop;});
 }
 bool Session::moveNotes(const QVariantList& ids,int deltaTicks,int deltaPitch) {
     return editNotes(EditKind::note_move,ids,[&](PianoNote& note) {

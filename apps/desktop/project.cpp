@@ -90,8 +90,8 @@ void validatePiano(const PianoRoll& roll) {
         if (note.id < 1 || note.id >= roll.next_id) throw std::invalid_argument("Note IDs must come from the clip's counter");
         if (note.pitch < 0 || note.pitch > 127) throw std::invalid_argument("Note pitch must be 0 to 127");
         if (note.velocity < 1 || note.velocity > 100) throw std::invalid_argument("Note velocity must be 1 to 100 percent");
-        if (note.start < 0 || note.length < 1 || note.start >= roll.length || note.length > roll.length - note.start)
-            throw std::invalid_argument("A note must lie inside the clip");
+        if (note.start < 0 || note.length < 1 || note.start >= piano_length_limit || note.length > piano_length_limit - note.start)
+            throw std::invalid_argument("A note must lie inside 16 bars");
         if (i && (roll.notes[i - 1].start > note.start || (roll.notes[i - 1].start == note.start && roll.notes[i - 1].id >= note.id)))
             throw std::invalid_argument("Notes must be ordered by start, then ID");
         ids.push_back(note.id);
@@ -116,10 +116,13 @@ fl_live::MidiClip pianoClip(const PianoRoll& roll, int tempo, const SynthSetting
         const auto denominator = static_cast<std::uint64_t>(tempo);
         return static_cast<fl_live::Frame>((numerator + denominator - 1) / denominator);
     };
-    fl_live::MidiClip midi{frame(roll.length), {}, true};
-    for (const auto& note : roll.notes)
-        midi.notes.push_back({frame(note.start), frame(note.start + note.length) - frame(note.start),
+    fl_live::MidiClip midi{frame(roll.length), {}, roll.loop};
+    for (const auto& note : roll.notes) {
+        if (note.start >= roll.length) continue; // silent until the clip is lengthened
+        const auto end = std::min(note.start + note.length, roll.length);
+        midi.notes.push_back({frame(note.start), frame(end) - frame(note.start),
             static_cast<std::uint8_t>(note.pitch), static_cast<float>(note.velocity) / 100});
+    }
     midi.instrument = {static_cast<fl_live::Waveform>(synth.waveform), static_cast<fl_live::Frame>(synth.attack_ms) * 48,
         static_cast<fl_live::Frame>(synth.decay_ms) * 48, static_cast<float>(synth.sustain) / 100, static_cast<fl_live::Frame>(synth.release_ms) * 48};
     return midi;

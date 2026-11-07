@@ -61,15 +61,20 @@ struct PianoNote {
     int velocity = 80; // percent 1..100
     bool operator==(const PianoNote&) const = default;
 };
+// The clip plays [0, length) and loops there unless loop is false. Shortening
+// is non-destructive: notes starting at or after the length stay in the
+// document but are silent, and a note crossing the end is cut there when
+// rendered. Lengthening plays them again.
 struct PianoRoll {
     int length = 4 * piano_ticks_per_beat; // ticks, 1..piano_length_limit
+    bool loop = true;
     std::uint64_t next_id = 1;
     std::vector<PianoNote> notes; // ordered by start, then ID
     bool operator==(const PianoRoll&) const = default;
 };
-// Throws std::invalid_argument for out-of-range values, notes outside the
-// clip, duplicate or unissued IDs, wrong order, more than 1024 notes or more
-// than 16 notes sounding at once.
+// Throws std::invalid_argument for out-of-range values, notes outside 16 bars,
+// duplicate or unissued IDs, wrong order, more than 1024 notes or more than
+// 16 notes sounding at once (counting silent notes past the length too).
 void validatePiano(const PianoRoll& roll);
 // Sorts notes into the canonical order (start, then ID).
 void sortPiano(PianoRoll& roll);

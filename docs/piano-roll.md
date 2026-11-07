@@ -1,6 +1,6 @@
 # Piano roll
 
-A MIDI clip can use a piano roll instead of its step pattern. Notes sit at free tick positions, keep stable IDs, and can be added, selected, deleted (#35), moved, resized and given a velocity (#36). Clip length and loop controls are #38.
+A MIDI clip can use a piano roll instead of its step pattern. Notes sit at free tick positions, keep stable IDs, and can be added, selected, deleted (#35), moved, resized and given a velocity (#36). The clip has its own length and loop switch (#38).
 
 ## Model
 
@@ -9,7 +9,8 @@ Positions are ticks of 1/96 beat from the clip start. A clip's piano roll holds:
 | Field | Range |
 |---|---|
 | Length | 1 tick to 16 bars (6,144 ticks); converted clips start with the pattern's length |
-| Note start, length | Inside the clip: start ≥ 0, length ≥ 1 tick, start + length ≤ clip length |
+| Loop | On (default) repeats the clip; off plays it once and stops the track |
+| Note start, length | Within 16 bars: start ≥ 0, length ≥ 1 tick. Edits keep notes inside the clip length; see [Length and loop](#length-and-loop) |
 | Pitch | MIDI 0–127 |
 | Velocity | 1–100 percent |
 | Notes | At most 1,024, and at most 16 sounding at any note's start, matching the synth's 16 voices |
@@ -39,9 +40,17 @@ A note moved or deleted while it sounds keeps its voice for the rest of its orig
 
 Adding and deleting work while playing, like other [playback edits](general-session.md#playback-edits). An out-of-range or overcrowded note is refused with a message and leaves the notes and history unchanged ("At most 16 notes can sound at once").
 
+## Length and loop
+
+**Length (16ths)** sets the clip length from one sixteenth to 16 bars, and **Loop** switches repetition. Each change is one Undo step and also works while playing.
+
+Shortening is non-destructive. Notes that start at or after the new end stay in the clip, keep their IDs and are saved, but are silent and not drawn (`pianoNotes` marks them `sounding: false`). A note that crosses the end is cut there when rendered. Lengthening the clip plays them again unchanged. Adding, moving and resizing notes still require the result to lie inside the current length, so silent notes cannot be moved until the clip is long enough to show them. The 16-voice limit counts silent notes as well.
+
+The clip length becomes frames once, with the same upward rounding, and each repetition is exactly that many frames. Repetitions can therefore drift from the musical grid by up to one frame per loop, as step patterns already did. With Loop off the clip plays once, the track then stops, and a sounding release ends with it.
+
 ## Persistence
 
-Clips with notes add a `piano` object beside `pattern` and the project declares the required feature `piano-roll-v1`:
+Clips with notes add a `piano` object beside `pattern` and the project declares the required feature `piano-roll-v1`. A one-shot clip adds `"loop": false`; a looping clip omits the field, and `"loop": true` is refused so each state has one spelling:
 
 ```json
 {"id": "4", "pattern": {...}, "piano": {"length": 384, "next_id": "6",
@@ -61,4 +70,12 @@ For #36:
 - `qmlPianoRollDragAndKeys` drags to move and to resize, refuses a drag past the clip end, and uses the arrow keys, Snap Off and the velocity box.
 - `authored-project-io` checks that a note moved while sounding finishes its voice and then sounds at its new position.
 
-The [move and resize receipt](../validation/piano-roll-editing.json) records the run. The [receipt](../validation/piano-roll-notes.json) records the run.
+The [move and resize receipt](../validation/piano-roll-editing.json) records the run.
+
+For #38:
+
+- `authored-project-io` renders a 3¼-beat clip at 137 BPM for five loops. Each loop's note starts at k × 68,322 + 8,103 frames and stops at k × 68,322 + 13,358, independently rounded, with identical output at blocks 1, 64, 127, 257 and 1,000. A one-shot matches the first loop and is then silent with the track stopped. The `loop` flag round trips and `true` is refused.
+- `pianoRollLengthLoop` shows that a clip shortened to two beats exports exactly like a two-beat clip whose later notes were deleted. Lengthening restores the original export. Edits outside the length are refused, Loop off plays one bar then silence, and Save/Open keeps the length, flag and silent notes.
+- `qmlPianoRollLength` drives the length box, the Loop box and Undo.
+
+The [length and loop receipt](../validation/piano-roll-length.json) records the run. The [receipt](../validation/piano-roll-notes.json) records the run.
