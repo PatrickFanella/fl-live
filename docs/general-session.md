@@ -25,7 +25,7 @@ Every track column shows its kind, clip source, level, pan, mute, solo, scene in
 
 ## WAV import
 
-Enter a path under an audio track and choose **Import**. Decoding runs on a `WavImportWorker` thread under the [WAV admission policy](media-import.md): one or two channels, 48 kHz only, no resampling. The track shows "Importing NAME…" meanwhile; one import runs at a time. A refused file reports the importer's message ("Import failed: …") and changes nothing. A successful import replaces that track's clip source as one Undo step. If transport is running when decoding finishes, the result waits and is applied after Stop.
+Enter a path under an audio track and choose **Import**. Decoding runs on a `WavImportWorker` thread under the [WAV admission policy](media-import.md): one or two channels, 48 kHz only, no resampling. The track shows "Importing NAME…" meanwhile; one import runs at a time. A refused file reports the file and the importer's reason ("Could not import NAME: …") and changes nothing. A successful import replaces that track's clip source as one Undo step. If transport is running when decoding finishes, the result waits and is applied after Stop.
 
 ## Waveform and source range
 

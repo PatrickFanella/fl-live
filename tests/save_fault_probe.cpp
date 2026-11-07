@@ -62,6 +62,9 @@ int faults(const QString& dir) {
         const std::string name(fault);
         require(!saved && !savedAs, name + ": faulted save reported success");
         require(session.message().contains("previous file was preserved"), name + ": message " + session.message().toStdString());
+        // Actionable: the message names the file it could not write and says what to do.
+        require(session.message().startsWith("Could not save new.json") && session.message().contains("edits are kept") &&
+                session.message().contains("save again"), name + ": message " + session.message().toStdString());
         require(bytes(path) == baseline, name + ": destination bytes changed");
         require(bytes(neighbor) == QByteArray(4096, '\x5a'), name + ": unrelated file changed");
         require(entries(dir) == listing, name + ": temporary or new file left behind");
