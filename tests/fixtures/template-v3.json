@@ -1,0 +1,166 @@
+{
+    "format": "fl-live-project",
+    "required_features": [
+        "template-identities-v1"
+    ],
+    "session": {
+        "clips": [
+            {
+                "id": "3",
+                "name": "Low pulse",
+                "track": "1"
+            },
+            {
+                "id": "4",
+                "name": "Melody",
+                "track": "2"
+            }
+        ],
+        "format": "fl-live-session-metadata",
+        "next_id": "6",
+        "required_features": [
+            "session-identities-v1"
+        ],
+        "scenes": [
+            {
+                "id": "5",
+                "name": "Scene 1",
+                "slots": [
+                    {
+                        "clip": "3",
+                        "track": "1"
+                    },
+                    {
+                        "clip": "4",
+                        "track": "2"
+                    }
+                ]
+            }
+        ],
+        "tracks": [
+            {
+                "id": "1",
+                "kind": "audio",
+                "name": "Drums"
+            },
+            {
+                "id": "2",
+                "kind": "midi",
+                "name": "Steps / MIDI"
+            }
+        ],
+        "version": 1
+    },
+    "settings": {
+        "format": "fl-live-project",
+        "levels": [
+            35,
+            60
+        ],
+        "pattern": {
+            "length": 4,
+            "steps": [
+                {
+                    "enabled": true,
+                    "gate": 75,
+                    "pitch": 48,
+                    "velocity": 70
+                },
+                {
+                    "enabled": true,
+                    "gate": 75,
+                    "pitch": 55,
+                    "velocity": 70
+                },
+                {
+                    "enabled": true,
+                    "gate": 75,
+                    "pitch": 59,
+                    "velocity": 70
+                },
+                {
+                    "enabled": true,
+                    "gate": 75,
+                    "pitch": 62,
+                    "velocity": 70
+                },
+                {
+                    "enabled": false,
+                    "gate": 75,
+                    "pitch": 60,
+                    "velocity": 70
+                },
+                {
+                    "enabled": false,
+                    "gate": 75,
+                    "pitch": 60,
+                    "velocity": 70
+                },
+                {
+                    "enabled": false,
+                    "gate": 75,
+                    "pitch": 60,
+                    "velocity": 70
+                },
+                {
+                    "enabled": false,
+                    "gate": 75,
+                    "pitch": 60,
+                    "velocity": 70
+                },
+                {
+                    "enabled": false,
+                    "gate": 75,
+                    "pitch": 60,
+                    "velocity": 70
+                },
+                {
+                    "enabled": false,
+                    "gate": 75,
+                    "pitch": 60,
+                    "velocity": 70
+                },
+                {
+                    "enabled": false,
+                    "gate": 75,
+                    "pitch": 60,
+                    "velocity": 70
+                },
+                {
+                    "enabled": false,
+                    "gate": 75,
+                    "pitch": 60,
+                    "velocity": 70
+                },
+                {
+                    "enabled": false,
+                    "gate": 75,
+                    "pitch": 60,
+                    "velocity": 70
+                },
+                {
+                    "enabled": false,
+                    "gate": 75,
+                    "pitch": 60,
+                    "velocity": 70
+                },
+                {
+                    "enabled": false,
+                    "gate": 75,
+                    "pitch": 60,
+                    "velocity": 70
+                },
+                {
+                    "enabled": false,
+                    "gate": 75,
+                    "pitch": 60,
+                    "velocity": 70
+                }
+            ]
+        },
+        "template": "pulse-step-sequencer-v1",
+        "tempo": 137,
+        "version": 2
+    },
+    "version": 3
+}

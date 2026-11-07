@@ -1,0 +1,35 @@
+{
+  "verified_at": "2026-11-07T11:40:27.940856+00:00",
+  "base": "feat/device-qualification (PR #146) head",
+  "issues": [
+    56,
+    86
+  ],
+  "scope": "Version 4 round trips with every saved feature, retained template fixtures, safe refusal of unknown features, and a notes-and-devices example",
+  "environment": "Kvant, pinned CI image, docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 24,
+      "total": 24
+    }
+  },
+  "verified_behaviors": [
+    "Template v1, v2 and v3 fixture files load from disk with tempo 137, levels 35/60 and pitches 48..62; all three give equal content; v3 keeps renamed identities",
+    "Every example re-encodes to identical bytes; lanes reference existing tracks and their own devices; note IDs are below the clip counters",
+    "Each example with an extra unknown required feature, version 5 or an unexpected top-level field is refused",
+    "The examples together use general-session-v1, automation-v1, synth-v1, piano-roll-v1, devices-v1 and device-automation-v1",
+    "notes-and-devices.json is rebuilt byte for byte by a Session API script; all three examples open without warnings, launch every scene and export audible stereo; the staged install ships the new example"
+  ],
+  "source_sha256": {
+    "tests/authored_project_tests.cpp": "ab3d24bb6207e7febf4c35053bc132f4314d1931cd578b8b9c120323295566f5",
+    "tests/desktop_tests.cpp": "156cf31f29aeaf690914405b198469eea71c74aaf1dd3881833090e60477806b",
+    "tests/fixtures/template-v1.json": "c797623e7889fbc9cf96f42379890c21876609b4e3a5c1cdfffced1acdd57f02",
+    "tests/fixtures/template-v2.json": "bb5b1e757a9a93b5ae6095f34315164191aec29ac5a9c1ee77a996f3034a27b4",
+    "tests/fixtures/template-v3.json": "1f3f07e4742519ce54edae27241aac854900899b824512718764cd82d5c00d7c",
+    "examples/notes-and-devices.json": "eef2972d5b368c01b940b04712e1949f81a9f452d5e3df0d2f2bf9d524f221bd",
+    "examples/four-track-session.json": "4ce57507b04ac7dc840a216a9c5d54623715b6ef909ec4e1252c226af37bf4c5",
+    "examples/single-pattern.json": "561093935ab9b68fa5a611d6916588d987ea2529e07410d0f8d7787da09cf9a9",
+    "apps/desktop/authored_project.cpp": "03b116fe68ebc0cf1260795832233045f4580b716417005c38afa1bbeb3f2b80"
+  },
+  "limits": "Imported audio is covered by its own tests, not by a shipped example (no redistributable WAV); the product license is still undecided (#84)."
+}

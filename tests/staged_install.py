@@ -14,7 +14,7 @@ with tempfile.TemporaryDirectory(prefix="fl-live-install-") as temporary:
     prefix = pathlib.Path(temporary) / "prefix"
     subprocess.run(["cmake", "--install", str(build), "--prefix", str(prefix)], check=True, capture_output=True, text=True)
     expected = ["bin/fl-live", "bin/fl-live-play", "bin/fl-live-render", "share/applications/fl-live.desktop",
-                "share/fl-live/examples/four-track-session.json", "share/fl-live/examples/single-pattern.json",
+                "share/fl-live/examples/four-track-session.json", "share/fl-live/examples/single-pattern.json", "share/fl-live/examples/notes-and-devices.json",
                 "share/doc/fl_live/THIRD-PARTY-NOTICES.md", "share/doc/fl_live/install.md", "share/doc/fl_live/limitations.md"]
     missing = [path for path in expected if not (prefix / path).exists()]
     assert not missing, missing

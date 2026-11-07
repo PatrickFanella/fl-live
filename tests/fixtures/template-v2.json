@@ -1,0 +1,111 @@
+{
+    "format": "fl-live-project",
+    "levels": [
+        35,
+        60
+    ],
+    "pattern": {
+        "length": 4,
+        "steps": [
+            {
+                "enabled": true,
+                "gate": 75,
+                "pitch": 48,
+                "velocity": 70
+            },
+            {
+                "enabled": true,
+                "gate": 75,
+                "pitch": 55,
+                "velocity": 70
+            },
+            {
+                "enabled": true,
+                "gate": 75,
+                "pitch": 59,
+                "velocity": 70
+            },
+            {
+                "enabled": true,
+                "gate": 75,
+                "pitch": 62,
+                "velocity": 70
+            },
+            {
+                "enabled": false,
+                "gate": 75,
+                "pitch": 60,
+                "velocity": 70
+            },
+            {
+                "enabled": false,
+                "gate": 75,
+                "pitch": 60,
+                "velocity": 70
+            },
+            {
+                "enabled": false,
+                "gate": 75,
+                "pitch": 60,
+                "velocity": 70
+            },
+            {
+                "enabled": false,
+                "gate": 75,
+                "pitch": 60,
+                "velocity": 70
+            },
+            {
+                "enabled": false,
+                "gate": 75,
+                "pitch": 60,
+                "velocity": 70
+            },
+            {
+                "enabled": false,
+                "gate": 75,
+                "pitch": 60,
+                "velocity": 70
+            },
+            {
+                "enabled": false,
+                "gate": 75,
+                "pitch": 60,
+                "velocity": 70
+            },
+            {
+                "enabled": false,
+                "gate": 75,
+                "pitch": 60,
+                "velocity": 70
+            },
+            {
+                "enabled": false,
+                "gate": 75,
+                "pitch": 60,
+                "velocity": 70
+            },
+            {
+                "enabled": false,
+                "gate": 75,
+                "pitch": 60,
+                "velocity": 70
+            },
+            {
+                "enabled": false,
+                "gate": 75,
+                "pitch": 60,
+                "velocity": 70
+            },
+            {
+                "enabled": false,
+                "gate": 75,
+                "pitch": 60,
+                "velocity": 70
+            }
+        ]
+    },
+    "template": "pulse-step-sequencer-v1",
+    "tempo": 137,
+    "version": 2
+}

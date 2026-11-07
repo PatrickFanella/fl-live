@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QDir>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -547,7 +548,54 @@ void deviceAutomation() {
     refused([](SessionContent& c){c.automation.push_back({c.automation[0].track,AutomatedParameter::level,{{0,50}},2});}); // a device ID on a level lane
     auto ok=project.content;ok.devices[0].devices[2].value=12;ok.automation[0].points[1].value=12;validateContent(ok,project.identities); // exactly +24
 }
+// Retained fixtures (#56): template versions 1-3 as files, and every shipped
+// example, which uses each saved feature between them. Version 4 files
+// re-encode to the same bytes; unknown features, versions and fields fail.
+void retainedFixtures() {
+    const QDir fixtures(QStringLiteral(FL_LIVE_FIXTURES)),examples(QStringLiteral(FL_LIVE_EXAMPLES));
+    const auto read=[](const QString& path){QFile f(path);if(!f.open(QIODevice::ReadOnly))throw std::runtime_error("missing fixture "+path.toStdString());return f.readAll();};
+    if(qEnvironmentVariableIsSet("FL_LIVE_WRITE_FIXTURES")) { // regenerate deliberately, never in CI
+        const QByteArray v1=R"({"format":"fl-live-project","version":1,"template":"pulse-steps-v1","tempo":137,"levels":[35,60],"pitches":[48,55,59,62]})";
+        const auto project=decodeAuthoredProject(v1);const auto settings=templateView(project.content,project.identities);
+        fl_live::SessionDocument document(project.identities);
+        document.renameTrack(project.identities.tracks[0].id,"Drums");document.renameClip(project.identities.clips[1].id,"Melody");
+        const auto write=[&](const QString& name,const QByteArray& bytes){QFile f(fixtures.filePath(name));if(!f.open(QIODevice::WriteOnly))throw std::runtime_error("write");f.write(bytes);};
+        write("template-v1.json",v1);write("template-v2.json",encodeProjectSettings(settings));write("template-v3.json",v3(settings,document.snapshot()));
+    }
+    std::vector<AuthoredProject> templates;
+    for(const auto* name:{"template-v1.json","template-v2.json","template-v3.json"})templates.push_back(decodeAuthoredProject(read(fixtures.filePath(name))));
+    for(const auto& t:templates) {
+        const auto view=templateView(t.content,t.identities);
+        CHECK(t.content.tempo==137 && view.levels==(std::array<int,2>{35,60}) && view.steps[0].pitch==48 && view.steps[3].pitch==62);
+        CHECK(t.content==templates[0].content);
+    }
+    CHECK(templates[2].identities.tracks[0].name=="Drums" && templates[2].identities.clips[1].name=="Melody" && templates[0].identities==defaultTemplateIdentities());
+    const auto files=examples.entryList({"*.json"},QDir::Files);
+    QStringList features;
+    for(const auto& name:files) {
+        const auto bytes=read(examples.filePath(name));
+        const auto project=decodeAuthoredProject(bytes);
+        CHECK(encodeAuthoredProject(project,examples.path())==bytes); // deterministic, lossless
+        for(const auto& f:QJsonDocument::fromJson(bytes).object()["required_features"].toArray())if(!features.contains(f.toString()))features.append(f.toString());
+        // Identity references resolve: devices and lanes on existing tracks, lane devices on their track, note IDs below the counter.
+        for(const auto& lane:project.content.automation) {
+            CHECK(std::any_of(project.identities.tracks.begin(),project.identities.tracks.end(),[&](const auto& t){return t.id==lane.track;}));
+            if(lane.parameter==AutomatedParameter::device)
+                CHECK(std::any_of(project.content.devices.begin(),project.content.devices.end(),[&](const auto& e){return e.track==lane.track &&
+                    std::any_of(e.devices.begin(),e.devices.end(),[&](const auto& d){return d.id==lane.device;});}));
+        }
+        for(const auto& clip:project.content.clips)if(clip.piano)for(const auto& note:clip.piano->notes)CHECK(note.id<clip.piano->next_id);
+        // Unknown required features, versions and fields fail safely.
+        const auto broken=[&](auto edit){auto root=QJsonDocument::fromJson(bytes).object();edit(root);rejects([&]{decodeAuthoredProject(QJsonDocument(root).toJson());});};
+        broken([](QJsonObject& r){auto f=r["required_features"].toArray();f.append("future-feature-v1");r["required_features"]=f;});
+        broken([](QJsonObject& r){r["version"]=5;});
+        broken([](QJsonObject& r){r["unexpected"]=true;});
+    }
+    // Between them the examples exercise every saved feature except imported audio.
+    for(const auto* feature:{"general-session-v1","automation-v1","synth-v1","piano-roll-v1","devices-v1","device-automation-v1"})CHECK(features.contains(feature));
+}
 int main(){try{
+    retainedFixtures();
     deviceAutomation();
     deviceGraph();
     pianoLoopTiming();
