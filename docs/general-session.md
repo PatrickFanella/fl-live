@@ -71,6 +71,15 @@ Opening a project decodes its imported WAVs on the control thread before prepari
 - `trackLimit`: 64 tracks, refused 65th add and duplicate without history change, Save/Open.
 - `qmlTrackManagement`: actual pointer input on Add audio/MIDI track, Import, Edit pattern, step editing, Duplicate, Delete, Undo, clip launch and Play.
 
+## Scheduling and failure regressions (#33)
+
+`general-session-regressions` (desktop and `document-io-sanitize`, so also under ASan/UBSan) prepares a four-track general project through `contentSources`/`contentGains`: the pulse, the template pattern, an imported stereo clip with a looped 1–5 frame range, and a bass pattern. Tempo is 137 BPM, so a beat is 21,021.9 frames and bar boundaries round upward.
+
+- The full scene launches at bar 1 (frame 84,088), a sparse scene replaces it mid-bar (stopping three tracks), and the scene stops at bar 3 (frame 252,263). Stereo output is identical at blocks of 1, 64, 128, 257 and 512 frames. Silence before bar 1 and after the stop, and the exact looped range after the replacement, are checked against independent values. MIDI voices are present before the replacement and zero after it.
+- A full control queue reports `full` instead of dropping a control. Panic is still delivered and leaves no clip or sample playing, and fresh controls are then accepted.
+- Deleting a playing MIDI track removes its clip and scene slots from the next plan. The old plan's held note continues only until its render owner stops, and a fresh engine starts silent.
+- A missing WAV prepares as a launchable silent loop. Invalid content (range outside the file, `wav` without a path, a missing clip entry, level 101, a NaN inside the played range) is refused without affecting the existing plan. Samples outside the selected range are not validated by preparation; the importer already refuses non-finite files.
+
 ## D2 journey qualification (#37)
 
 `qmlD2Journey` drives the whole D2 workload through the production QML with pointer and keyboard input only:

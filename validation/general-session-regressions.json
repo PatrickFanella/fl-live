@@ -1,0 +1,31 @@
+{
+  "verified_at": "2026-11-07T08:13:53.228385+00:00",
+  "base": "PR #118 head",
+  "issues": [
+    33
+  ],
+  "scope": "Scheduling and failure regressions for general desktop content",
+  "environment": "Kvant, pinned CI image, docker --network none",
+  "gates": {
+    "desktop": {
+      "passed": 20,
+      "total": 20
+    },
+    "document-io-sanitize": {
+      "passed": 8,
+      "total": 8,
+      "note": "general-session-regressions runs under ASan/UBSan here"
+    }
+  },
+  "verified_behaviors": [
+    "Block invariance at 1/64/128/257/512 frames with 137 BPM non-integral bars: launch, mid-bar scene replacement, scene stop",
+    "Exact looped imported-range samples after replacement; MIDI voices released by the replacement",
+    "Control-queue saturation reports full; panic recovers; later controls apply",
+    "Deleting a playing track: next plan drops clip and scene slots; held notes end at render-owner stop",
+    "Missing media prepares silent; invalid content refused without replacing the existing plan"
+  ],
+  "source_sha256": {
+    "tests/general_session_tests.cpp": "b83abf2c9f2bb937dd996f7f7118889e170a35817bb5ce070150c1897d0c9db5"
+  },
+  "limits": "Offline engine/controller checks; no backend or physical audio."
+}
