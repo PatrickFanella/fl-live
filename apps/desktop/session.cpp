@@ -422,6 +422,9 @@ QString Session::editName(const HistoryEntry& entry) {
     case EditKind::piano_mode: return "piano roll";
     case EditKind::note_add: return "add note";
     case EditKind::note_delete: return entry.index == 1 ? "delete note" : "delete notes";
+    case EditKind::note_move: return entry.index == 1 ? "move note" : "move notes";
+    case EditKind::note_resize: return entry.index == 1 ? "resize note" : "resize notes";
+    case EditKind::note_velocity: return "note velocity";
     case EditKind::synth: return "synth "+QString::fromLatin1(entry.index==0 ? "waveform" : entry.index==1 ? "attack" : entry.index==2 ? "decay" : entry.index==3 ? "sustain" : "release");
     default: return {};
     }
@@ -1422,6 +1425,40 @@ bool Session::deleteNotes(const QVariantList& ids) {
     });
     if(done){std::erase_if(selected_notes_,[&](auto id){return std::find(values.begin(),values.end(),id)!=values.end();});emit changed();}
     return done;
+}
+bool Session::editNotes(EditKind kind,const QVariantList& ids,const std::function<void(PianoNote&)>& change) {
+    std::vector<std::uint64_t> values;
+    try { for(const auto& id:ids)values.push_back(parseIdentity(id.toString())); }
+    catch(const std::exception& error){message_=QString::fromUtf8(error.what());emit changed();return false;}
+    if(values.empty()){message_="Select notes first";emit changed();return false;}
+    history_index_hint_=static_cast<int>(values.size());
+    return editPiano(kind,[&](PianoRoll& roll) {
+        for(const auto value:values) {
+            const auto note=std::find_if(roll.notes.begin(),roll.notes.end(),[&](const auto& n){return n.id==value;});
+            if(note==roll.notes.end())throw std::invalid_argument("Unknown note");
+            change(*note);
+        }
+    });
+}
+bool Session::moveNotes(const QVariantList& ids,int deltaTicks,int deltaPitch) {
+    return editNotes(EditKind::note_move,ids,[&](PianoNote& note) {
+        // Checked per note before validation so the message names the policy.
+        if(note.start+deltaTicks<0 || note.pitch+deltaPitch<0 || note.pitch+deltaPitch>127)
+            throw std::invalid_argument("The move would take a note outside the clip or the pitch range; nothing moved");
+        note.start+=deltaTicks;note.pitch+=deltaPitch;
+        if(note.start+note.length>(piano() ? piano()->length : 0))
+            throw std::invalid_argument("The move would take a note outside the clip or the pitch range; nothing moved");
+    });
+}
+bool Session::resizeNotes(const QVariantList& ids,int deltaTicks) {
+    return editNotes(EditKind::note_resize,ids,[&](PianoNote& note) {
+        if(note.length+deltaTicks<1 || note.start+note.length+deltaTicks>(piano() ? piano()->length : 0))
+            throw std::invalid_argument("A note must keep at least one tick and end inside the clip; nothing changed");
+        note.length+=deltaTicks;
+    });
+}
+bool Session::setNotesVelocity(const QVariantList& ids,int velocity) {
+    return editNotes(EditKind::note_velocity,ids,[&](PianoNote& note){note.velocity=velocity;});
 }
 bool Session::setSynth(const QString& field,int value) {
     if(!changeable())return false;
