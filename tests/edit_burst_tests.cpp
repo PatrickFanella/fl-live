@@ -155,8 +155,10 @@ BurstResult burst() {
             if (controller.submit(control)) ++serial; else ++refused;
         }
         if (round % 50 == 0) {
-            panic_at.store(blocks.load());
+            // Count from after the request: at most the block already in
+            // progress misses it, and the next one renders the panic.
             controller.panic();
+            panic_at.store(blocks.load());
             ++panics;
             while (panic_at.load() != std::numeric_limits<std::uint64_t>::max() && !bad.load()) std::this_thread::yield();
         }
