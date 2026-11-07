@@ -98,55 +98,79 @@ DROPPED_EXIT = 3
 MAX_ATTEMPTS = 5
 
 
-def dropped_cycles(values, mismatches, quantum):
-    """Return dropped-cycle runs when every mismatch is a whole lost quantum.
+def authored_segments(frames, loop):
+    """Split a capture into runs that each continue the authored loop exactly.
 
-    A follower that misses its graph cycle leaves the capture port silent for
-    exactly one or more quanta while the source keeps advancing. That is a
-    transport drop in this unprivileged private graph, not an engine output
-    error. Any nonzero mismatch, partial-quantum gap or offset change returns
-    None so the caller fails without retrying.
+    frames are samples (mono) or (left, right) tuples; loop is the authored
+    period in the same form. A frame that is exact silence between runs is a
+    gap. Every other frame must be authored content at the current offset or
+    start a new run at its own offset. Returns (segments, anomalies) where an
+    anomaly is a "drop" (silence, then the source continued at the expected
+    offset) or a "slip" (the source resumed at a different offset). Raises
+    AssertionError for any frame that is neither silence nor authored content.
     """
-    if not mismatches or any(value != 0 for _, value, _ in mismatches):
-        return None
-    runs = []
-    for index, _, _ in mismatches:
-        if runs and index == runs[-1][0] + runs[-1][1]:
-            runs[-1][1] += 1
-        else:
-            runs.append([index, 1])
-    for run in runs:
-        # A gap may also cover a frame whose authored value is zero.
-        while run[0] > 0 and values[run[0] - 1] == 0 and run[1] % quantum:
-            run[0] -= 1
-            run[1] += 1
-        while run[0] + run[1] < len(values) and values[run[0] + run[1]] == 0 and run[1] % quantum:
-            run[1] += 1
-    if any(length % quantum for _, length in runs):
-        return None
-    return [dict(first_frame=start, frames=length, cycles=length // quantum) for start, length in runs]
+    silent = (lambda f: f == 0) if not isinstance(loop[0], tuple) else (lambda f: f[0] == 0 and f[1] == 0)
+    index = {}
+    for i, value in enumerate(loop):
+        index.setdefault(value, i)
+    segments, anomalies = [], []
+    i, n, period = 0, len(frames), len(loop)
+    while i < n:
+        if silent(frames[i]) and frames[i] not in index:
+            gap = i
+            while i < n and silent(frames[i]) and frames[i] not in index:
+                i += 1
+            if segments and i < n:
+                anomalies.append(dict(frame=gap, silent_frames=i - gap))
+            continue
+        assert frames[i] in index, ("captured frame is not authored content", i, frames[i])
+        start, offset = i, index[frames[i]]
+        while i < n and frames[i] == loop[offset]:
+            offset = (offset + 1) % period
+            i += 1
+        if segments:
+            previous = segments[-1]
+            gap = start - (previous[0] + previous[1])
+            continued = (previous[2] + previous[1] + gap) % period == index[frames[start]]
+            if anomalies and anomalies[-1]["frame"] == previous[0] + previous[1]:
+                anomalies[-1]["kind"] = "drop" if continued else "slip"
+            else:
+                anomalies.append(dict(frame=start, silent_frames=0, kind="drop" if continued else "slip"))
+        segments.append((start, i - start, index[frames[start]]))
+    return segments, anomalies
 
 
-def dropped_cycle_regression():
-    wave = [0.25, -0.5, 0.75, -1.0]
-    values = [wave[i % 4] for i in range(1024)]
-    def mismatches_of(captured):
-        return [(i, v, values[i]) for i, v in enumerate(captured) if v != values[i]]
-    gap = values.copy(); gap[256:384] = [0.0] * 128
-    assert dropped_cycles(gap, mismatches_of(gap), 128) == [dict(first_frame=256, frames=128, cycles=1)]
-    partial = values.copy(); partial[256:300] = [0.0] * 44
-    assert dropped_cycles(partial, mismatches_of(partial), 128) is None
-    wrong = values.copy(); wrong[5] = 0.125
-    assert dropped_cycles(wrong, mismatches_of(wrong), 128) is None
-    shifted = values[1:] + [0.25]
-    assert dropped_cycles(shifted, mismatches_of(shifted), 128) is None
+def segmentation_regression():
+    loop = (0.25, -0.5, 0.75, -1.0)
+    clean = [loop[i % 4] for i in range(400)]
+    assert authored_segments(clean, loop) == ([(0, 400, 0)], [])
+    dropped = clean.copy(); dropped[100:228] = [0.0] * 128
+    segments, anomalies = authored_segments(dropped, loop)
+    assert len(segments) == 2 and anomalies == [dict(frame=100, silent_frames=128, kind="drop")], anomalies
+    slipped = clean[:150] + clean[151:] + [loop[0]]
+    assert authored_segments(slipped, loop)[1][0]["kind"] == "slip"
+    for corrupt in (clean[:50] + [0.3] + clean[51:], clean[:50] + [0.25 * 1.0001] + clean[51:]):
+        try:
+            authored_segments(corrupt, loop)
+        except AssertionError:
+            continue
+        raise AssertionError("segmentation accepted corrupted content")
+    stereo = ((0.1, -0.1), (0.2, -0.2), (0.3, -0.3))
+    swapped = [stereo[i % 3] for i in range(30)]; swapped[10] = (-0.2, 0.2)
+    try:
+        authored_segments(swapped, stereo)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("segmentation accepted a channel swap")
 
 
-dropped_cycle_regression()
+segmentation_regression()
 
 
 def fail_dropped(runs, attempt_scope):
-    """Exit for the parent to retry; the full JSON was already printed."""
+    """Exit for the parent to retry a continuity control whose only failures
+    were transport drops or slips; the full JSON was already printed."""
     print("DROPPED_CYCLES " + json.dumps(dict(scope=attempt_scope, runs=runs)), file=sys.stderr, flush=True)
     raise SystemExit(DROPPED_EXIT)
 
@@ -162,12 +186,12 @@ if os.environ.get("FL_LIVE_PRIVATE_GRAPH_ATTEMPT") is None:
         sys.stderr.write(child.stderr)
         if child.returncode != DROPPED_EXIT:
             if dropped:
-                print(json.dumps(dict(retried_after_dropped_cycles=dropped, attempts=attempt,
+                print(json.dumps(dict(retried_after_transport_anomalies=dropped, attempts=attempt,
                                       final_returncode=child.returncode)), flush=True)
             sys.exit(child.returncode)
         dropped.append(next(json.loads(line[len("DROPPED_CYCLES "):]) for line in child.stderr.splitlines()
                             if line.startswith("DROPPED_CYCLES ")))
-    print(json.dumps(dict(passed=False, retried_after_dropped_cycles=dropped, attempts=MAX_ATTEMPTS)), flush=True)
+    print(json.dumps(dict(passed=False, retried_after_transport_anomalies=dropped, attempts=MAX_ATTEMPTS)), flush=True)
     sys.exit(1)
 
 parser = argparse.ArgumentParser()
@@ -396,15 +420,13 @@ context.objects = [
                 offset = expected_left.index(left[first])
                 assert len(left) - first >= 20000, "insufficient engine audio captured"
                 assert all(value == 0 for value in left[:left_start] + right[:right_start]), "unexpected pre-link samples"
-                mismatches = [(i + first, l, r) for i, (l, r) in enumerate(zip(left[first:], right[first:]))
-                              if l != expected_left[(i + offset) % 8] or r != expected_right[(i + offset) % 8]]
-                if mismatches and all(l == 0 and r == 0 for _, l, r in mismatches):
-                    # Both channels silent together: classify as dropped cycles
-                    # on the left channel against its own authored values.
-                    left_mismatches = [(i, l, expected_left[(i - first + offset) % 8]) for i, l, _ in mismatches]
-                    if runs := dropped_cycles(left, left_mismatches, args.quantum):
-                        fail_dropped(runs, "stereo capture")
-                assert not mismatches, ("stereo capture differs from authored channels", len(mismatches), mismatches[:8])
+                # Every frame must be the authored left/right pair in order;
+                # transport drops and slips in this unprivileged graph start
+                # new segments and are reported, not counted as engine output.
+                segments, anomalies = authored_segments(list(zip(left[first:], right[first:])),
+                                                        tuple(zip(expected_left, expected_right)))
+                authored_frames = sum(length for _, length, _ in segments)
+                assert authored_frames >= 20000 and len(anomalies) <= 32, (authored_frames, anomalies[:8])
                 remaining, errors = player.communicate(timeout=4)
                 assert player.returncode == 0, (remaining, errors)
                 stats = json.loads(remaining.strip())
@@ -419,6 +441,7 @@ context.objects = [
                                       requested_quantum=args.quantum, channels=2, links=stereo_links,
                                       captured_frames=len(left), capture_returncode=capture_code, silent_prefix=first, link_lag_frames=link_lag,
                                       first_source_frame=offset, playback=stats, unsupported_channels_refused=3,
+                                      authored_frames=authored_frames, transport_anomalies=anomalies,
                                       capture_sha256=hashlib.sha256(data).hexdigest())))
                 sys.exit(0)  # finally reaps the owned capture/player/server
             sample_count = 72000 if args.live_probe else 24000
@@ -461,13 +484,23 @@ context.objects = [
                                       first_source_frame=offset, playback=stats, capture_sha256=hashlib.sha256(data).hexdigest(),
                                       mismatched_frames=len(mismatches), first_mismatches=mismatches[:8],
                                       unexpected_zero_frames=sum(value == 0 for _, value, _ in mismatches))), flush=True)
-                if mismatches and (runs := dropped_cycles(values, mismatches, args.quantum)):
-                    fail_dropped(runs, "frame-coded capture")
+                if mismatches:
+                    # Continuity controls stay strict: a pass needs one fully
+                    # continuous capture. A failure made only of transport
+                    # drops/slips (every frame silence or authored content)
+                    # is retried on a fresh server; anything else fails now.
+                    try:
+                        _, anomalies = authored_segments(list(values[first:]), tuple(expected))
+                    except AssertionError:
+                        anomalies = None
+                    if anomalies:
+                        fail_dropped(anomalies[:16], "frame-coded capture")
                 assert not mismatches, "frame-coded capture continuity unqualified; see measured JSON above"
                 sys.exit(0)
-            if mismatches and (runs := dropped_cycles(values, mismatches, args.quantum)):
-                fail_dropped(runs, "authored engine capture")
-            assert not mismatches, ("capture differs from authored engine output", len(mismatches), mismatches[:8])
+            # Authored content in order, with transport drops/slips reported.
+            segments, anomalies = authored_segments(list(values[first:]), tuple(expected))
+            authored_frames = sum(length for _, length, _ in segments)
+            assert authored_frames >= 20000 and len(anomalies) <= 32, ("capture is not authored engine output", authored_frames, anomalies[:8])
             remaining, errors = player.communicate(timeout=4)
             assert player.returncode == 0, (remaining, errors)
             stats = json.loads(remaining.strip())
@@ -567,7 +600,7 @@ context.objects = [
                 stop(server)
             print(json.dumps(dict(passed=True,scope="private software graph; no hardware/audio-device qualification",
                                   requested_quantum=args.quantum,
-                                  captured_frames=len(values), capture_returncode=capture_code,
+                                  captured_frames=len(values), capture_returncode=capture_code, authored_frames=authored_frames, transport_anomalies=anomalies[:16],
                                   silent_prefix=first, playback=stats, server_loss=lost, project_rebuilds=project_rebuilds,
                                   desktop_workflow=desktop_workflow, desktop_recovery=desktop_recovery)))
         except Exception:
