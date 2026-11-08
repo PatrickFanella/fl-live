@@ -228,6 +228,9 @@ if(FL_LIVE_BUILD_DESKTOP)
             add_test(NAME pipewire-recording-loopback COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_placement.py --loopback $<TARGET_FILE:desktop-backend-probe> $<TARGET_FILE:graph-source>)
             set_tests_properties(pipewire-recording-loopback PROPERTIES TIMEOUT 60)
+            add_test(NAME pipewire-recording-two-drivers COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_two_drivers.py $<TARGET_FILE:desktop-backend-probe>)
+            set_tests_properties(pipewire-recording-two-drivers PROPERTIES TIMEOUT 60)
             add_test(NAME pipewire-input-monitoring COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_capture.py --desktop --monitor $<TARGET_FILE:desktop-backend-probe>)
             set_tests_properties(pipewire-input-monitoring PROPERTIES TIMEOUT 60)

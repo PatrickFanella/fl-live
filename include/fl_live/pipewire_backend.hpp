@@ -11,7 +11,12 @@ struct PipeWireConfig {
     std::string target;
     std::string input_target; // the desktop's capture stream links here when set
     std::string midi_input_target; // and its MIDI input here
-    std::string node_group;
+    // Every fl-live node joins this group, so PipeWire runs the output, audio
+    // input and MIDI input from one driver. On real hardware the playback and
+    // capture devices are separate drivers; without a shared group the input
+    // follows another driver whose frame counter is unrelated to the
+    // transport anchor, and recorded takes cannot be placed.
+    std::string node_group = "fl-live";
     bool autoconnect = false;
     std::uint32_t sample_rate = 48000;
     std::uint32_t channels = 1; // 1 = MONO downmix, 2 = interleaved FL/FR; others are refused
