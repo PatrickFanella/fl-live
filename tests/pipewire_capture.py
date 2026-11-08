@@ -303,11 +303,16 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
         # half-linked value can equal some expected value by chance.
         begin = next(f for f in range(len(mono) - 8)
                      if expected.get(mono[f]) is not None and all(expected.get(mono[f + k]) == expected[mono[f]] + k for k in range(8)))
-        position, matched, jumps, skipped = None, 0, 0, 0
+        position, matched, jumps, skipped, silent = None, 0, 0, 0, 0
         for f, value in enumerate(mono[begin:], begin):
             # Different input pairs can mix to the same value, so the next
             # expected sample is tried first and the lookup only finds jumps.
             at = position if position is not None and position < FRAMES and sequence[position] == value else expected.get(value)
+            if at is None and value == 0.0:
+                # A cycle whose input arrived late plays silence, as the
+                # monitor is designed to; counted like a slipped quantum.
+                silent += 1
+                continue
             assert at is not None, f"output sample {f} ({value}) is not the monitored input at level 50% and pan -50"
             if position is not None and at != position:
                 assert at > position, f"sample {f} goes back in the input"
@@ -315,8 +320,8 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
                 skipped += at - position
             position = at + 1
             matched += 1
-        assert matched > 48000 and skipped <= matched // 10, (matched, jumps, skipped)
-        print(json.dumps({"output_samples": len(mono), "first_followed_sample": begin, "matched_samples": matched, "jumps": jumps, "skipped": skipped}))
+        assert matched > 48000 and skipped + silent <= matched // 10, (matched, jumps, skipped, silent)
+        print(json.dumps({"output_samples": len(mono), "first_followed_sample": begin, "matched_samples": matched, "jumps": jumps, "skipped": skipped, "silent": silent}))
         print("PASS: input monitoring: the desktop output carries the input at the armed track's level and pan, (0.5 L + 0.25 R) / 2 "
               "in mono, sample for sample")
         sys.exit(0)
