@@ -2,7 +2,7 @@
 
 Original source for a Linux-first open-source music workstation, working toward a useful MVP and ultimately a close Live/Max replacement. C++20 and Qt 6/QML are the selected product stack. The implemented slices are a headless engine, offline renderer, bounded control handoff, optional PipeWire output backend and a Qt/QML session application with editable template settings and project save/reload.
 
-The private reference-product research remains in a separate workspace. No captured executable code, factory assets or research binaries are part of this source tree. Project licensing is still undecided; no release has been published. The canonical product repository is [subculture-collective/fl-live](https://git.subcult.tv/subculture-collective/fl-live), initially private.
+The private reference-product research remains in a separate workspace. No captured executable code, factory assets or research binaries are part of this source tree. fl-live is licensed under the GNU GPL, version 3 or later ([LICENSE](LICENSE)). The repository is private and no release has been published. The canonical product repository is [subculture-collective/fl-live](https://git.subcult.tv/subculture-collective/fl-live), initially private.
 
 To build a development package and install it, see [install](docs/install.md). Keyboard shortcuts, focus rules and accessible names are in [keyboard and accessibility](docs/keyboard.md). See [support and limitations](docs/limitations.md) for what is measured and what is not, and [examples](examples/README.md) for two original example projects.
 

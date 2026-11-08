@@ -32,11 +32,11 @@ This page separates what has been measured from what is planned or unqualified. 
 | Automation | [Level and pan lanes](automation.md) with stable IDs, linear interpolation, persistence and a pointer/keyboard lane editor | Offline and offscreen UI: [automation](../validation/parameter-automation.json), [output qualification](../validation/automation-qualification.json) | Dragging points, clip-relative lanes, other parameters |
 | Playback edits | Track, mixer, rename, scene, range, pattern, synth and automation edits and their Undo [apply while playing](general-session.md#playback-edits) through [plan replacement](plan-replacement.md); tempo and file operations are refused | Offline and offscreen UI: [plan replacement](../validation/plan-replacement.json), [playback edits](../validation/playback-edits.json), [edit bursts and panic](../validation/edit-bursts.json) | Desktop audio capture of a live edit; real-time deadlines under load |
 | Devices, plugins | [Typed device chains](devices.md): transpose and gain with validated connections, edited per track with Undo and while playing | Offline and offscreen UI: [device graph](../validation/device-graph.json), [device editing](../validation/device-editing.json), [device automation](../validation/device-automation.json) | Qualification (#78), more device kinds, more than one automated device of a kind per track, plugin hosting (#66–#72) |
-| Platforms | Linux with Qt 6.12 and PipeWire 1.6.9 in the pinned container; a [development package](install.md) installs and launches in a clean runtime-only container | Hosted CI; [packaging](../validation/linux-packaging.json) | A licensed release (#84), other distributions, macOS (#96) |
+| Platforms | Linux with Qt 6.12 and PipeWire 1.6.9 in the pinned container; a [development package](install.md) installs and launches in a clean runtime-only container | Hosted CI; [packaging](../validation/linux-packaging.json) | An approved release (#90), other distributions, macOS (#96) |
 
 ## Known gaps that affect everyday use
 
 - Tempo, Open, New, import, relink and export need stopped transport; other edits [apply while playing](general-session.md#playback-edits). A full control queue refuses controls visibly; Silence now always works.
 - The built-in synth is basic: naive oscillators and a linear envelope, no filter.
 - Imported audio must already be at 48 kHz.
-- No license has been chosen, so nothing here is a release.
+- fl-live is licensed under GPL-3.0-or-later, but no release has been approved (#90), so nothing here is a release.

@@ -2,7 +2,11 @@
 
 ## fl-live
 
-No license has been chosen for fl-live yet (issue #84). This package is a development build for evaluation on the maintainer's own systems. It grants no rights to redistribute fl-live and is not a release.
+fl-live is free software under the GNU General Public License, version 3 or (at your option) any later version (GPL-3.0-or-later). The full text is in `LICENSE`. The owner chose this license on 2026-11-07 (issue #84).
+
+The repository is still private and no release has been approved (issue #90). This package is a development build for the maintainer's own systems.
+
+Anyone who distributes fl-live in binary form must offer its complete corresponding source under the same license. The libraries below are linked dynamically, so a user can replace them, which is what their LGPL licenses require; their notices are shipped by the distribution packages that provide them. Each license below is compatible with GPL-3.0-or-later.
 
 ## Runtime dependencies
 
