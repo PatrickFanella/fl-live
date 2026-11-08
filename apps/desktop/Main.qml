@@ -62,6 +62,7 @@ ApplicationWindow {
     onClosing: function(close) {
         if (session.dirty && !discardOnClose) {
             close.accepted = false
+            closeDialog.saveError = ""
             closeDialog.open()
         }
     }
@@ -71,9 +72,23 @@ ApplicationWindow {
         anchors.centerIn: parent
         title: "Unsaved changes"
         modal: true
-        Label { text: "Save the project before closing, or discard your edits." }
+        // A failed save says why here; the status line is behind the dialog.
+        property string saveError: ""
+        ColumnLayout {
+            Label { text: "Save the project before closing, or discard your edits." }
+            Label {
+                objectName: "closeSaveError"; visible: closeDialog.saveError !== ""; text: closeDialog.saveError
+                color: "#f0a0a0"; wrapMode: Text.WordWrap; Layout.maximumWidth: 480
+            }
+        }
         footer: RowLayout {
-            Button { text: "Save and close"; onClicked: { if (session.saveProject(projectFile.text)) { window.discardOnClose = true; window.close() } } }
+            Button {
+                objectName: "saveAndClose"; text: "Save and close"
+                onClicked: {
+                    if (session.saveProject(projectFile.text)) { window.discardOnClose = true; window.close() }
+                    else closeDialog.saveError = "Not saved: " + session.message
+                }
+            }
             Button { text: "Discard and close"; onClicked: { window.discardOnClose = true; window.close() } }
             Button { objectName: "cancelClose"; text: "Cancel"; onClicked: closeDialog.close() }
         }
