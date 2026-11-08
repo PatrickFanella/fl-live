@@ -154,16 +154,20 @@ ApplicationWindow {
             Button { objectName: "retryAudioButton"; text: "Retry audio"; visible: !session.audioAvailable; onClicked: session.reconnectAudio() }
             Button { objectName: "stopButton"; text: "Stop"; onClicked: session.stop() }
             TextField {
-                objectName: "inputTarget"; placeholderText: "Audio input node"; text: session.inputTarget; Layout.preferredWidth: 150
-                enabled: !session.recording; onEditingFinished: if (text !== session.inputTarget) session.setInputTarget(text)
+                id: inputTargetField; objectName: "inputTarget"; placeholderText: "Audio input node"
+                property string sessionValue: session.inputTarget; onSessionValueChanged: text = sessionValue; Component.onCompleted: text = sessionValue
+                Layout.preferredWidth: 150
+                enabled: !session.recording; onEditingFinished: if (text !== session.inputTarget && !session.setInputTarget(text)) text = session.inputTarget
                 Accessible.name: "Audio input node to record from"
                 ToolTip.visible: hovered; ToolTip.text: "The PipeWire node the audio input links to. Empty waits for a link made elsewhere."
             }
             TextField {
-                objectName: "midiInputTarget"; placeholderText: "MIDI input node"; text: session.midiInputTarget; Layout.preferredWidth: 150
-                enabled: !session.recording; onEditingFinished: if (text !== session.midiInputTarget) session.setMidiInputTarget(text)
-                Accessible.name: "MIDI input node to record from"
-                ToolTip.visible: hovered; ToolTip.text: "The PipeWire node the MIDI input links to. Empty waits for a link made elsewhere."
+                id: midiInputTargetField; objectName: "midiInputTarget"; placeholderText: "MIDI device or port"
+                property string sessionValue: session.midiInputTarget; onSessionValueChanged: text = sessionValue; Component.onCompleted: text = sessionValue
+                Layout.preferredWidth: 150
+                enabled: !session.recording; onEditingFinished: if (text !== session.midiInputTarget && !session.setMidiInputTarget(text)) text = session.midiInputTarget
+                Accessible.name: "MIDI device or port to record from"
+                ToolTip.visible: hovered; ToolTip.text: "Part of a MIDI port name, such as MPK Mini, or a node name. fl-live links the matching MIDI outputs. Empty waits for a link made elsewhere."
             }
             Button {
                 objectName: "recoverTakes"; text: "Recover takes"; visible: session.interruptedTakes.length > 0
@@ -188,7 +192,9 @@ ApplicationWindow {
         }
         RowLayout {
             Layout.fillWidth: true
-            TextField { id: projectFile; objectName: "projectFile"; Layout.fillWidth: true; text: session.projectPath; placeholderText: "Project file path"; Accessible.name: "Project file path" }
+            TextField { id: projectFile; objectName: "projectFile"; Layout.fillWidth: true
+                property string sessionValue: session.projectPath; onSessionValueChanged: text = sessionValue; Component.onCompleted: text = sessionValue
+                placeholderText: "Project file path"; Accessible.name: "Project file path" }
             Button { objectName: "newProjectButton"; text: "New"; enabled: session.canEdit && !session.dirty; onClicked: session.newProject(); Accessible.name: "New project"; ToolTip.visible: hovered; ToolTip.text: "Start the default project. Save or undo your edits first." }
             Button { objectName: "saveProjectButton"; text: "Save"; onClicked: session.saveProject(projectFile.text) }
             Button { objectName: "collectAssets"; text: "Collect audio"; enabled: session.canEdit; onClicked: session.collectAssets(); ToolTip.visible: hovered; ToolTip.text: "Copy imported WAVs from outside the project folder into a folder beside the saved project. Nothing is overwritten." }

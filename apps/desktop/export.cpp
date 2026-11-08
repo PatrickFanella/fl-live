@@ -38,7 +38,9 @@ ExportOutcome exportProjectWav(const QString& path, const SessionContent& conten
     if (path.trimmed().isEmpty()) throw std::invalid_argument("Enter a new WAV file path");
     // Exclusive checks preserve every existing destination, including links.
     if (QFileInfo::exists(path) || QFileInfo(path).isSymLink())
-        throw std::runtime_error("Cannot create WAV: choose a new writable file path");
+        throw std::runtime_error("Cannot create WAV: " + QFileInfo(path).fileName().toStdString() + " already exists; choose a new file name");
+    if (!QFileInfo(QFileInfo(path).absolutePath()).isDir())
+        throw std::runtime_error("Cannot create WAV: the folder " + QFileInfo(path).absolutePath().toStdString() + " does not exist");
     const fl_live::DocumentRenderPlan prepared(identities, contentSources(content, identities), 48000,
         static_cast<std::uint32_t>(content.tempo) * 1000U, {}, contentGains(content, identities), contentAutomation(content, identities));
     fl_live::Engine engine(prepared.plan());

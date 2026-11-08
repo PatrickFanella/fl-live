@@ -1,5 +1,5 @@
 // Records MIDI from a private PipeWire graph for pipewire_midi_capture.py:
-//   midi-capture-probe REMOTE
+//   midi-capture-probe REMOTE [PORT_OR_NODE]
 // Prints {"ready":true} once fl-live-midi-input exists, records into a
 // MidiTake from "record" to "stop", then prints the take as JSON.
 #include "fl_live/capture.hpp"
@@ -8,13 +8,17 @@
 #include <string>
 
 int main(int argc, char** argv) {
-    if (argc != 2) { std::cerr << "usage: midi-capture-probe REMOTE\n"; return 2; }
+    if (argc != 2 && argc != 3) { std::cerr << "usage: midi-capture-probe REMOTE [PORT_OR_NODE]\n"; return 2; }
     try {
         fl_live::PipeWireConfig config;
         config.remote = argv[1];
         config.node_group = "pipewire.test";
-        fl_live::PipeWireMidiCapture capture(config);
+        // With a name, the capture links the matching ports itself; the
+        // source starts as soon as it is linked, so recording starts at once.
+        if (argc == 3) config.target = argv[2];
         fl_live::MidiTake take;
+        fl_live::PipeWireMidiCapture capture(config);
+        if (argc == 3) capture.setSink(&take);
         std::cout << "{\"ready\": true}" << std::endl;
         std::string line;
         while (std::getline(std::cin, line) && line != "record") {}

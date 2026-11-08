@@ -2616,6 +2616,27 @@ private slots:
             QVERIFY(!session.dirty());
         }
     }
+    void homePathsAndTypedFields() {
+        // Native qualification (#166): typing in a field bound to the session
+        // was undone by the next 10 ms tick, and "~/" was taken literally.
+        QTemporaryDir home;QVERIFY(home.isValid());
+        const auto previous=qgetenv("HOME");qputenv("HOME",home.path().toLocal8Bit());
+        auto restore=qScopeGuard([&]{qputenv("HOME",previous);});
+        Session session;QmlUi ui(session);
+        ui.type("midiInputTarget","draft");
+        for(int i=0;i<5;++i){session.tick();QTest::qWait(12);}
+        QCOMPARE(ui.item("midiInputTarget")->property("text").toString(),QString("draft"));
+        ui.type("projectFile","~/typed.json");
+        for(int i=0;i<3;++i){session.tick();QTest::qWait(12);}
+        QCOMPARE(ui.item("projectFile")->property("text").toString(),QString("~/typed.json"));
+        ui.click("saveProjectButton");
+        QVERIFY2(QFileInfo::exists(home.filePath("typed.json")),qPrintable(session.message()+" at "+session.projectPath()));
+        QVERIFY(session.exportAudio("~/typed.wav",1,1,0,2,"pcm16"));QTRY_VERIFY(!session.exporting());
+        QVERIFY2(QFileInfo::exists(home.filePath("typed.wav")),qPrintable(session.message()));
+        session.exportAudio("~/missing/typed.wav",1,1,0,2,"pcm16");QTRY_VERIFY(!session.exporting());
+        QVERIFY2(session.message().contains("does not exist"),qPrintable(session.message()));
+        QVERIFY(!QFileInfo::exists(home.filePath("missing")));
+    }
     void keyboardContractAndFocus() {
         QTemporaryDir directory;
         Session session;

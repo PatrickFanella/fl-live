@@ -8,7 +8,11 @@
 #include <spa/control/ump-utils.h>
 #include <spa/node/io.h>
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
+#include <cstring>
+#include <map>
+#include <vector>
 #include <chrono>
 #include <stdexcept>
 #include <thread>
@@ -345,10 +349,21 @@ struct PipeWireMidiCapture::Impl {
     spa_io_position* position = nullptr; // data thread only, set through io_changed
     std::uint64_t counter = 0;          // fallback clock without position io
     bool started = false, initialized = false;
+    // Linking by name (loop thread writes, main thread reads under the loop lock).
+    struct Port { std::uint32_t id, node; std::string direction, name, alias, dsp; };
+    pw_registry* registry = nullptr;
+    spa_hook registry_hook{};
+    std::vector<Port> ports;
+    std::map<std::uint32_t, std::string> nodes;
+    std::vector<pw_proxy*> links;
+    int sync_seq = -1;
+    std::atomic<bool> synced{false};
 
     explicit Impl(PipeWireConfig settings) : config(std::move(settings)) {}
     ~Impl() {
         if (loop && started) pw_thread_loop_stop(loop);
+        for (auto* link : links) pw_proxy_destroy(link);
+        if (registry) { spa_hook_remove(&registry_hook); pw_proxy_destroy(reinterpret_cast<pw_proxy*>(registry)); }
         if (stream) { spa_hook_remove(&stream_hook); pw_stream_destroy(stream); }
         if (core) { spa_hook_remove(&core_hook); pw_core_disconnect(core); }
         if (context) pw_context_destroy(context);
@@ -365,6 +380,71 @@ struct PipeWireMidiCapture::Impl {
     }
     static void io_changed(void* data, std::uint32_t id, void* area, std::uint32_t size) noexcept {
         if (id == SPA_IO_Position) static_cast<Impl*>(data)->position = size >= sizeof(spa_io_position) ? static_cast<spa_io_position*>(area) : nullptr;
+    }
+    static void core_done(void* data, std::uint32_t id, int seq) noexcept {
+        auto& self = *static_cast<Impl*>(data);
+        if (id == PW_ID_CORE && seq == self.sync_seq) self.synced.store(true);
+    }
+    static void global(void* data, std::uint32_t id, std::uint32_t, const char* type, std::uint32_t, const spa_dict* props) noexcept {
+        auto& self = *static_cast<Impl*>(data);
+        if (!props) return;
+        const auto get = [&](const char* key) { const char* value = spa_dict_lookup(props, key); return std::string(value ? value : ""); };
+        if (std::strcmp(type, PW_TYPE_INTERFACE_Port) == 0) {
+            const auto node = get(PW_KEY_NODE_ID);
+            self.ports.push_back({id, static_cast<std::uint32_t>(std::strtoul(node.c_str(), nullptr, 10)), get(PW_KEY_PORT_DIRECTION),
+                                  get(PW_KEY_PORT_NAME), get(PW_KEY_PORT_ALIAS), get(PW_KEY_FORMAT_DSP)});
+        } else if (std::strcmp(type, PW_TYPE_INTERFACE_Node) == 0) {
+            self.nodes[id] = get(PW_KEY_NODE_NAME);
+        }
+    }
+    static void global_remove(void* data, std::uint32_t id) noexcept {
+        auto& self = *static_cast<Impl*>(data);
+        std::erase_if(self.ports, [id](const Port& port) { return port.id == id; });
+        self.nodes.erase(id);
+    }
+    static std::string lower(std::string text) {
+        std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return text;
+    }
+    // Links the MIDI output ports whose name or alias contains the target, or
+    // failing that every MIDI output port of the node named exactly the
+    // target, to this stream's input port. A session manager will not route a
+    // stream to the ALSA MIDI bridge by name, so fl-live links the ports itself.
+    void link_by_name() {
+        pw_thread_loop_lock(loop);
+        synced.store(false);
+        sync_seq = pw_core_sync(core, PW_ID_CORE, 0);
+        pw_thread_loop_unlock(loop);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while (!synced.load() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (!synced.load()) throw std::runtime_error("PipeWire did not list the MIDI ports in time");
+        pw_thread_loop_lock(loop);
+        const std::uint32_t own = pw_stream_get_node_id(stream);
+        const auto midi = [](const Port& port) { const auto dsp = lower(port.dsp); return dsp.find("midi") != std::string::npos || dsp.find("ump") != std::string::npos; };
+        const Port* input = nullptr;
+        for (const auto& port : ports) if (port.node == own && port.direction == "in") { input = &port; break; }
+        const auto wanted = lower(config.target);
+        std::vector<std::uint32_t> sources;
+        for (const auto& port : ports)
+            if (port.node != own && port.direction == "out" && midi(port) &&
+                (lower(port.name).find(wanted) != std::string::npos || lower(port.alias).find(wanted) != std::string::npos)) sources.push_back(port.id);
+        if (sources.empty())
+            for (const auto& port : ports)
+                if (port.node != own && port.direction == "out" && midi(port) && nodes.count(port.node) && nodes[port.node] == config.target) sources.push_back(port.id);
+        if (!input || sources.empty()) {
+            pw_thread_loop_unlock(loop);
+            throw std::runtime_error(!input ? "the MIDI input port was not found" : "no MIDI output port matches \"" + config.target + "\"");
+        }
+        const auto input_id = std::to_string(input->id);
+        for (const auto source : sources) {
+            auto* properties = pw_properties_new(PW_KEY_LINK_OUTPUT_PORT, std::to_string(source).c_str(), PW_KEY_LINK_INPUT_PORT, input_id.c_str(), nullptr);
+            auto* link = static_cast<pw_proxy*>(pw_core_create_object(core, "link-factory", PW_TYPE_INTERFACE_Link, PW_VERSION_LINK, &properties->dict, 0));
+            pw_properties_free(properties);
+            if (link) links.push_back(link);
+        }
+        const bool made = !links.empty();
+        pw_thread_loop_unlock(loop);
+        if (!made) throw std::runtime_error("cannot link the MIDI input");
     }
     static void process(void* data) noexcept {
         auto& self = *static_cast<Impl*>(data);
@@ -416,15 +496,23 @@ struct PipeWireMidiCapture::Impl {
         core = pw_context_connect(context, pw_properties_new(PW_KEY_REMOTE_NAME, config.remote.c_str(), nullptr), 0);
         if (!core) throw std::runtime_error("cannot connect to requested PipeWire remote");
         static const pw_core_events core_events = [] {
-            pw_core_events value{}; value.version = PW_VERSION_CORE_EVENTS; value.error = core_error; return value;
+            pw_core_events value{}; value.version = PW_VERSION_CORE_EVENTS; value.error = core_error; value.done = core_done; return value;
         }();
         pw_core_add_listener(core, &core_hook, &core_events, this);
+        const bool by_name = !config.target.empty();
+        if (by_name) {
+            static const pw_registry_events registry_events = [] {
+                pw_registry_events value{}; value.version = PW_VERSION_REGISTRY_EVENTS; value.global = global; value.global_remove = global_remove; return value;
+            }();
+            registry = pw_core_get_registry(core, PW_VERSION_REGISTRY, 0);
+            if (!registry) throw std::runtime_error("cannot read the PipeWire registry");
+            pw_registry_add_listener(registry, &registry_hook, &registry_events, this);
+        }
         auto* properties = pw_properties_new(PW_KEY_NODE_NAME, "fl-live-midi-input", PW_KEY_MEDIA_TYPE, "Midi",
             PW_KEY_MEDIA_CATEGORY, "Capture", PW_KEY_MEDIA_ROLE, "DSP", PW_KEY_FORMAT_DSP, "32 bit raw UMP",
             PW_KEY_NODE_ALWAYS_PROCESS, "true", nullptr);
         if (!properties) throw std::runtime_error("cannot allocate PipeWire properties");
         if (!config.node_group.empty()) pw_properties_set(properties, PW_KEY_NODE_GROUP, config.node_group.c_str());
-        if (!config.target.empty()) pw_properties_set(properties, PW_KEY_TARGET_OBJECT, config.target.c_str());
         stream = pw_stream_new(core, "fl-live-midi-input", properties);
         if (!stream) throw std::runtime_error("cannot create PipeWire stream");
         static const pw_stream_events stream_events = [] {
@@ -437,8 +525,8 @@ struct PipeWireMidiCapture::Impl {
         const spa_pod* params[] = {static_cast<const spa_pod*>(spa_pod_builder_add_object(&builder, SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
             SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_application), SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_control),
             SPA_FORMAT_CONTROL_types, SPA_POD_CHOICE_FLAGS_Int((1U << SPA_CONTROL_UMP) | (1U << SPA_CONTROL_Midi))))};
-        auto flags = PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS;
-        if (config.autoconnect) flags = flags | PW_STREAM_FLAG_AUTOCONNECT;
+        // fl-live links the input itself (link_by_name); no session-manager routing.
+        const auto flags = PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS;
         const int result = pw_stream_connect(stream, PW_DIRECTION_INPUT, PW_ID_ANY, static_cast<pw_stream_flags>(flags), params, 1);
         if (result < 0 || pw_thread_loop_start(loop) < 0) throw std::runtime_error("cannot start PipeWire MIDI input stream");
         started = true;
@@ -446,6 +534,7 @@ struct PipeWireMidiCapture::Impl {
         while (state.load() < PW_STREAM_STATE_PAUSED && error.load() == 0 && std::chrono::steady_clock::now() < deadline)
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         if (state.load() < PW_STREAM_STATE_PAUSED || error.load()) throw std::runtime_error("PipeWire MIDI input stream failed to become ready");
+        if (by_name) link_by_name();
     }
 };
 PipeWireMidiCapture::PipeWireMidiCapture(PipeWireConfig config) : impl_(std::make_unique<Impl>(std::move(config))) { impl_->connect(); }

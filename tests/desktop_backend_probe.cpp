@@ -23,10 +23,13 @@ static ProjectSettings readAuthoredSettings(const QString& path) { const auto p 
 // output in the parent fixture. This is not native input or hardware QA.
 int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
-    if (argc != 2 && argc != 3 && !(argc == 5 && std::string_view(argv[2]) == "--record-loopback") && !(argc == 4 && (std::string_view(argv[2]) == "--record" || std::string_view(argv[2]) == "--record-loss" || std::string_view(argv[2]) == "--record-midi" || std::string_view(argv[2]) == "--record-placement" || std::string_view(argv[2]) == "--monitor" || std::string_view(argv[2]) == "--monitor-midi"))) return 2;
+    if (argc != 2 && argc != 3 && !(argc == 5 && std::string_view(argv[2]) == "--record-loopback") && !(argc == 4 && (std::string_view(argv[2]) == "--record" || std::string_view(argv[2]) == "--record-loss" || std::string_view(argv[2]) == "--record-midi" || std::string_view(argv[2]) == "--record-placement" || std::string_view(argv[2]) == "--record-two-drivers" || std::string_view(argv[2]) == "--monitor" || std::string_view(argv[2]) == "--monitor-midi"))) return 2;
     try {
         fl_live::PipeWireConfig config;
-        config.remote = argv[1]; config.node_group = "pipewire.test";
+        config.remote = argv[1];
+        // --record-two-drivers keeps the production node group (#166).
+        const bool two_drivers = argc == 4 && std::string_view(argv[2]) == "--record-two-drivers";
+        if (!two_drivers) config.node_group = "pipewire.test";
         Session session(config);
         if (argc == 5 && std::string_view(argv[2]) == "--record-loopback") {
             // Loopback placement (#45): the audio track plays a clip with a
@@ -74,6 +77,27 @@ int main(int argc, char** argv) {
             std::string line;
             while (std::getline(std::cin, line) && line != "stop") {}
             std::cout << "{\"done\": true}" << std::endl;
+            return 0;
+        }
+        if (two_drivers) {
+            // Two drivers (#166): the fixture runs fl-live-output from one
+            // driver and the source feeding fl-live-input from another that
+            // started later, as speakers and microphone are on real hardware.
+            // With the default node group both fl-live nodes share a driver
+            // and the take is placed from its first bar line.
+            const QDir project(argv[3]);
+            if (!session.saveProject(project.filePath("two-drivers.json")) || !session.setArmed(session.trackIds()[0].toString(), true)) return 1;
+            std::cout << "{\"ready\": true}" << std::endl;
+            std::string line;
+            while (std::getline(std::cin, line) && line != "record") {}
+            if (!session.record()) { std::cerr << session.message().toStdString() << '\n'; return 1; }
+            QElapsedTimer deadline; deadline.start();
+            while (session.position().split('.')[0].toInt() < 4 && deadline.elapsed() < 20000) { session.tick(); QTest::qWait(5); }
+            session.stop();
+            const auto files = QDir(project.filePath("recordings")).entryList({"*.wav"}, QDir::Files);
+            QJsonObject result{{"message", session.message()}, {"range_start", session.clipRanges()[0].toList()[0].toDouble()},
+                               {"file", files.size() == 1 ? project.filePath("recordings/" + files[0]) : QString()}};
+            std::cout << QJsonDocument(result).toJson(QJsonDocument::Compact).toStdString() << std::endl;
             return 0;
         }
         if (argc == 4 && std::string_view(argv[2]) == "--record-placement") {

@@ -5,6 +5,7 @@ notes against the file's own timeline. No devices or session manager.
     pipewire_midi_capture.py MIDI_CAPTURE_PROBE          # the MIDI input and MidiTake alone
     pipewire_midi_capture.py --desktop DESKTOP_PROBE     # the desktop Session: arm, record, piano-roll clip
     pipewire_midi_capture.py --desktop --monitor DESKTOP_PROBE  # MIDI monitoring heard in the output
+    pipewire_midi_capture.py --by-name MIDI_CAPTURE_PROBE  # the input links the player's port by name, no pw-link
 
 At 120 BPM and 96 ticks per quarter note one tick is exactly 250 frames at
 48 kHz, so the expected frames follow from the file alone. Recorded starts
@@ -21,6 +22,7 @@ import time
 
 desktop = "--desktop" in sys.argv
 monitor = "--monitor" in sys.argv
+by_name = "--by-name" in sys.argv
 probe = str(pathlib.Path(sys.argv[-1]).resolve())
 TICK = 250  # frames per tick
 LEAD = 384  # ticks of silence before the first note, time to link
@@ -107,8 +109,16 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
             until(lambda: (root / remote).exists() if server.poll() is None else False)
             (root / "project").mkdir()
             mode = "--monitor-midi" if monitor else "--record-midi"
-            recorder = subprocess.Popen([probe, remote, mode, str(root / "project")] if desktop else [probe, remote], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            assert json.loads(recorder.stdout.readline())["ready"]
+            if by_name:
+                # The player waits unscheduled until something links it, as a
+                # device's bridge port waits; the capture finds and links it.
+                player = subprocess.Popen(["pw-midiplay", "--remote", remote, "--target", "0", "--properties",
+                    "{ node.name = fixture-midi node.group = pipewire.test }", str(song)],
+                    env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                until(lambda: "fixture-midi:" in subprocess.run(["pw-link", "--remote", remote, "--output"], env=env, capture_output=True, text=True, timeout=2).stdout)
+            command = [probe, remote, mode, str(root / "project")] if desktop else [probe, remote] + (["fixture-midi"] if by_name else [])
+            recorder = subprocess.Popen(command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            assert json.loads(recorder.stdout.readline())["ready"], recorder.stderr.read()
             if monitor:
                 heard = root / "heard.f32"
                 sink = subprocess.Popen(["pw-cat", "--remote", remote, "--record", "--raw", "--format", "f32", "--rate", "48000",
@@ -136,12 +146,13 @@ context.objects = [ { factory = spa-node-factory args = { factory.name = support
 
             def ports(direction):
                 return subprocess.run(["pw-link", "--remote", remote, direction], env=env, capture_output=True, text=True, timeout=2).stdout.split()
-            player = subprocess.Popen(["pw-midiplay", "--remote", remote, "--target", "0", "--properties",
-                "{ node.name = fixture-midi node.group = pipewire.test node.always-process = true }", str(song)],
-                env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            out_port = until(lambda: next((p for p in ports("--output") if p.startswith("fixture-midi:")), None))
-            in_port = until(lambda: next((p for p in ports("--input") if p.startswith("fl-live-midi-input:")), None))
-            subprocess.run(["pw-link", "--remote", remote, out_port, in_port], env=env, check=True, capture_output=True, timeout=2)
+            if not by_name:
+                player = subprocess.Popen(["pw-midiplay", "--remote", remote, "--target", "0", "--properties",
+                    "{ node.name = fixture-midi node.group = pipewire.test node.always-process = true }", str(song)],
+                    env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                out_port = until(lambda: next((p for p in ports("--output") if p.startswith("fixture-midi:")), None))
+                in_port = until(lambda: next((p for p in ports("--input") if p.startswith("fl-live-midi-input:")), None))
+                subprocess.run(["pw-link", "--remote", remote, out_port, in_port], env=env, check=True, capture_output=True, timeout=2)
             player.wait(timeout=15)  # the file is about 4.5 s long
             if monitor:
                 sink.wait(timeout=15)  # ends with status 1 at --sample-count; the size is checked

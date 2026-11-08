@@ -124,6 +124,9 @@ if(BUILD_TESTING)
             add_test(NAME pipewire-midi-capture COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_midi_capture.py $<TARGET_FILE:midi-capture-probe>)
             set_tests_properties(pipewire-midi-capture PROPERTIES TIMEOUT 60)
+            add_test(NAME pipewire-midi-by-name COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_midi_capture.py --by-name $<TARGET_FILE:midi-capture-probe>)
+            set_tests_properties(pipewire-midi-by-name PROPERTIES TIMEOUT 60)
         endif()
         add_test(NAME pipewire-frame-coded-control COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_integration.py $<TARGET_FILE:fl-live-play>
@@ -228,6 +231,9 @@ if(FL_LIVE_BUILD_DESKTOP)
             add_test(NAME pipewire-recording-loopback COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_placement.py --loopback $<TARGET_FILE:desktop-backend-probe> $<TARGET_FILE:graph-source>)
             set_tests_properties(pipewire-recording-loopback PROPERTIES TIMEOUT 60)
+            add_test(NAME pipewire-recording-two-drivers COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_two_drivers.py $<TARGET_FILE:desktop-backend-probe>)
+            set_tests_properties(pipewire-recording-two-drivers PROPERTIES TIMEOUT 60)
             add_test(NAME pipewire-input-monitoring COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_capture.py --desktop --monitor $<TARGET_FILE:desktop-backend-probe>)
             set_tests_properties(pipewire-input-monitoring PROPERTIES TIMEOUT 60)
