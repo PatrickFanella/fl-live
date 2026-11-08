@@ -3316,6 +3316,16 @@ private slots:
         QVERIFY(!window->close()); // dirty close must leave the window open
         auto* dialog = window->findChild<QObject*>("closeDialog");
         QVERIFY(dialog); QVERIFY(dialog->property("visible").toBool());
+        // A failed Save and close keeps the window open and says why in the
+        // dialog, whose modal overlay hides the status line (#166).
+        projectFile->setProperty("text",directory.filePath("missing/qml.json"));
+        auto* saveAndClose=window->findChild<QObject*>("saveAndClose");QVERIFY(saveAndClose);
+        QVERIFY(QMetaObject::invokeMethod(saveAndClose,"clicked"));
+        QVERIFY(window->isVisible());QVERIFY(dialog->property("visible").toBool());QVERIFY(session.dirty());
+        auto* saveError=window->findChild<QObject*>("closeSaveError");QVERIFY(saveError);
+        QVERIFY2(saveError->property("text").toString().startsWith("Not saved: ") && saveError->property("visible").toBool(),
+                 qPrintable(saveError->property("text").toString()));
+        projectFile->setProperty("text",directory.filePath("qml.json"));
         QVERIFY(QMetaObject::invokeMethod(dialog,"close"));
         click("saveProjectButton"); QVERIFY(!session.dirty());
         const auto saved=readAuthoredSettings(directory.filePath("qml.json"));QCOMPARE(saved.tempo,121);
