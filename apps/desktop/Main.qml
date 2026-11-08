@@ -162,12 +162,12 @@ ApplicationWindow {
                 ToolTip.visible: hovered; ToolTip.text: "The PipeWire node the audio input links to. Empty waits for a link made elsewhere."
             }
             TextField {
-                id: midiInputTargetField; objectName: "midiInputTarget"; placeholderText: "MIDI input node"
+                id: midiInputTargetField; objectName: "midiInputTarget"; placeholderText: "MIDI device or port"
                 property string sessionValue: session.midiInputTarget; onSessionValueChanged: text = sessionValue; Component.onCompleted: text = sessionValue
                 Layout.preferredWidth: 150
                 enabled: !session.recording; onEditingFinished: if (text !== session.midiInputTarget && !session.setMidiInputTarget(text)) text = session.midiInputTarget
-                Accessible.name: "MIDI input node to record from"
-                ToolTip.visible: hovered; ToolTip.text: "The PipeWire node the MIDI input links to. Empty waits for a link made elsewhere."
+                Accessible.name: "MIDI device or port to record from"
+                ToolTip.visible: hovered; ToolTip.text: "Part of a MIDI port name, such as MPK Mini, or a node name. fl-live links the matching MIDI outputs. Empty waits for a link made elsewhere."
             }
             Button {
                 objectName: "recoverTakes"; text: "Recover takes"; visible: session.interruptedTakes.length > 0

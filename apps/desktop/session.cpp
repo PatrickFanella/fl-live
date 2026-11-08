@@ -1212,7 +1212,7 @@ bool Session::recoverTakes() {
 }
 void Session::openMidiInput() {
     if(preview_ || midi_input_)return;
-    auto input=config_;input.target=midi_input_target_;input.autoconnect=!midi_input_target_.empty();
+    auto input=config_;input.target=midi_input_target_;
     try{midi_input_=std::make_unique<fl_live::PipeWireMidiCapture>(input);}
     catch(const std::exception& error){throw std::runtime_error(std::string("Cannot open the MIDI input: ")+error.what());}
     midi_fanout_.live=&live_notes_;

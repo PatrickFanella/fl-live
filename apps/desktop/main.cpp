@@ -16,7 +16,7 @@ int main(int argc, char** argv) {
     parser.addOption({"remote", "Explicit PipeWire remote", "name"});
     parser.addOption({"target", "Explicit output target (requires remote)", "node"});
     parser.addOption({"input", "Explicit recording input node (requires remote)", "node"});
-    parser.addOption({"midi-input", "Explicit MIDI recording input node (requires remote)", "node"});
+    parser.addOption({"midi-input", "MIDI device, port or node to record from, for example \"MPK Mini\" (requires remote)", "name"});
     parser.process(app);
     if ((parser.isSet("target") || parser.isSet("input") || parser.isSet("midi-input")) && !parser.isSet("remote")) parser.showHelp(1);
     try {

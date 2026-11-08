@@ -124,6 +124,9 @@ if(BUILD_TESTING)
             add_test(NAME pipewire-midi-capture COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_midi_capture.py $<TARGET_FILE:midi-capture-probe>)
             set_tests_properties(pipewire-midi-capture PROPERTIES TIMEOUT 60)
+            add_test(NAME pipewire-midi-by-name COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_midi_capture.py --by-name $<TARGET_FILE:midi-capture-probe>)
+            set_tests_properties(pipewire-midi-by-name PROPERTIES TIMEOUT 60)
         endif()
         add_test(NAME pipewire-frame-coded-control COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/pipewire_integration.py $<TARGET_FILE:fl-live-play>
