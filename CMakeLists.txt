@@ -263,7 +263,7 @@ endif()
 
 # Development package (not a release; see packaging/THIRD-PARTY-NOTICES.md).
 install(DIRECTORY examples/ DESTINATION ${CMAKE_INSTALL_DATADIR}/fl-live/examples)
-install(FILES README.md packaging/THIRD-PARTY-NOTICES.md docs/install.md docs/limitations.md docs/keyboard.md
+install(FILES README.md LICENSE packaging/THIRD-PARTY-NOTICES.md docs/install.md docs/limitations.md docs/keyboard.md
     DESTINATION ${CMAKE_INSTALL_DOCDIR})
 set(CPACK_GENERATOR TGZ)
 set(CPACK_PACKAGE_NAME fl-live)

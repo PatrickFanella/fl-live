@@ -1,6 +1,6 @@
 # Building a package and installing it
 
-fl-live has no chosen license yet (#84), so this produces a **development package for your own systems**, not a release. See [notices](../packaging/THIRD-PARTY-NOTICES.md).
+fl-live is licensed under GPL-3.0-or-later. No release has been approved yet (#90), so this produces a **development package for your own systems**, not a release. See [notices](../packaging/THIRD-PARTY-NOTICES.md).
 
 ## Supported environment
 
