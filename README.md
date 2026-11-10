@@ -1,99 +1,152 @@
-# fl-live — Linux session workstation
+# fl-live
 
-Original source for a Linux-first open-source music workstation, working toward a useful MVP and ultimately a close Live/Max replacement. C++20 and Qt 6/QML are the selected product stack. The implemented slices are a headless engine, offline renderer, bounded control handoff, optional PipeWire output backend and a Qt/QML session application with editable template settings and project save/reload.
+fl-live is an open-source music workstation for Linux, built in C++20 with Qt 6
+and QML and playing through PipeWire. It is organized around a session view:
+audio and MIDI tracks, clips launched in scenes, a piano roll, a track mixer,
+device chains, automation and recording.
 
-The private reference-product research remains in a separate workspace. No captured executable code, factory assets or research binaries are part of this source tree. fl-live is licensed under the GNU GPL, version 3 or later ([LICENSE](LICENSE)). The repository is private and no release has been published. The canonical product repository is [subculture-collective/fl-live](https://git.subcult.tv/subculture-collective/fl-live), initially private.
+fl-live is in development. There is no release yet. You can build it and a
+development package from source. Nothing has been checked on physical audio
+hardware or with native Wayland input; tests run offline, against the QML on
+Qt's offscreen platform, and against a private software-only PipeWire graph.
+See [support and limitations](docs/limitations.md) for what is checked and what
+is not.
 
-To build a development package and install it, see [install](docs/install.md). Keyboard shortcuts, focus rules and accessible names are in [keyboard and accessibility](docs/keyboard.md). See [support and limitations](docs/limitations.md) for what is measured and what is not, and [examples](examples/README.md) for two original example projects.
+## Features
 
-## Build and test
+- **Session of tracks and clips**: up to 64 audio or MIDI tracks with up to
+  eight clips each. Add, duplicate, delete and rename tracks and clips.
+- **Scenes**: create, copy, reorder and delete scenes, choose which clips each
+  scene includes, and launch or stop a scene immediately or on the next bar.
+- **MIDI editing**: a 1–16 step editor with pitch, velocity and gate, or a piano
+  roll with add, select, move, resize and velocity editing on a grid, plus clip
+  length and loop.
+- **Built-in synth**: four waveforms, an ADSR envelope and 16 voices.
+- **Audio clips**: import WAV files (mono or stereo, 48 kHz) in the background,
+  view the waveform and choose start, end and loop ranges. Relink moved files or
+  collect them into the project folder.
+- **Track mixer**: level, balance-law pan, mute and solo, mixed to stereo with an
+  optional mono downmix.
+- **Devices**: per-track chains of gain and transpose devices.
+- **Automation**: level, pan and device-parameter lanes with linear
+  interpolation.
+- **Recording**: arm audio and MIDI tracks, record takes into the project's
+  `recordings/` folder, place them on bar lines, and monitor audio and MIDI
+  input. Audio takes interrupted by a crash can be recovered.
+- **Edits while playing**: most track, mixer, scene, pattern and automation
+  edits apply during playback. Undo and Redo cover committed edits.
+- **Projects**: versioned JSON with atomic saves, migration from older versions,
+  autosave every 30 seconds and a restore prompt after a crash.
+- **Export**: render the mix to WAV (start bar, length, tail, stereo or mono,
+  16-bit, 24-bit or 32-bit float) in the background with progress and cancel.
+- **Keyboard access**: shortcuts, focus restoration and accessible names
+  ([keyboard and accessibility](docs/keyboard.md)).
+- **Command-line tools**: `fl-live-render` renders a demo to WAV offline, and
+  `fl-live-play` is a headless PipeWire test player.
 
-Requires a C++20 compiler, CMake 3.25 or newer and Ninja. The WAV example additionally requires pkg-config and the initial libsndfile 1.2.2 baseline. Tests for its output use Python 3.11 or newer. Qt is not required by these targets.
+Plugin hosting is planned, starting with CLAP ([plugin format decision](docs/plugins.md)).
+It is not implemented.
 
-```bash
-rtk proxy cmake --preset debug
-rtk proxy cmake --build --preset debug
-rtk proxy ctest --preset debug
-```
+## Quick start
 
-Other presets are `release`, `sanitize` (AddressSanitizer and UBSan) and `engine-only`. The last disables the renderer and needs no libsndfile or Python. Each has matching configure, build and test presets.
+Requirements: Linux on x86-64, a C++20 compiler, CMake 3.25 or newer and Ninja.
+The desktop app also needs Qt 6.12 (Core, Gui, Qml, Quick, Quick Controls 2 and
+Qt Test), the PipeWire 1.6.9 client library and libsndfile 1.2.2. Some tests use
+Python 3.11 or newer and the PipeWire command-line tools (`pipewire`, `pw-cat`,
+`pw-cli`, `pw-dump`, `pw-link`).
 
-## Render the authored demo
-
-```bash
-rtk proxy ./build/debug/fl-live-render ./build/debug/my-demo.wav 257
-```
-
-Use a new output path; existing files are refused. The eight-second, mono PCM16 WAV contains two seconds of silence, four seconds of a simple pulse/bass pattern, then two seconds of silence. Its audio and MIDI clips launch at frame 96,000 and stop at frame 288,000. Nothing is sent to a sound device by this command.
-
-## Implemented
-
-- Constant-tempo 4/4 sample clock and exact rational bar-boundary calculation.
-- Source-rate mono or interleaved stereo audio clips, looping/one-shot playback, track gain and balance-law pan.
-- Stereo engine mix with an explicit mono downmix; optional mono or FL/FR PipeWire output.
-- Worker-thread WAV import with a declared channel, rate, length and value policy ([media import](docs/media-import.md)), used by desktop audio tracks.
-- MIDI clip note scheduling with a minimal fixed-capacity sine instrument.
-- Sample-timed clip launch/replacement/stop, bounded command storage and explicit overflow results.
-- Transport stop/panic, frozen stopped position and stopped rewind.
-- Offline WAV rendering from the same engine API intended for a later audio adapter.
-
-The engine is single-owner. Its prepared plan must remain alive and immutable. RenderController provides the bounded handoff for one control producer and one rendering consumer; it does not make arbitrary live project edits safe. [Engine contract](docs/engine-contract.md) records timing/ownership, and [backend contract](docs/pipewire-backend.md) records the handoff and stream limits.
-
-## Test PipeWire without touching desktop audio
-
-The optional backend is pinned to the initial PipeWire 1.6.9 baseline. Its integration test requires `pipewire`, `pw-cat`, `pw-cli`, `pw-dump` and `pw-link`.
-
-```bash
-rtk proxy cmake --preset pipewire
-rtk proxy cmake --build --preset pipewire
-rtk proxy ctest --preset pipewire
-```
-
-The test creates a private software-only server in a temporary directory, links only its authored playback/capture clients, validates samples and tests server loss. It loads no hardware modules and changes no running desktop service. `pipewire-sanitize` adds ASan/UBSan. For manual playback, `fl-live-play` requires an explicit `--remote`; `--target` opts into autoconnection to a named node. Without a target, port configuration/linking needs a session manager or explicit setup as in the test.
-
-## Continuous integration
-
-[Gitea Actions](https://git.subcult.tv/subculture-collective/fl-live/actions) runs desktop, release, engine-only and PipeWire sanitizer checks in a pinned Linux container. Test logs, JUnit reports and the offscreen desktop capture are retained as artifacts. See [CI setup and local reproduction](docs/ci.md).
-
-## Current verification and next work
-
-Debug, release, sanitizer and engine-only checks passed on Kvant. Tests cover integral and fractional tempo boundaries, sample-exact launch/loop/stop, note cleanup, queue bounds and output preservation. The decoded demo PCM matches across block sizes 1/64/128/257/512 on the qualification machine. Instrumented C++ allocation checks report zero allocations during tested render paths. This does not qualify hardware deadlines, all allocators, concurrent access or all platforms.
-
-See [status](docs/STATUS.md), the original [engine validation](validation/engine-foundation.json) and [backend validation](validation/pipewire-foundation.json). Backend processing and server loss pass in the private graph; hardware audibility/latency and long-duration xrun qualification remain open. The initial Qt/QML session interface is checked offscreen with mouse input and engine acknowledgements. Native Wayland interaction and physical audio remain unqualified. Template project save/reload and stopped tempo/level/pitch editing are implemented. General note positioning, plugins and programmable-device graphs remain product milestones.
-
-## Run the desktop prototype
-
-Requires Qt 6.12 Quick/QuickControls2 (and Qt Test for tests) plus the PipeWire baseline above.
+Build, test and run the desktop app:
 
 ```bash
-rtk proxy cmake --preset desktop
-rtk proxy cmake --build --preset desktop
-rtk proxy ctest --preset desktop
-rtk proxy ./build/desktop/fl-live
+git clone https://github.com/subculture-collective/fl-live.git
+cd fl-live
+cmake --preset desktop
+cmake --build --preset desktop
+ctest --preset desktop
+./build/desktop/fl-live
 ```
 
-The default is **silent preview**: launch the authored scene or either clip, then press Play. The preview discards rendered samples and advances 480 frames per 10 ms timer tick; it is a simulated clock, not a latency or timing benchmark. Stop clears clips and queued launches; relaunch them to resume. Return to start works only while stopped. The interface shows render-owned active clips and the earliest queued track action. A requested launch becomes queued after render acknowledgement and highlights only after it is rendered. While stopped, edit tempo, levels and a 1–16-step MIDI pattern with rests, pitch, velocity and gate, then save a new JSON path or reopen a saved project. Edits return to the start and clear launches. Undo/Redo in the header restore the most recent 128 committed changes while stopped; returning to saved content clears the unsaved indicator. See [editing history](docs/edit-history.md) and [project format and ownership](docs/projects.md).
-
-For output through an existing session manager, explicitly choose a server and target:
+The app starts in silent preview: it advances a simulated clock and discards
+the audio. To play through PipeWire, name the server and the output node:
 
 ```bash
-rtk proxy ./build/desktop/fl-live --remote pipewire-0 --target YOUR_OUTPUT_NODE
+./build/desktop/fl-live --remote pipewire-0 --target YOUR_OUTPUT_NODE
 ```
 
-Replace the target with the intended PipeWire node name. Without `--target`, manual port setup/linking is required. The app does not select an output device automatically. This hardware path has not been qualified yet. See [desktop contract](docs/desktop-session.md) and [validation receipt](validation/desktop-session.json).
+The app never picks an output device on its own. Open one of the
+[example projects](examples/README.md) to start.
 
-The desktop can export the current mix while stopped: enter a new WAV path, choose the start bar, length (1–64 bars), tail, stereo or mono and 16-bit, 24-bit or 32-bit float, then choose **Export all tracks**. Output is 48 kHz through the track mixer; every track's clip starts at the song start. See [export render policy](docs/projects.md#export-render-policy). Export runs in the background with a progress bar and **Cancel export**; cancelled or failed exports leave no file. Existing destinations are refused. See [project export policy](docs/projects.md#export-the-current-template-mix).
+### Presets
 
-The authored desktop now supports track/clip/scene Rename dialogs, document Undo/Redo and version 3 saves with stable identities. Playback resolves string IDs through prepared plans; v1/v2 projects import with initial identities. The two authored Pulse + Steps sources remain shared across scenes. See [desktop identity integration](docs/desktop-identities.md) for the format and qualification boundaries.
+Each preset has matching configure, build and test presets.
 
-Scene launch/stop uses one atomic group with an explicit Immediate or One bar policy. Feedback distinguishes requested controls from queued actions and active clips; scene stop keeps transport running. See [scene controls](docs/scene-controls.md).
+| Preset | What it builds |
+| --- | --- |
+| `desktop` | Everything, including the Qt app and PipeWire tests |
+| `debug`, `release` | Engine, controller and offline renderer (no Qt) |
+| `sanitize` | Debug build with AddressSanitizer and UBSan |
+| `engine-only` | Core engine with no libsndfile, PipeWire, Qt or Python |
+| `pipewire`, `pipewire-sanitize` | PipeWire backend and its private-graph tests |
+| `document-io-sanitize` | Project file round trips with sanitizers |
 
-While stopped, use **Include in scene** beside each clip to choose scene membership. These choices support Undo/Redo and Save/Open. Launching a scene stops excluded tracks; individual clip launch remains available.
+The PipeWire tests start their own software-only server in a temporary
+directory. They load no hardware modules and do not touch your desktop audio.
 
-Use **New scene** to add an empty arrangement, choose its clips with Include in scene, and select it from **Scenes** before launching. **Delete scene** supports Undo; at least one scene remains. Scenes share the authored clips and their settings.
+### Offline demo render
 
-**Add audio track** and **Add MIDI track** build a Session of up to 64 tracks with up to eight clips each; **Duplicate** and **Delete** act on a track, with Undo. Type a WAV path under an audio track and choose **Import** (mono or stereo, 48 kHz; decoded in the background). Imported clips show a waveform; **Start ms**, **End** and **Loop** choose the part that plays, at source rate with no warping. **Edit pattern** picks which MIDI track the step editor shows. Projects save as version 4 and reference imported WAVs by path; a missing file opens as silence with a message. See [general Session tracks](docs/general-session.md).
+```bash
+cmake --preset debug && cmake --build --preset debug
+./build/debug/fl-live-render ./build/debug/my-demo.wav 257
+```
 
-Each track has **Level %**, **Pan** (L100–C–R100, balance law), **Mute** and **Solo**. While any track is soloed only soloed tracks play; mute wins. These are stopped edits with Undo/Redo, and they persist through Save/Open. The desktop outputs stereo. See [track mixer](docs/projects.md#track-mixer).
+This writes an eight-second mono WAV without using a sound device. The last
+argument is the render block size. Existing files are never overwritten.
 
-**Copy arrangement** creates another scene with the same slot choices and shared clip sources. **Move up/down** changes scene order. These edits support Undo/Redo and persist through Save/Open.
+## Configuration
+
+fl-live has no configuration file. Output is chosen per run with `--remote`
+and `--target`; audio and MIDI inputs are chosen in the app. Projects are JSON
+files you save where you like. Recovery snapshots live in
+`~/.local/share/fl-live/recovery/`.
+
+## Install a development package
+
+[docs/install.md](docs/install.md) explains how to build a tarball with CPack or
+a byte-reproducible archive with `packaging/reproducible_archive.py`, and how to
+install it into a prefix such as `~/.local`. The package holds `fl-live`,
+`fl-live-play`, `fl-live-render`, a desktop entry, the example projects and the
+docs. It is a development build, not a release.
+
+## Project layout
+
+| Path | Contents |
+| --- | --- |
+| `include/fl_live/`, `src/` | Engine, capture, project documents, media import and PipeWire backend |
+| `apps/desktop/` | Qt/QML desktop application |
+| `apps/*.cpp` | `fl-live-play` and `fl-live-render` |
+| `tests/` | C++ and Python tests |
+| `examples/` | Example projects |
+| `docs/` | Design and behavior notes for each area |
+| `ci/` | Pinned build image and the CI script |
+| `packaging/` | Desktop entry, reproducible archive script and third-party notices |
+
+## Contributing
+
+- Bugs and feature requests: [GitHub issues](https://github.com/subculture-collective/fl-live/issues).
+- Questions and ideas: [GitHub Discussions](https://github.com/subculture-collective/fl-live/discussions).
+- Code: open a pull request on GitHub against `main`.
+
+CI builds a pinned Arch Linux image (`ci/Dockerfile`) and runs `ci/verify.sh`
+inside it on every pull request: the desktop, release, engine-only,
+PipeWire-sanitizer and document-sanitizer presets. To reproduce it locally:
+
+```bash
+docker build --file ci/Dockerfile --tag fl-live-ci:local .
+docker run --rm --network none fl-live-ci:local
+```
+
+## License
+
+GNU General Public License, version 3 or (at your option) any later version
+(`GPL-3.0-or-later`). See [LICENSE](LICENSE) and the
+[third-party notices](packaging/THIRD-PARTY-NOTICES.md).
