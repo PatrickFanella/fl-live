@@ -1,0 +1,72 @@
+name: PR CI
+
+# Pull-request checks on GitHub-hosted runners. Main-branch builds and deploys
+# stay in .gitea/workflows on Gitea Actions.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-contracts:
+    name: Linux contracts
+    runs-on: ubuntu-24.04
+    # Hosted runners build the pinned image from scratch on fewer cores than Gitea's runner.
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Check CI script syntax
+        run: bash -n ci/verify.sh
+      - name: Build pinned Linux verification image
+        run: docker build --file ci/Dockerfile --tag fl-live-ci:${{ github.run_id }}-${{ github.run_attempt }} .
+      - name: Verify desktop, release, engine-only and sanitizers
+        shell: bash
+        env:
+          CI_SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          container="fl-live-ci-${{ github.run_id }}-${{ github.run_attempt }}"
+          cleanup() {
+            docker cp "$container:/src/build/ci-results" ./ci-results || true
+            docker rm -f "$container" >/dev/null || true
+          }
+          trap cleanup EXIT
+          docker create --name "$container" --network none \
+            --env CI_SOURCE_SHA="$CI_SOURCE_SHA" fl-live-ci:${{ github.run_id }}-${{ github.run_attempt }}
+          docker start --attach "$container"
+          test "$(docker inspect --format '{{.State.ExitCode}}' "$container")" = 0
+      - name: Retain test logs, JUnit reports and desktop capture
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-verification
+          path: ci-results/
+          if-no-files-found: warn
+          retention-days: 14
+
+  ci-gate:
+    name: CI gate
+    if: always()
+    needs: [linux-contracts]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every verification job
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          results = json.loads(os.environ["RESULTS"])
+          expected = {'linux-contracts'}
+          assert set(results) == expected, results
+          for name, result in results.items():
+              assert result["result"] == "success", name + " did not pass"
+          PY
