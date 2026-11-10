@@ -1,3 +1,7 @@
 /build/
 *.wav
 /ci-results/
+
+# Core dumps
+/core
+/core.[0-9]*
